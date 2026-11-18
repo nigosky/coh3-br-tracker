@@ -127,7 +127,7 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa dos 31 jogadores brasileiros únicos monitorados (32 contas Steam vinculadas por SteamID64 imutável)
+# Lista fixa dos 32 jogadores brasileiros únicos monitorados (33 contas Steam vinculadas por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
@@ -173,6 +173,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 1226910, "steam_id": "76561198140782132", "original_alias": "Lupus Alba"},
     {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
     {"profile_id": 1005730, "steam_id": "76561199791811246", "original_alias": "arc"},
+    {"profile_id": 31145, "steam_id": "76561197985268629", "original_alias": "vonMises"},
 ]
 
 _THREAD_LOCAL = threading.local()

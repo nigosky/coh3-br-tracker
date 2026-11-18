@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v7.4 — Ranking Diário + Total de Jogos Veteranos, Limpeza 72h e Segurança Endurecida."""
+"""Monitor automático CoH3 Brasil v7.5 — Ranking Diário + Patente Veteranos, Limpeza 72h e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_4_veteranos_badge_total_games"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_5_vonmises_clean_daily_ranking"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
@@ -137,10 +137,11 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
     return changed
 
 
-def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+def load_config(config_path: Path = DEFAULT_CONFIG_PATH, ensure_roster: bool = True) -> dict[str, Any]:
     """Carrega config.json e injeta segredos exclusivamente em memória (env ou .env.secret)."""
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    ensure_core_roster_in_config(cfg)
+    if ensure_roster:
+        ensure_core_roster_in_config(cfg)
     env_webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
     local_secret = read_local_secret_webhook(config_path.parent)
     if env_webhook:
@@ -700,7 +701,7 @@ def run_cycle(
     reset_discord_channel: bool = False,
 ) -> tuple[int, int]:
     """Executa um ciclo completo com dupla checagem de API Relic, fila PENDING e entrega confirmada no Discord."""
-    cfg = load_config(config_path)
+    cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
     catalog_path = data_dir / "jogadores_br_steam.json"
@@ -735,8 +736,8 @@ def run_cycle(
         rankings_changed = False
         already_scanned_rankings = False
 
-        # Em instalação inicial sem tracked_players ainda, varre o ranking antes para popular o elenco
-        if not cfg.get("tracked_players"):
+        # Em instalação inicial sem tracked_players ou quando novo integrante entra no elenco fixo, atualiza ranking antes para já monitorá-lo neste ciclo
+        if not cfg.get("tracked_players") or cfg_upgraded:
             try:
                 rankings_changed, fresh_rankings = maybe_refresh_top_rankings(
                     config_path=config_path,
@@ -1023,7 +1024,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.4 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.5 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1058,7 +1059,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.4 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.5 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
