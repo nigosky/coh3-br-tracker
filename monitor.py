@@ -748,6 +748,24 @@ def _merge_match_records(primary: dict[str, Any], secondary: dict[str, Any]) -> 
     return merged
 
 
+def _load_audited_open_data_days(db: MatchDatabase) -> set[int]:
+    raw = (db.get_state("coh3stats_audited_days_json") or "").strip()
+    if not raw:
+        return set()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return {int(x) for x in parsed if isinstance(x, int) or (isinstance(x, str) and x.isdigit())}
+    except Exception:
+        pass
+    return set()
+
+
+def _save_audited_open_data_days(db: MatchDatabase, audited_days: set[int]) -> None:
+    recent_days = sorted({int(d) for d in audited_days if int(d) > 0})[-14:]
+    db.set_state("coh3stats_audited_days_json", json.dumps(recent_days, separators=(",", ":")))
+
+
 def run_third_cross_check(
     db: MatchDatabase,
     relic: RelicAPIClient,
@@ -759,19 +777,25 @@ def run_third_cross_check(
     recovery_min_completion_ts: int,
     live_marker: str | None,
     pending_max_age_sec: int = 21600,
+    window_sec: int = 259200,
 ) -> dict[str, int]:
     """
-    3ª Checagem Cruzada (API CoH3 Direta da Relic em lote × site oficial coh3stats.com).
+    3ª Checagem Cruzada (API CoH3 Direta da Relic `getRecentMatchHistory` × Open Data oficial do site coh3stats.com).
     Cruza as duas fontes independentes contra o SQLite e recupera qualquer partida recente
     dentro da janela ativa que não foi postada no Discord — sem jamais duplicar cards já
     confirmados (Snowflake) nem reenviar partidas PRUNED ou SEEDED.
     """
+    total_accounts = len(synced_players)
     stats: dict[str, int] = {
         "relic_direct_unique": 0,
+        "relic_direct_ok_accounts": 0,
+        "relic_direct_total_accounts": total_accounts,
         "relic_direct_failed_batches": 0,
         "coh3stats_unique": 0,
-        "coh3stats_ok_players": 0,
-        "coh3stats_total_players": len(synced_players),
+        "coh3stats_br_matches": 0,
+        "coh3stats_total_scanned": 0,
+        "coh3stats_days_audited": 0,
+        "coh3stats_days_pending": 0,
         "cross_confirmed": 0,
         "recovered_unique": 0,
         "recovered_rows": 0,
@@ -791,32 +815,47 @@ def run_third_cross_check(
                 players=synced_players,
                 only_automatch=only_automatch,
                 roster_maps=roster_maps,
-                batch_size=10,
+                batch_size=1,
             )
             stats["relic_direct_failed_batches"] = failed_batches
+            stats["relic_direct_ok_accounts"] = max(0, total_accounts - failed_batches)
         except Exception as exc:
             logger.warning(
-                "[3ª CHECAGEM] Consulta direta em lote à Relic API falhou (seguindo com coh3stats): %s",
+                "[3ª CHECAGEM] Consulta direta à Relic API falhou (seguindo com coh3stats Open Data): %s",
                 redact_secrets(exc),
             )
 
     coh3stats_by_pid: dict[int, list[dict[str, Any]]] = {}
-    if coh3stats is not None and callable(getattr(coh3stats, "fetch_players_recent_matches_batch", None)):
-        try:
-            coh3stats_by_pid, c3s_ok, _c3s_fail = coh3stats.fetch_players_recent_matches_batch(
-                players=synced_players,
-                only_automatch=only_automatch,
-                roster_maps=roster_maps,
-                races=getattr(relic, "races", None) or None,
-                match_types=getattr(relic, "match_types", None) or None,
-                max_workers=4,
-            )
-            stats["coh3stats_ok_players"] = c3s_ok
-        except Exception as exc:
-            logger.warning(
-                "[3ª CHECAGEM] Consulta cruzada ao coh3stats.com falhou (seguindo com Relic Direta): %s",
-                redact_secrets(exc),
-            )
+    newly_audited_days: list[int] = []
+    already_audited_days = _load_audited_open_data_days(db)
+    if coh3stats is not None and callable(getattr(coh3stats, "fetch_open_data_days_matches", None)):
+        now_utc = datetime.fromtimestamp(int(time.time()), tz=timezone.utc)
+        today_utc_midnight = int(datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc).timestamp())
+        retention_days = max(1, min(3, (max(24, int(window_sec // 3600)) + 23) // 24))
+        candidate_days = [today_utc_midnight - (86400 * offset) for offset in range(1, retention_days + 1)]
+        overlapping_days = [d for d in candidate_days if (d + 86400) > recovery_min_completion_ts]
+        target_days = overlapping_days if overlapping_days else [today_utc_midnight - 86400]
+        pending_days = [d for d in sorted(target_days) if d not in already_audited_days]
+        stats["coh3stats_days_pending"] = len(pending_days)
+
+        if pending_days:
+            try:
+                coh3stats_by_pid, ok_days, total_scanned, _fail_days = coh3stats.fetch_open_data_days_matches(
+                    day_timestamps=pending_days,
+                    players=synced_players,
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                    races=getattr(relic, "races", None) or None,
+                    match_types=getattr(relic, "match_types", None) or None,
+                )
+                newly_audited_days = ok_days
+                stats["coh3stats_days_audited"] = len(ok_days)
+                stats["coh3stats_total_scanned"] = total_scanned
+            except Exception as exc:
+                logger.warning(
+                    "[3ª CHECAGEM] Consulta ao Open Data oficial do coh3stats.com falhou (seguindo com Relic Direta): %s",
+                    redact_secrets(exc),
+                )
 
     relic_pairs: dict[tuple[int, int], dict[str, Any]] = {}
     for pid, rows in relic_by_pid.items():
@@ -827,9 +866,12 @@ def run_third_cross_check(
                 relic_pairs[(mid, int(pid))] = m
 
     coh3stats_pairs: dict[tuple[int, int], dict[str, Any]] = {}
+    coh3stats_all_br_mids: set[int] = set()
     for pid, rows in coh3stats_by_pid.items():
         for m in rows:
             mid = int(m.get("match_id", 0) or 0)
+            if mid > 0:
+                coh3stats_all_br_mids.add(mid)
             comp_ts = int(m.get("completion_time", 0) or 0)
             if mid > 0 and comp_ts >= recovery_min_completion_ts:
                 coh3stats_pairs[(mid, int(pid))] = m
@@ -837,6 +879,7 @@ def run_third_cross_check(
     relic_mids = {mid for mid, _ in relic_pairs}
     c3s_mids = {mid for mid, _ in coh3stats_pairs}
     stats["relic_direct_unique"] = len(relic_mids)
+    stats["coh3stats_br_matches"] = len(coh3stats_all_br_mids)
     stats["coh3stats_unique"] = len(c3s_mids)
     stats["cross_confirmed"] = len(relic_mids & c3s_mids)
 
@@ -941,12 +984,24 @@ def run_third_cross_check(
             else:
                 stats["recovered_from_relic_only"] += 1
 
+    if newly_audited_days:
+        _save_audited_open_data_days(db, already_audited_days | set(newly_audited_days))
+
+    if stats["coh3stats_days_pending"] == 0:
+        c3s_status = "em dia (cache diário OK)"
+    else:
+        c3s_status = (
+            f"{stats['coh3stats_unique']} na janela "
+            f"({stats['coh3stats_br_matches']} BR em {stats['coh3stats_total_scanned']} jogos; "
+            f"{stats['coh3stats_days_audited']}/{stats['coh3stats_days_pending']} dia(s) OK)"
+        )
+
     logger.info(
-        "[3ª CHECAGEM CRUZADA] Relic Direta: %d partida(s) | coh3stats: %d partida(s) (%d/%d perfis OK) | Cruzadas: %d | Recuperadas p/ Discord: %d (Ambas: %d, Relic: %d, coh3stats: %d, Reenfileiradas: %d)",
+        "[3ª CHECAGEM CRUZADA] Relic Direta: %d partida(s) (%d/%d contas OK) | coh3stats Open Data: %s | Cruzadas: %d | Recuperadas p/ Discord: %d (Ambas: %d, Relic: %d, coh3stats: %d, Reenfileiradas: %d)",
         stats["relic_direct_unique"],
-        stats["coh3stats_unique"],
-        stats["coh3stats_ok_players"],
-        stats["coh3stats_total_players"],
+        stats["relic_direct_ok_accounts"],
+        stats["relic_direct_total_accounts"],
+        c3s_status,
         stats["cross_confirmed"],
         stats["recovered_unique"],
         stats["recovered_from_both"],
@@ -1136,12 +1191,14 @@ def run_cycle(
                     db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
                     players_changed = True
 
-        # 3ª Checagem Cruzada: API Direta da Relic em lote (getRecentMatchHistory) × coh3stats.com
+        # 3ª Checagem Cruzada: API Direta da Relic (getRecentMatchHistory) × Open Data oficial do coh3stats.com
         third_check_stats: dict[str, int] = {
             "recovered_unique": 0,
             "cross_confirmed": 0,
-            "coh3stats_ok_players": 0,
-            "coh3stats_total_players": 0,
+            "relic_direct_ok_accounts": 0,
+            "relic_direct_total_accounts": 0,
+            "coh3stats_days_audited": 0,
+            "coh3stats_days_pending": 0,
         }
         if enable_third_check and pre_synced_pids:
             refreshed_active = db.get_active_players()
@@ -1161,6 +1218,7 @@ def run_cycle(
                 recovery_min_completion_ts=recovery_min_completion_ts,
                 live_marker=live_marker,
                 pending_max_age_sec=pending_max_age_sec,
+                window_sec=window_sec,
             )
 
         newly_finished.sort(key=lambda x: x["completion_time"])
@@ -1304,13 +1362,19 @@ def run_cycle(
                     logger.error("Falha ao atualizar Mensagem Fixada após dupla checagem; marcada para retentativa.")
 
             remaining_pending = db.count_pending_matches(max_age_sec=pending_max_age_sec)
+            c3s_final_label = (
+                "em dia"
+                if third_check_stats.get("coh3stats_days_pending", 0) == 0
+                else f"{third_check_stats.get('coh3stats_days_audited', 0)}/{third_check_stats.get('coh3stats_days_pending', 0)} dia(s) OK"
+            )
             logger.info(
-                "[TRIPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic×coh3stats): +%d recuperada(s) (%d/%d coh3stats OK) | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[TRIPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d recuperada(s) | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
+                third_check_stats.get("relic_direct_ok_accounts", 0),
+                third_check_stats.get("relic_direct_total_accounts", 0),
+                c3s_final_label,
                 third_check_stats.get("recovered_unique", 0),
-                third_check_stats.get("coh3stats_ok_players", 0),
-                third_check_stats.get("coh3stats_total_players", 0),
                 cards_confirmed,
                 remaining_pending,
                 cleanup_hours,
