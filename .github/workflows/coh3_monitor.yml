@@ -1,4 +1,5 @@
 name: CoH3 Brasil Monitor (Hardened)
+
 on:
   schedule:
     # Horario ativo no Brasil (11:00 as 02:00 BRT = 14:00-23:59 e 00:00-04:59 UTC): roda a cada 15 minutos fora de pico!
@@ -35,22 +36,27 @@ on:
         required: false
         default: false
         type: boolean
+
 permissions: {}
+
 concurrency:
   group: coh3-br-monitor-state
   cancel-in-progress: false
+
 jobs:
   sync-matches:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: write
+
     steps:
       - name: Checkout seguro na branch ativa (SHA imutavel)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
+
       - name: Preparar renderizador grafico leve (Pillow + fontes PT-BR)
         run: |
           set -euo pipefail
@@ -61,3 +67,102 @@ jobs:
           fi
           if [ ! -d "/usr/share/fonts/truetype/dejavu" ]; then
             sudo apt-get update -qq || true
+            sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-roboto 2>/dev/null || true
+          fi
+
+      - name: Executar ciclo automatico CoH3 -> Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ADD_PLAYER: ${{ inputs.add_custom_player }}
+          INPUT_REMOVE_PLAYER: ${{ inputs.remove_custom_player }}
+          INPUT_SEND_TEST: ${{ inputs.send_initial_test }}
+          INPUT_FORCE_RANK: ${{ inputs.force_rank_scan }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "monitor.py" ]; then
+            FOUND_FILE="$(find . -maxdepth 2 -name monitor.py -print -quit)"
+            if [ -z "${FOUND_FILE}" ]; then
+              echo "::error::Arquivos do projeto (monitor.py) nao encontrados no repositorio."
+              exit 1
+            fi
+            cd "$(dirname "${FOUND_FILE}")"
+          fi
+
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "::error::O Secret DISCORD_WEBHOOK_URL ainda nao foi configurado em Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          # Valores repassados com seguranca via argv para validacao numerica estrita no Python (zero shell eval)
+          if [ -n "${INPUT_ADD_PLAYER:-}" ]; then
+            python3 manage.py add-player -- "${INPUT_ADD_PLAYER}"
+          fi
+
+          if [ -n "${INPUT_REMOVE_PLAYER:-}" ]; then
+            python3 manage.py remove-player -- "${INPUT_REMOVE_PLAYER}"
+          fi
+
+          if [ "${INPUT_FORCE_RANK:-false}" = "true" ] || [ "${EVENT_NAME:-}" = "push" ]; then
+            python3 monitor.py --once --force-rank-scan
+          else
+            python3 monitor.py --once
+          fi
+
+          if [ "${INPUT_SEND_TEST:-false}" = "true" ]; then
+            python3 manage.py test-discord
+          fi
+
+      - name: Auditoria anti-vazamento e persistencia automatica de estado
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f "monitor.py" ]; then
+            FOUND_FILE="$(find . -maxdepth 2 -name monitor.py -print -quit)"
+            if [ -n "${FOUND_FILE}" ]; then
+              cd "$(dirname "${FOUND_FILE}")"
+            fi
+          fi
+
+          if grep -RInE "discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+" config.json *.csv *.json 2>/dev/null; then
+            echo "::error::Bloqueio de seguranca acionado: padrao de URL de Webhook detectado em arquivo rastreado!"
+            exit 1
+          fi
+
+          STATE_FILES=(coh3_br_matches.db config.json top20_br_por_modo.csv top20_br_por_modo.json jogadores_br_steam.csv jogadores_br_steam.json)
+          for state_file in "${STATE_FILES[@]}"; do
+            if [ -f "${state_file}" ]; then
+              git add "${state_file}"
+            fi
+          done
+
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteracao de estado neste ciclo; nenhum commit necessario."
+            exit 0
+          fi
+
+          BRANCH_NAME="${TARGET_BRANCH:-main}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(state): atualizar catalogo e ranking CoH3 BR [skip ci]"
+
+          for attempt in 1 2 3; do
+            if ! git pull --rebase -X theirs origin "${BRANCH_NAME}"; then
+              for sf in "${STATE_FILES[@]}"; do
+                [ -f "${sf}" ] && git checkout --theirs -- "${sf}" 2>/dev/null || true
+                [ -f "${sf}" ] && git add "${sf}" 2>/dev/null || true
+              done
+              GIT_EDITOR=true git rebase --continue || git rebase --abort || true
+            fi
+            if git push origin "HEAD:${BRANCH_NAME}"; then
+              echo "Estado persistido com sucesso na branch ${BRANCH_NAME}."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::Falha ao enviar estado atualizado para origin/${BRANCH_NAME} apos 3 tentativas."
+          exit 1
