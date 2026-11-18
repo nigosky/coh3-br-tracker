@@ -10,17 +10,17 @@ mode,br_rank,rank_delta,is_monitored_31,profile_id,steam_id,original_alias,displ
 1v1,9,0,nao,1356223,76561198188738303,Manu-chan,Manu-chan,1292.3,3/4,,1299,1278,1300,173,137,https://coh3stats.com/players/1356223
 1v1,10,0,nao,7375,76561198047826077,pigote,pigote,1290.0,3/4,1417,1283,1170,,339,280,https://coh3stats.com/players/7375
 1v1,11,0,nao,207342,76561197961608539,AkvaBr,AkvaBr,1263.0,2/4,1105,,1421,,1257,1223,https://coh3stats.com/players/207342
-1v1,12,2,nao,1707,76561197998487466,Anhangá,Anhangá,1249.0,2/4,1123,,,1375,3047,2953,https://coh3stats.com/players/1707
-1v1,13,-1,sim,1114404,76561198024118058,Vikitor,Vikitor,1248.0,1/4,,,,1248,30,16,https://coh3stats.com/players/1114404
-1v1,14,-1,nao,1297870,76561198047131936,AVESTRUZ TE SEDUZ,AVESTRUZ TE SEDUZ,1239.0,1/4,1239,,,,822,786,https://coh3stats.com/players/1297870
+1v1,12,1,sim,1114404,76561198024118058,Vikitor,Vikitor,1248.0,1/4,,,,1248,30,16,https://coh3stats.com/players/1114404
+1v1,13,-1,nao,1707,76561197998487466,Anhangá,Anhangá,1242.5,2/4,1123,,,1362,3047,2954,https://coh3stats.com/players/1707
+1v1,14,0,nao,1297870,76561198047131936,AVESTRUZ TE SEDUZ,AVESTRUZ TE SEDUZ,1239.0,1/4,1239,,,,822,786,https://coh3stats.com/players/1297870
 1v1,15,0,sim,900358,76561198070545853,Margheriti,Margheriti,1216.0,2/4,,1137,,1295,135,118,https://coh3stats.com/players/900358
 1v1,16,0,nao,217935,76561197981477167,sakul,sakul,1214.0,1/4,,,1214,,1344,1390,https://coh3stats.com/players/217935
 1v1,17,0,sim,1088455,76561198108568598,luiz_fmh,luiz_fmh,1196.8,4/4,1317,1240,1032,1198,471,413,https://coh3stats.com/players/1088455
 1v1,18,0,nao,12522,76561198108513961,Caramez,Caramez,1189.5,2/4,1198,1181,,,995,998,https://coh3stats.com/players/12522
 1v1,19,0,nao,31145,76561197985268629,vonMises,vonMises,1187.5,2/4,,1157,,1218,35,24,https://coh3stats.com/players/31145
-1v1,20,1,nao,1274951,76561198275024539,Anglel,Anglel,1166.7,3/4,1138,,1129,1233,76,49,https://coh3stats.com/players/1274951
-1v1,22,0,sim,735940,76561198034510845,Jimmy Duelista,Jimmy Duelista,1147.5,2/4,1170,,,1125,457,427,https://coh3stats.com/players/735940
-1v1,23,0,sim,110078,76561198024839791,Bineto,Bineto,1145.0,1/4,,,1145,,276,269,https://coh3stats.com/players/110078
+1v1,20,0,nao,1274951,76561198275024539,Anglel,Anglel,1161.3,3/4,1138,,1129,1217,76,50,https://coh3stats.com/players/1274951
+1v1,21,1,sim,735940,76561198034510845,Jimmy Duelista,Jimmy Duelista,1147.5,2/4,1170,,,1125,457,427,https://coh3stats.com/players/735940
+1v1,22,1,sim,110078,76561198024839791,Bineto,Bineto,1145.0,1/4,,,1145,,276,269,https://coh3stats.com/players/110078
 1v1,27,0,sim,559962,76561198062871244,É o Gabe,É o Gabe,1113.0,1/4,1113,,,,54,38,https://coh3stats.com/players/559962
 1v1,34,0,sim,1282592,76561198028644178,SapoBoi_BR,SapoBoi_BR,1076.0,1/4,,,,1076,59,52,https://coh3stats.com/players/1282592
 1v1,43,0,sim,1143262,76561198105073246,Mazzaroppee,Mazzaroppee,978.0,1/4,,,978,,47,52,https://coh3stats.com/players/1143262
@@ -30,11 +30,11 @@ mode,br_rank,rank_delta,is_monitored_31,profile_id,steam_id,original_alias,displ
 1v1,82,0,sim,35952,76561198121484554,Sauronzinho,Sauronzinho,1156.0,1/4,,,,1156,24,20,https://coh3stats.com/players/35952
 1v1,83,0,sim,366826,76561198014985380,Lem22,Lem22,1153.0,4/4,1308,1080,1127,1097,100,76,https://coh3stats.com/players/366826
 1v1,84,0,sim,1005730,76561199791811246,arc,arc,1137.0,1/4,,1137,,,6,2,https://coh3stats.com/players/1005730
-1v1,85,-1,sim,55693,76561197996817129,BinhoBiceps,BinhoBiceps,1128.2,4/4,1166,1086,1249,1012,39,28,https://coh3stats.com/players/55693
-1v1,86,-1,sim,26910,76561197963741792,nigo_BR ᵀᴹ,nigo_BR ᵀᴹ,1090.8,4/4,1072,1151,1096,1044,87,70,https://coh3stats.com/players/26910
-1v1,87,-1,sim,6557,76561198135142137,Dragoness,Dragoness,1076.0,2/4,1034,,,1118,17,11,https://coh3stats.com/players/6557
-1v1,88,-1,sim,32922,76561197986271242,Showtaro,Showtaro,1070.0,4/4,1067,1088,1040,1085,15,9,https://coh3stats.com/players/32922
-1v1,89,-1,sim,153969,76561198005412401,Cunha,Cunha,1049.0,4/4,991,1021,1049,1135,41,34,https://coh3stats.com/players/153969
+1v1,85,0,sim,55693,76561197996817129,BinhoBiceps,BinhoBiceps,1128.2,4/4,1166,1086,1249,1012,39,28,https://coh3stats.com/players/55693
+1v1,86,0,sim,26910,76561197963741792,nigo_BR ᵀᴹ,nigo_BR ᵀᴹ,1090.8,4/4,1072,1151,1096,1044,87,70,https://coh3stats.com/players/26910
+1v1,87,0,sim,6557,76561198135142137,Dragoness,Dragoness,1076.0,2/4,1034,,,1118,17,11,https://coh3stats.com/players/6557
+1v1,88,0,sim,32922,76561197986271242,Showtaro,Showtaro,1070.0,4/4,1067,1088,1040,1085,15,9,https://coh3stats.com/players/32922
+1v1,89,0,sim,153969,76561198005412401,Cunha,Cunha,1049.0,4/4,991,1021,1049,1135,41,34,https://coh3stats.com/players/153969
 1v1,90,0,sim,5768,76561198205052385,The Dog,The Dog,996.2,4/4,993,1026,996,970,34,35,https://coh3stats.com/players/5768
 1v1,91,0,sim,3895,76561198054318813,Liquid,Liquid,994.0,1/4,,,994,,1,1,https://coh3stats.com/players/3895
 1v1,92,0,sim,19747,76561198058548575,twitch.tv/luck22ai,twitch.tv/luck22ai,958.0,2/4,955,961,,,0,2,https://coh3stats.com/players/19747
@@ -92,7 +92,7 @@ Team Games,4,0,nao,71299,76561198089205644,Bruno.s,Bruno.s,1583.0,1/8,1583,,,,14
 Team Games,5,0,sim,366826,76561198014985380,Lem22,Lem22,1563.0,1/8,,1563,,,189,139,https://coh3stats.com/players/366826
 Team Games,6,0,sim,509690,76561198053226112,Alekel,Alekel,1524.5,4/8,1669,1338,1550,1541,5921,5152,https://coh3stats.com/players/509690
 Team Games,7,0,sim,1005730,76561199791811246,arc,arc,1512.0,2/8,,1512,,,332,251,https://coh3stats.com/players/1005730
-Team Games,8,0,sim,79327,76561197963172584,Chacineiro,Chacineiro,1496.3,3/8,1520,1451,,1518,289,183,https://coh3stats.com/players/79327
+Team Games,8,0,sim,79327,76561197963172584,Chacineiro,Chacineiro,1497.7,3/8,1520,1451,,1522,290,184,https://coh3stats.com/players/79327
 Team Games,9,0,nao,1297821,76561198722284920,General Winter,General Winter,1489.4,7/8,1579,1327,1417,1554,313,164,https://coh3stats.com/players/1297821
 Team Games,10,0,nao,31145,76561197985268629,vonMises,vonMises,1480.0,1/8,,1480,,,39,12,https://coh3stats.com/players/31145
 Team Games,11,0,nao,2583,76561198142536814,Manupktd,Manupktd,1459.0,1/8,1459,,,,576,505,https://coh3stats.com/players/2583
@@ -106,25 +106,25 @@ Team Games,18,0,sim,153969,76561198005412401,Cunha,Cunha,1350.5,2/8,,1348,,1353,
 Team Games,19,0,sim,55693,76561197996817129,BinhoBiceps,BinhoBiceps,1335.2,4/8,1233,1401,1354,,292,202,https://coh3stats.com/players/55693
 Team Games,20,0,nao,1159891,76561199473666246,GDI,GDI,1333.0,1/8,,,,1333,100,77,https://coh3stats.com/players/1159891
 Team Games,23,0,sim,6557,76561198135142137,Dragoness,Dragoness,1305.0,5/8,1349,,1259,1329,1809,1728,https://coh3stats.com/players/6557
-Team Games,26,0,sim,32922,76561197986271242,Showtaro,Showtaro,1286.8,5/8,,1396,1190,1261,255,180,https://coh3stats.com/players/32922
-Team Games,28,0,sim,26910,76561197963741792,nigo_BR ᵀᴹ,nigo_BR ᵀᴹ,1279.0,2/8,1279,,,,142,120,https://coh3stats.com/players/26910
-Team Games,30,0,sim,691,76561198001604015,Vítor,Vítor,1272.0,2/8,,1289,,1255,53,32,https://coh3stats.com/players/691
-Team Games,32,0,sim,35952,76561198121484554,Sauronzinho,Sauronzinho,1271.0,1/8,,,,1271,185,184,https://coh3stats.com/players/35952
-Team Games,46,0,sim,1088455,76561198108568598,luiz_fmh,luiz_fmh,1217.7,7/8,1382,1132,1048,1223,1032,839,https://coh3stats.com/players/1088455
-Team Games,47,0,sim,900358,76561198070545853,Margheriti,Margheriti,1217.0,5/8,,1212,907,1376,533,463,https://coh3stats.com/players/900358
-Team Games,51,0,sim,19747,76561198058548575,twitch.tv/luck22ai,twitch.tv/luck22ai,1199.6,5/8,,994,1280,1222,432,381,https://coh3stats.com/players/19747
-Team Games,55,0,sim,991764,76561198115923932,SaNgar [BR],SaNgar [BR],1187.7,3/8,1270,1256,,1037,123,86,https://coh3stats.com/players/991764
-Team Games,59,-1,sim,1022333,76561198264285149,gaules,gaules,1177.0,5/8,1005,,1212,1228,1146,1110,https://coh3stats.com/players/1022333
-Team Games,62,0,sim,648514,76561198372757032,Halokoo,Halokoo,1171.3,6/8,1150,1042,1322,,987,946,https://coh3stats.com/players/648514
-Team Games,65,0,sim,559962,76561198062871244,É o Gabe,É o Gabe,1151.8,6/8,1128,1196,,1132,1017,944,https://coh3stats.com/players/559962
-Team Games,66,0,sim,1143262,76561198105073246,Mazzaroppee,Mazzaroppee,1148.0,2/8,,,1148,,259,239,https://coh3stats.com/players/1143262
-Team Games,67,0,sim,3895,76561198054318813,Liquid,Liquid,1147.5,2/8,,,1148,,491,479,https://coh3stats.com/players/3895
-Team Games,76,0,sim,944488,76561198063124280,gbytes™,gbytes™,1128.2,4/8,,1240,1216,1028,260,235,https://coh3stats.com/players/944488
-Team Games,79,0,sim,337051,76561197981615184,Maiti,Maiti,1124.0,4/8,,1016,1232,,1238,1220,https://coh3stats.com/players/337051
-Team Games,83,0,sim,1226910,76561198140782132,Lupus Alba,Lupus Alba,1113.6,5/8,1100,,1012,1178,363,327,https://coh3stats.com/players/1226910
-Team Games,93,0,sim,1282592,76561198028644178,SapoBoi_BR,SapoBoi_BR,1085.8,4/8,,,1064,1108,482,489,https://coh3stats.com/players/1282592
-Team Games,101,0,sim,735940,76561198034510845,Jimmy Duelista,Jimmy Duelista,1074.0,3/8,1143,,,1040,271,261,https://coh3stats.com/players/735940
-Team Games,135,0,sim,5768,76561198205052385,The Dog,The Dog,1003.5,6/8,1030,928,1020,992,2157,2262,https://coh3stats.com/players/5768
-Team Games,248,1,sim,13450,76561198284234077,7 DIVISAO PHANTOM,7 DIVISAO PHANTOM,858.1,8/8,1004,932,750,746,1872,2021,https://coh3stats.com/players/13450
-Team Games,388,0,sim,639157,76561197979883434,Itaperuna,Itaperuna,1308.1,7/8,914,1258,1338,1524,135,47,https://coh3stats.com/players/639157
-Team Games,389,0,sim,110078,76561198024839791,Bineto,Bineto,1077.6,8/8,1058,1097,1027,1128,1395,1304,https://coh3stats.com/players/110078
+Team Games,24,364,sim,639157,76561197979883434,Itaperuna,Itaperuna,1294.0,1/8,,,1294,,17,8,https://coh3stats.com/players/639157
+Team Games,27,-1,sim,32922,76561197986271242,Showtaro,Showtaro,1286.8,5/8,,1396,1190,1261,255,180,https://coh3stats.com/players/32922
+Team Games,29,-1,sim,26910,76561197963741792,nigo_BR ᵀᴹ,nigo_BR ᵀᴹ,1279.0,2/8,1279,,,,142,120,https://coh3stats.com/players/26910
+Team Games,31,-1,sim,691,76561198001604015,Vítor,Vítor,1272.0,2/8,,1289,,1255,53,32,https://coh3stats.com/players/691
+Team Games,33,-1,sim,35952,76561198121484554,Sauronzinho,Sauronzinho,1271.0,1/8,,,,1271,185,184,https://coh3stats.com/players/35952
+Team Games,47,-1,sim,1088455,76561198108568598,luiz_fmh,luiz_fmh,1217.7,7/8,1382,1132,1048,1223,1032,839,https://coh3stats.com/players/1088455
+Team Games,48,-1,sim,900358,76561198070545853,Margheriti,Margheriti,1217.0,5/8,,1212,907,1376,533,463,https://coh3stats.com/players/900358
+Team Games,52,-1,sim,19747,76561198058548575,twitch.tv/luck22ai,twitch.tv/luck22ai,1199.6,5/8,,994,1280,1222,432,381,https://coh3stats.com/players/19747
+Team Games,56,-1,sim,991764,76561198115923932,SaNgar [BR],SaNgar [BR],1187.7,3/8,1270,1256,,1037,123,86,https://coh3stats.com/players/991764
+Team Games,59,0,sim,1022333,76561198264285149,gaules,gaules,1178.6,5/8,1005,,1216,1228,1147,1110,https://coh3stats.com/players/1022333
+Team Games,63,-1,sim,648514,76561198372757032,Halokoo,Halokoo,1171.3,6/8,1150,1042,1322,,987,946,https://coh3stats.com/players/648514
+Team Games,66,-1,sim,559962,76561198062871244,É o Gabe,É o Gabe,1151.8,6/8,1128,1196,,1132,1017,944,https://coh3stats.com/players/559962
+Team Games,67,-1,sim,1143262,76561198105073246,Mazzaroppee,Mazzaroppee,1148.0,2/8,,,1148,,259,239,https://coh3stats.com/players/1143262
+Team Games,68,-1,sim,3895,76561198054318813,Liquid,Liquid,1147.5,2/8,,,1148,,491,479,https://coh3stats.com/players/3895
+Team Games,77,-1,sim,944488,76561198063124280,gbytes™,gbytes™,1128.2,4/8,,1240,1216,1028,260,235,https://coh3stats.com/players/944488
+Team Games,80,-1,sim,337051,76561197981615184,Maiti,Maiti,1124.0,4/8,,1016,1232,,1238,1220,https://coh3stats.com/players/337051
+Team Games,84,-1,sim,1226910,76561198140782132,Lupus Alba,Lupus Alba,1113.6,5/8,1100,,1012,1178,363,327,https://coh3stats.com/players/1226910
+Team Games,94,-1,sim,1282592,76561198028644178,SapoBoi_BR,SapoBoi_BR,1085.8,4/8,,,1064,1108,482,489,https://coh3stats.com/players/1282592
+Team Games,102,-1,sim,735940,76561198034510845,Jimmy Duelista,Jimmy Duelista,1074.0,3/8,1143,,,1040,271,261,https://coh3stats.com/players/735940
+Team Games,137,-2,sim,5768,76561198205052385,The Dog,The Dog,1003.5,6/8,1030,928,1020,992,2157,2262,https://coh3stats.com/players/5768
+Team Games,252,-4,sim,13450,76561198284234077,7 DIVISAO PHANTOM,7 DIVISAO PHANTOM,856.0,8/8,996,932,750,746,1872,2022,https://coh3stats.com/players/13450
+Team Games,390,-1,sim,110078,76561198024839791,Bineto,Bineto,1077.6,8/8,1058,1097,1027,1128,1395,1304,https://coh3stats.com/players/110078
