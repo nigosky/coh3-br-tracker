@@ -285,9 +285,9 @@ def build_summary_list_payload(
     if rankings_by_mode and has_ranking_images:
         first_embed_added = False
         for m_key, m_title, fname1, fname2 in (
-            ("1v1", "🏆 RANKING BRASILEIRO — 1v1", "ranking_1v1.png", "ranking_1v1_p2.png"),
-            ("2v2", "🏆 RANKING BRASILEIRO — 2v2", "ranking_2v2.png", "ranking_2v2_p2.png"),
-            ("Team Games", "🏆 RANKING BRASILEIRO — JOGOS EM EQUIPE (3v3 + 4v4)", "ranking_team.png", "ranking_team_p2.png"),
+            ("1v1", "🏆 RANKING DIÁRIO BRASILEIRO — 1v1", "ranking_1v1.png", "ranking_1v1_p2.png"),
+            ("2v2", "🏆 RANKING DIÁRIO BRASILEIRO — 2v2", "ranking_2v2.png", "ranking_2v2_p2.png"),
+            ("Team Games", "🏆 RANKING DIÁRIO BRASILEIRO — JOGOS EM EQUIPE (3v3 + 4v4)", "ranking_team.png", "ranking_team_p2.png"),
         ):
             if not rankings_by_mode.get(m_key):
                 continue
@@ -301,9 +301,9 @@ def build_summary_list_payload(
             if not first_embed_added:
                 first_embed_added = True
                 desc_note = (
-                    f"🎯 **Ranking Top 20 + {unique_roster_count} brasileiros fixos** "
-                    f"• Partidas monitoradas exclusivamente dos **{unique_roster_count} jogadores da lista**\n"
-                    f"🟢 `▲` Subiu de posição   •   🔴 `▼` Perdeu posição"
+                    f"🎯 **Ranking Diário Top 20 + {unique_roster_count} brasileiros fixos** "
+                    f"• Atualizado 1x ao dia após **00:01 BRT**\n"
+                    f"🎮 Partidas monitoradas exclusivamente dos **{unique_roster_count} jogadores da lista**"
                 )
                 if unranked_guests:
                     desc_note += "\n⭐ *Aguardando 1ª ranqueada:* " + ", ".join(f"**{g}**" for g in unranked_guests[:8])
@@ -463,7 +463,7 @@ class DiscordWebhookClient:
             raise ValueError("URL de destino bloqueada pela política estrita do DiscordWebhookClient.")
 
         method_upper = method.upper()
-        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.2", "Accept-Encoding": "gzip"}
+        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.3", "Accept-Encoding": "gzip"}
         if method_upper in ("GET", "DELETE"):
             body = None
         elif files:

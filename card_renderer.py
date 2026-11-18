@@ -1286,11 +1286,11 @@ def render_ranking_table_png(
     sw = text_width(draw, sub_txt, s_fnt)
 
     mode_pt = format_mode_title_pt(mode_title)
-    title_txt = f"COH3 BRASIL  •  RANKING {mode_pt} (MÉDIA ELO)"
+    title_txt = f"COH3 BRASIL  •  RANKING DIÁRIO {mode_pt} (MÉDIA ELO)"
     t_fnt = pick_font(title_txt, size=16, bold=True, condensed=True)
     max_title_w = width - 44 - sw
     if text_width(draw, title_txt, t_fnt) > max_title_w:
-        title_txt = f"COH3 BRASIL • RANKING {mode_pt}"
+        title_txt = f"COH3 BRASIL • RANKING DIÁRIO {mode_pt}"
         title_txt, t_fnt = truncate_to_px(draw, title_txt, int(max_title_w), size=15, bold=True)
 
     draw.text((20, 9), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
@@ -1342,7 +1342,6 @@ def render_ranking_table_png(
         draw.rectangle((0, y, width, y + row_h), fill=r_bg)
         draw.line([(10, y + row_h - 1), (width - 10, y + row_h - 1)], fill=(34, 38, 46, 255), width=1)
 
-        rank_delta = int(entry.get("rank_delta", 0) or 0)
         elo_int = int(round(float(entry.get("avg_elo", 0))))
         wins = int(entry.get("wins", 0))
         losses = int(entry.get("losses", 0))
@@ -1355,11 +1354,7 @@ def render_ranking_table_png(
         rank_color = (250, 204, 21, 255) if rank_val == 1 else white
         r_str = str(rank_val)
         rw = text_width(draw, r_str, num_fnt)
-        if rank_delta != 0:
-            draw.text((34 - rw, y + 8), r_str, font=num_fnt, fill=rank_color)
-            _draw_rank_arrow(draw, cx=48, cy=y + 18, delta=rank_delta, size_scale=0.95)
-        else:
-            draw.text((46 - rw / 2, y + 8), r_str, font=num_fnt, fill=rank_color)
+        draw.text((46 - rw / 2, y + 8), r_str, font=num_fnt, fill=rank_color)
 
         e_str = str(elo_int)
         ew = text_width(draw, e_str, num_fnt)
