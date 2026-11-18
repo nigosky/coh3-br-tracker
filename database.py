@@ -1,34 +1,72 @@
-"""Persistência SQLite para jogadores escolhidos e partidas catalogadas."""
+"""Persistência SQLite otimizada e segura para jogadores monitorados, partidas e cache de avatares."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 
 class MatchDatabase:
-    """Gerencia o catálogo local de partidas e estado da mensagem fixada no Discord."""
+    """Gerencia o catálogo local SQLite com conexões reutilizáveis thread-local e transações atômicas."""
 
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
+        if self.db_path.is_symlink():
+            raise RuntimeError(f"Caminho do banco SQLite não pode ser symlink: {self.db_path}")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._local = threading.local()
+        self._all_conns_lock = threading.Lock()
+        self._all_conns: list[sqlite3.Connection] = []
         self._init_schema()
 
+    def __enter__(self) -> MatchDatabase:
+        return self
+
+    def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> None:
+        self.close()
+
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            return conn
+        conn = sqlite3.connect(self.db_path, timeout=15.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 15000")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA temp_store = MEMORY")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        # journal_mode=DELETE garante que 100% dos dados fiquem no arquivo único coh3_br_matches.db (compatível com Git)
+        conn.execute("PRAGMA journal_mode = DELETE")
+        self._local.conn = conn
+        with self._all_conns_lock:
+            self._all_conns.append(conn)
         return conn
 
+    def close(self) -> None:
+        """Fecha todas as conexões abertas de forma limpa (garantindo flush antes de commits Git)."""
+        with self._all_conns_lock:
+            conns = list(self._all_conns)
+            self._all_conns.clear()
+        self._local.conn = None
+        for conn in conns:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
     def _init_schema(self) -> None:
-        with self._connect() as conn:
+        conn = self._connect()
+        with conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS tracked_players (
                     profile_id INTEGER PRIMARY KEY,
                     alias TEXT NOT NULL,
+                    original_alias TEXT DEFAULT '',
                     steam_id TEXT DEFAULT '',
                     active INTEGER NOT NULL DEFAULT 1,
                     baseline_synced INTEGER NOT NULL DEFAULT 0,
@@ -39,6 +77,7 @@ class MatchDatabase:
                     match_id INTEGER NOT NULL,
                     tracked_profile_id INTEGER NOT NULL,
                     tracked_alias TEXT NOT NULL,
+                    tracked_steam_id TEXT DEFAULT '',
                     tracked_faction TEXT NOT NULL,
                     tracked_faction_short TEXT NOT NULL,
                     win INTEGER NOT NULL,
@@ -65,6 +104,9 @@ class MatchDatabase:
                 CREATE INDEX IF NOT EXISTS idx_matches_completion
                     ON recorded_matches (completion_time DESC);
 
+                CREATE INDEX IF NOT EXISTS idx_matches_pid_comp
+                    ON recorded_matches (tracked_profile_id, completion_time DESC);
+
                 CREATE TABLE IF NOT EXISTS bot_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -82,27 +124,36 @@ class MatchDatabase:
                     ON player_avatars (profile_id);
                 """
             )
-            try:
+            existing_match_cols = {
+                str(r["name"]) for r in conn.execute("PRAGMA table_info(recorded_matches)").fetchall()
+            }
+            if "tracked_steam_id" not in existing_match_cols:
                 conn.execute("ALTER TABLE recorded_matches ADD COLUMN tracked_steam_id TEXT DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass
-            try:
+
+            existing_player_cols = {
+                str(r["name"]) for r in conn.execute("PRAGMA table_info(tracked_players)").fetchall()
+            }
+            if "original_alias" not in existing_player_cols:
                 conn.execute("ALTER TABLE tracked_players ADD COLUMN original_alias TEXT DEFAULT ''")
-            except sqlite3.OperationalError:
-                pass
 
     def sync_tracked_players(self, players_cfg: list[dict[str, Any]]) -> None:
-        """Sincroniza a lista de jogadores monitorados do config.json com a tabela tracked_players."""
+        """Sincroniza em lote único a lista de jogadores monitorados do config.json."""
         now = int(time.time())
         active_ids: set[int] = set()
-        with self._connect() as conn:
-            for item in players_cfg:
-                pid = int(item["profile_id"])
-                active_ids.add(pid)
-                alias = str(item.get("alias") or f"Player {pid}")
-                orig_alias = str(item.get("original_alias") or alias)
-                steam_id = str(item.get("steam_id") or "")
-                conn.execute(
+        rows_to_upsert: list[tuple[int, str, str, str, int]] = []
+
+        for item in players_cfg:
+            pid = int(item["profile_id"])
+            active_ids.add(pid)
+            alias = str(item.get("alias") or f"Player {pid}")
+            orig_alias = str(item.get("original_alias") or alias)
+            steam_id = str(item.get("steam_id") or "")
+            rows_to_upsert.append((pid, alias, orig_alias, steam_id, now))
+
+        conn = self._connect()
+        with conn:
+            if rows_to_upsert:
+                conn.executemany(
                     """
                     INSERT INTO tracked_players (profile_id, alias, original_alias, steam_id, active, baseline_synced, added_at)
                     VALUES (?, ?, ?, ?, 1, 0, ?)
@@ -112,12 +163,14 @@ class MatchDatabase:
                             WHEN excluded.original_alias != '' THEN excluded.original_alias
                             ELSE tracked_players.original_alias
                         END,
-                        steam_id = CASE WHEN excluded.steam_id != '' THEN excluded.steam_id ELSE tracked_players.steam_id END,
+                        steam_id = CASE
+                            WHEN excluded.steam_id != '' THEN excluded.steam_id
+                            ELSE tracked_players.steam_id
+                        END,
                         active = 1
                     """,
-                    (pid, alias, orig_alias, steam_id, now),
+                    rows_to_upsert,
                 )
-            if active_ids:
                 placeholders = ",".join("?" for _ in active_ids)
                 conn.execute(
                     f"UPDATE tracked_players SET active = 0 WHERE profile_id NOT IN ({placeholders})",
@@ -127,48 +180,57 @@ class MatchDatabase:
                 conn.execute("UPDATE tracked_players SET active = 0")
 
     def get_active_players(self) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM tracked_players WHERE active = 1 ORDER BY alias COLLATE NOCASE"
-            ).fetchall()
+        rows = self._connect().execute(
+            "SELECT * FROM tracked_players WHERE active = 1 ORDER BY alias COLLATE NOCASE"
+        ).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_baseline_synced(self, profile_id: int, alias: str | None = None, steam_id: str | None = None) -> None:
-        with self._connect() as conn:
-            if alias and steam_id:
-                conn.execute(
-                    "UPDATE tracked_players SET baseline_synced = 1, alias = ?, steam_id = ? WHERE profile_id = ?",
-                    (alias, steam_id, profile_id),
-                )
-            elif alias:
-                conn.execute(
-                    "UPDATE tracked_players SET baseline_synced = 1, alias = ? WHERE profile_id = ?",
-                    (alias, profile_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE tracked_players SET baseline_synced = 1 WHERE profile_id = ?",
-                    (profile_id,),
-                )
-
-    def match_exists(self, match_id: int, tracked_profile_id: int) -> bool:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM recorded_matches WHERE match_id = ? AND tracked_profile_id = ?",
-                (match_id, tracked_profile_id),
-            ).fetchone()
-        return row is not None
-
-    def insert_match(self, match: dict[str, Any], discord_message_id: str | None = None) -> bool:
-        """Grava uma partida caso ainda não exista. Retorna True se foi inserida agora."""
-        if self.match_exists(match["match_id"], match["tracked_profile_id"]):
-            return False
-
-        now = int(time.time())
-        with self._connect() as conn:
+    def mark_baseline_synced(
+        self,
+        profile_id: int,
+        alias: str | None = None,
+        steam_id: str | None = None,
+    ) -> None:
+        conn = self._connect()
+        with conn:
             conn.execute(
                 """
-                INSERT INTO recorded_matches (
+                UPDATE tracked_players
+                SET baseline_synced = 1,
+                    alias = COALESCE(NULLIF(?, ''), alias),
+                    steam_id = COALESCE(NULLIF(?, ''), steam_id)
+                WHERE profile_id = ?
+                """,
+                (alias or "", steam_id or "", int(profile_id)),
+            )
+
+    def match_exists(self, match_id: int, tracked_profile_id: int) -> bool:
+        row = self._connect().execute(
+            "SELECT 1 FROM recorded_matches WHERE match_id = ? AND tracked_profile_id = ?",
+            (int(match_id), int(tracked_profile_id)),
+        ).fetchone()
+        return row is not None
+
+    def get_player_match_ids(self, tracked_profile_id: int, match_ids: list[int]) -> set[int]:
+        """Retorna em uma única consulta quais match_ids da lista já estão gravados para o jogador."""
+        if not match_ids:
+            return set()
+        clean_ids = [int(m) for m in match_ids]
+        placeholders = ",".join("?" for _ in clean_ids)
+        rows = self._connect().execute(
+            f"SELECT match_id FROM recorded_matches WHERE tracked_profile_id = ? AND match_id IN ({placeholders})",
+            (int(tracked_profile_id), *clean_ids),
+        ).fetchall()
+        return {int(r["match_id"]) for r in rows}
+
+    def insert_match(self, match: dict[str, Any], discord_message_id: str | None = None) -> bool:
+        """Grava partida atomicamente com INSERT OR IGNORE (sem race condition). Retorna True se foi inédita."""
+        now = int(time.time())
+        conn = self._connect()
+        with conn:
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO recorded_matches (
                     match_id, tracked_profile_id, tracked_alias, tracked_steam_id, tracked_faction,
                     tracked_faction_short, win, resulttype, mode, matchtype_id,
                     map_raw, map_clean, start_time, completion_time, duration_sec,
@@ -177,39 +239,51 @@ class MatchDatabase:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    match["match_id"],
-                    match["tracked_profile_id"],
-                    match["tracked_alias"],
+                    int(match["match_id"]),
+                    int(match["tracked_profile_id"]),
+                    str(match["tracked_alias"]),
                     str(match.get("tracked_steam_id") or ""),
-                    match["tracked_faction"],
-                    match["tracked_faction_short"],
+                    str(match["tracked_faction"]),
+                    str(match["tracked_faction_short"]),
                     1 if match["win"] else 0,
-                    match["resulttype"],
-                    match["mode"],
-                    match["matchtype_id"],
-                    match["map_raw"],
-                    match["map_clean"],
-                    match["start_time"],
-                    match["completion_time"],
-                    match["duration_sec"],
-                    match["old_elo"],
-                    match["new_elo"],
-                    json.dumps(match["allies"], ensure_ascii=False),
-                    json.dumps(match["opponents"], ensure_ascii=False),
+                    int(match["resulttype"]),
+                    str(match["mode"]),
+                    int(match["matchtype_id"]),
+                    str(match["map_raw"]),
+                    str(match["map_clean"]),
+                    int(match["start_time"]),
+                    int(match["completion_time"]),
+                    int(match["duration_sec"]),
+                    match.get("old_elo"),
+                    match.get("new_elo"),
+                    json.dumps(match["allies"], ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(match["opponents"], ensure_ascii=False, separators=(",", ":")),
                     "{}",
-                    1 if match["has_replay"] else 0,
-                    match["coh3stats_url"],
+                    1 if match.get("has_replay") else 0,
+                    str(match["coh3stats_url"]),
                     discord_message_id,
                     now,
                 ),
             )
-        return True
+        return cur.rowcount > 0
 
     def update_match_discord_id(self, match_id: int, tracked_profile_id: int, message_id: str) -> None:
-        with self._connect() as conn:
+        conn = self._connect()
+        with conn:
             conn.execute(
                 "UPDATE recorded_matches SET discord_message_id = ? WHERE match_id = ? AND tracked_profile_id = ?",
-                (message_id, match_id, tracked_profile_id),
+                (str(message_id), int(match_id), int(tracked_profile_id)),
+            )
+
+    def update_matches_discord_id_batch(self, records: list[dict[str, Any]], message_id: str) -> None:
+        """Atualiza o discord_message_id de todos os registros agrupados da mesma partida em uma transação."""
+        if not records or not message_id:
+            return
+        conn = self._connect()
+        with conn:
+            conn.executemany(
+                "UPDATE recorded_matches SET discord_message_id = ? WHERE match_id = ? AND tracked_profile_id = ?",
+                [(str(message_id), int(r["match_id"]), int(r["tracked_profile_id"])) for r in records],
             )
 
     def get_recent_recorded_matches(
@@ -217,34 +291,24 @@ class MatchDatabase:
         limit: int = 15,
         only_active_players: bool = True,
     ) -> list[dict[str, Any]]:
-        with self._connect() as conn:
-            if only_active_players:
-                rows = conn.execute(
-                    """
-                    SELECT rm.*,
-                           COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
-                           COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
-                    FROM recorded_matches rm
-                    JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
-                    WHERE tp.active = 1
-                    ORDER BY rm.completion_time DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT rm.*,
-                           COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
-                           COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
-                    FROM recorded_matches rm
-                    LEFT JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
-                    ORDER BY rm.completion_time DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
+        safe_limit = max(1, min(int(limit), 500))
+        join_clause = (
+            "JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id WHERE tp.active = 1"
+            if only_active_players
+            else "LEFT JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id"
+        )
+        rows = self._connect().execute(
+            f"""
+            SELECT rm.*,
+                   COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
+                   COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
+            FROM recorded_matches rm
+            {join_clause}
+            ORDER BY rm.completion_time DESC
+            LIMIT ?
+            """,
+            (safe_limit,),
+        ).fetchall()
 
         results: list[dict[str, Any]] = []
         for r in rows:
@@ -255,37 +319,48 @@ class MatchDatabase:
                 d["tracked_alias"] = disp_alias
             d["win"] = bool(d["win"])
             d["has_replay"] = bool(d["has_replay"])
-            d["allies"] = json.loads(d.pop("allies_json"))
-            d["opponents"] = json.loads(d.pop("opponents_json"))
-            d["counters"] = json.loads(d.pop("counters_json"))
+            d["allies"] = json.loads(d.pop("allies_json") or "[]")
+            d["opponents"] = json.loads(d.pop("opponents_json") or "[]")
+            d.pop("counters_json", None)
+            d["counters"] = {}
             results.append(d)
         return results
 
-    def get_cached_avatar(self, steam_id: str = "", profile_id: int = 0, max_age_sec: int = 7 * 86400) -> bytes | None:
+    def get_cached_avatar(
+        self,
+        steam_id: str = "",
+        profile_id: int = 0,
+        max_age_sec: int = 7 * 86400,
+    ) -> bytes | None:
         now = int(time.time())
-        with self._connect() as conn:
-            row = None
-            if steam_id:
-                row = conn.execute(
-                    "SELECT png_blob, updated_at FROM player_avatars WHERE steam_id = ?",
-                    (steam_id,),
-                ).fetchone()
-            if row is None and profile_id > 0:
-                row = conn.execute(
-                    "SELECT png_blob, updated_at FROM player_avatars WHERE profile_id = ? ORDER BY updated_at DESC LIMIT 1",
-                    (int(profile_id),),
-                ).fetchone()
-        if not row:
-            return None
-        if (now - int(row["updated_at"])) > max_age_sec:
+        conn = self._connect()
+        row = None
+        if steam_id:
+            row = conn.execute(
+                "SELECT png_blob, updated_at FROM player_avatars WHERE steam_id = ?",
+                (steam_id,),
+            ).fetchone()
+        if row is None and profile_id > 0:
+            row = conn.execute(
+                "SELECT png_blob, updated_at FROM player_avatars WHERE profile_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (int(profile_id),),
+            ).fetchone()
+        if not row or (now - int(row["updated_at"])) > max_age_sec:
             return None
         return bytes(row["png_blob"])
 
-    def save_cached_avatar(self, steam_id: str, avatar_url: str, png_blob: bytes, profile_id: int = 0) -> None:
-        if not steam_id or not png_blob:
+    def save_cached_avatar(
+        self,
+        steam_id: str,
+        avatar_url: str,
+        png_blob: bytes,
+        profile_id: int = 0,
+    ) -> None:
+        if not steam_id or not png_blob or len(png_blob) > 131_072:
             return
         now = int(time.time())
-        with self._connect() as conn:
+        conn = self._connect()
+        with conn:
             conn.execute(
                 """
                 INSERT INTO player_avatars (steam_id, profile_id, avatar_url, png_blob, updated_at)
@@ -296,23 +371,32 @@ class MatchDatabase:
                     png_blob = excluded.png_blob,
                     updated_at = excluded.updated_at
                 """,
-                (steam_id, int(profile_id), avatar_url, sqlite3.Binary(png_blob), now),
+                (steam_id, int(profile_id), avatar_url[:512], sqlite3.Binary(png_blob), now),
             )
 
+    def prune_expired_avatars(self, max_age_sec: int = 30 * 86400) -> int:
+        cutoff = int(time.time()) - max_age_sec
+        conn = self._connect()
+        with conn:
+            cur = conn.execute("DELETE FROM player_avatars WHERE updated_at < ?", (cutoff,))
+        return cur.rowcount
+
     def get_steam_id_map(self) -> dict[int, str]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT profile_id, steam_id FROM tracked_players WHERE steam_id != ''"
-            ).fetchall()
+        rows = self._connect().execute(
+            "SELECT profile_id, steam_id FROM tracked_players WHERE steam_id != ''"
+        ).fetchall()
         return {int(r["profile_id"]): str(r["steam_id"]) for r in rows}
 
     def get_state(self, key: str) -> str | None:
-        with self._connect() as conn:
-            row = conn.execute("SELECT value FROM bot_state WHERE key = ?", (key,)).fetchone()
+        row = self._connect().execute(
+            "SELECT value FROM bot_state WHERE key = ?",
+            (key,),
+        ).fetchone()
         return str(row["value"]) if row else None
 
     def set_state(self, key: str, value: str) -> None:
-        with self._connect() as conn:
+        conn = self._connect()
+        with conn:
             conn.execute(
                 """
                 INSERT INTO bot_state (key, value) VALUES (?, ?)
