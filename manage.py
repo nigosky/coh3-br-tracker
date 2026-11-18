@@ -314,6 +314,20 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
 
     cached_rankings = load_cached_rankings(BASE_DIR, top_n=top_n)
     grouped = group_matches_by_id(matches)
+    sample_group = grouped[0]
+
+    # Se a partida mais recente no SQLite veio da v1/v2 (sem elo_delta nos adversários), busca ao vivo para exibir completo
+    sample_opps = sample_group["primary"].get("opponents", [])
+    if sample_opps and "elo_delta" not in sample_opps[0]:
+        try:
+            live_client = RelicAPIClient()
+            p0 = sample_group["primary"]
+            fresh_list = live_client.fetch_player_recent_matches(int(p0["tracked_profile_id"]), str(p0["tracked_alias"]))
+            matched_fresh = [fm for fm in fresh_list if int(fm["match_id"]) == int(sample_group["match_id"])]
+            if matched_fresh:
+                sample_group = {"match_id": int(sample_group["match_id"]), "primary": matched_fresh[0], "records": matched_fresh}
+        except Exception:
+            pass
 
     summary_payload = build_summary_list_payload(
         matches,
@@ -322,7 +336,7 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
         rankings_by_mode=cached_rankings,
         custom_players=custom_players,
     )
-    card_payload = build_match_embed_payload(grouped[0], cfg.get("bot_username", "CoH3 Brasil Monitor"))
+    card_payload = build_match_embed_payload(sample_group, cfg.get("bot_username", "CoH3 Brasil Monitor"))
 
     if args.dry_run:
         print("=== PAYLOAD 1: PAINEL FIXADO (RANKING + LISTA AGRUPADA) ===")
@@ -355,8 +369,8 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
         db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
         print(f"[OK] Painel Fixado Gráfico (Ranking + Partidas + Avatares Steam) atualizado no Discord (message_id={new_summary_id}).")
 
-    card_id = discord.send_match_card(grouped[0])
-    print(f"[OK] Card Horizontal coh3stats da partida #{grouped[0]['match_id']} enviado ao Discord (message_id={card_id}).")
+    card_id = discord.send_match_card(sample_group)
+    print(f"[OK] Card Grande coh3stats da partida #{sample_group['match_id']} enviado ao Discord (message_id={card_id}).")
     return 0
 
 

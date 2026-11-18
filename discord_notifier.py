@@ -194,7 +194,10 @@ def build_match_embed_payload(
     bot_username: str = "CoH3 Brasil Monitor",
     attachment_filename: str | None = None,
 ) -> dict[str, Any]:
-    """Monta o Embed enxuto acompanhado do Card Horizontal estilo coh3stats + links clicáveis Details/Replay."""
+    """
+    Monta uma mensagem de largura máxima (550px fora de Embed) com o Card Grande estilo coh3stats
+    e cabeçalho clicável (Details / Replay com <url> sem gerar preview extra).
+    """
     if isinstance(match_or_group, list):
         records = match_or_group
         grp_obj = {"match_id": int(records[0]["match_id"]), "primary": records[0], "records": records}
@@ -210,7 +213,6 @@ def build_match_embed_payload(
     primary_pid = int(primary["tracked_profile_id"])
     safe_url = build_safe_coh3stats_match_url(primary_pid, match_id)
     ts = int(primary["completion_time"])
-    iso_ts = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
     winners = [r for r in records if bool(r["win"])]
     losers = [r for r in records if not bool(r["win"])]
@@ -218,43 +220,29 @@ def build_match_embed_payload(
     mode_badge = compact_mode(primary.get("mode"))
 
     if winners and losers:
-        w_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 22) for r in winners[:3])
-        l_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 22) for r in losers[:3])
-        title = f"⚔️ DUELO BR — {w_names} vs {l_names}"[:256]
-        color = COLOR_DUEL
+        w_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 24) for r in winners[:3])
+        l_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 24) for r in losers[:3])
+        headline = f"⚔️ **DUELO BR — {w_names} vs {l_names}** (`{mode_badge}` • **{safe_map}**)"
     else:
         win = bool(primary["win"])
-        color = COLOR_WIN if win else COLOR_LOSS
         names = " & ".join(sanitize_discord_text(r["tracked_alias"], 24) for r in records[:4])
         res_lbl = "VICTORY" if win else "DEFEAT"
         badge = "🔵" if win else "🔴"
-        title = f"{badge} {res_lbl} — {names} ({mode_badge} • {safe_map})"[:256]
+        headline = f"{badge} **{res_lbl} — {names}** (`{mode_badge}` • **{safe_map}**)"
 
-    desc = (
+    content = (
+        f"{headline}\n"
         f"🕒 <t:{ts}:R>   •   "
-        f"[👁️ **Details** (Ficha Completa) ↗]({safe_url})   •   "
-        f"[⬇️ **Replay** (Download) ↗]({safe_url})"
+        f"[👁️ **Details** (Ficha Completa) ↗](<{safe_url}>)   •   "
+        f"[⬇️ **Replay** (Download) ↗](<{safe_url}>)"
     )
-
-    img_name = attachment_filename or f"match_{match_id}.png"
-    embed: dict[str, Any] = {
-        "title": title,
-        "url": safe_url,
-        "description": desc,
-        "color": color,
-        "image": {"url": f"attachment://{img_name}"},
-        "footer": {
-            "text": f"Partida #{match_id} • Avatares Steam BR integrados"
-            + (" • Replay disponível" if primary.get("has_replay") else "")
-        },
-        "timestamp": iso_ts,
-    }
 
     return {
         "username": sanitize_discord_text(bot_username, max_len=80),
         "avatar_url": BOT_AVATAR_URL,
         "allowed_mentions": SAFE_ALLOWED_MENTIONS,
-        "embeds": [embed],
+        "content": content[:2000],
+        "embeds": [],
     }
 
 
@@ -270,7 +258,7 @@ def build_summary_list_payload(
     Monta o payload da Mensagem Fixada com as Tabelas Gráficas de Ranking (1v1, 2v2, Team Games)
     no estilo tático dourado + Tabela Horizontal de Últimas Partidas estilo coh3stats + Links Details/Replay.
     """
-    grouped = group_matches_by_id(matches)[:8]
+    grouped = group_matches_by_id(matches)[:5]
     now_iso = datetime.now(tz=timezone.utc).isoformat()
     embeds_list: list[dict[str, Any]] = []
 
@@ -307,7 +295,6 @@ def build_summary_list_payload(
                 r_embed["description"] = desc_note
             embeds_list.append(r_embed)
 
-    # Links clicáveis compactos para cada linha da tabela horizontal de partidas
     quick_links: list[str] = []
     for row_idx, grp in enumerate(grouped, start=1):
         primary = grp["primary"]
@@ -368,7 +355,7 @@ def render_summary_attachments(
             )
             files.append((fname, png_bytes, "image/png"))
 
-    grouped = group_matches_by_id(matches)[:8]
+    grouped = group_matches_by_id(matches)[:5]
     matches_png = render_matches_table_png(grouped, avatar_provider=avatar_provider, live_single=False)
     files.append(("recent_matches.png", matches_png, "image/png"))
     return files

@@ -200,9 +200,11 @@ def text_width(draw: ImageDraw.ImageDraw, text: str, font: Any) -> float:
 
 def truncate_to_px(draw: ImageDraw.ImageDraw, text: str, max_px: int, size: int, bold: bool = False) -> tuple[str, Any]:
     txt = CONTROL_STRIP_RE.sub(" ", str(text or "")).strip() or "Unknown"
-    fnt = pick_font(txt, size=size, bold=bold)
-    if text_width(draw, txt, fnt) <= max_px:
-        return txt, fnt
+    for try_sz in (size, max(12, size - 2), max(11, size - 4)):
+        fnt = pick_font(txt, size=try_sz, bold=bold)
+        if text_width(draw, txt, fnt) <= max_px:
+            return txt, fnt
+    fnt = pick_font(txt, size=max(11, size - 3), bold=bold)
     while len(txt) > 2 and text_width(draw, txt + "…", fnt) > max_px:
         txt = txt[:-1]
     return txt + "…", fnt
@@ -242,6 +244,30 @@ class SteamAvatarProvider:
             except Exception:
                 pass
 
+    def _lookup_steam_id_from_relic(self, profile_id: int) -> str:
+        if profile_id <= 0 or not self.allow_network or self._network_fetches_this_run >= self._max_network_fetches_per_run:
+            return ""
+        self._network_fetches_this_run += 1
+        url = f"https://coh3-api.reliclink.com/community/leaderboard/getPersonalStat?title=coh3&profile_ids=%5B{int(profile_id)}%5D"
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "CoH3-BR-Tracker/4.0", "Accept": "application/json"},
+            )
+            with _STEAM_CDN_OPENER.open(req, timeout=6) as resp:
+                raw = resp.read(131_072)
+                data = json.loads(raw.decode("utf-8", errors="ignore"))
+            for sg in data.get("statGroups", []):
+                for mem in sg.get("members", []):
+                    if int(mem.get("profile_id", 0)) == int(profile_id):
+                        nm = str(mem.get("name") or "")
+                        sid = nm.replace("/steam/", "") if nm.startswith("/steam/") else ""
+                        if STEAM_ID64_RE.fullmatch(sid):
+                            return sid
+        except Exception:
+            pass
+        return ""
+
     def resolve_steam_id(self, profile_id: int = 0, steam_id: str = "") -> str:
         clean_sid = str(steam_id or "").strip()
         if clean_sid.startswith("/steam/"):
@@ -251,9 +277,12 @@ class SteamAvatarProvider:
                 self._pid_to_steam[int(profile_id)] = clean_sid
             return clean_sid
         if profile_id > 0:
-            mapped = self._pid_to_steam.get(int(profile_id), "")
-            if STEAM_ID64_RE.fullmatch(mapped):
-                return mapped
+            pid_int = int(profile_id)
+            if pid_int in self._pid_to_steam:
+                return self._pid_to_steam[pid_int]
+            looked_up = self._lookup_steam_id_from_relic(pid_int)
+            self._pid_to_steam[pid_int] = looked_up
+            return looked_up
         return ""
 
     def _fetch_steam_avatar_bytes(self, steam_id: str) -> tuple[str, bytes] | None:
@@ -785,7 +814,181 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
 
 
 # ---------------------------------------------------------------------------
-# RENDERIZADOR 1: Layout de Partidas Horizontal (idêntico à image.png + Avatares Steam BR)
+# RENDERIZADOR 1A: Card Grande de Partida Individual (alta leitura direta no chat do Discord)
+# ---------------------------------------------------------------------------
+def render_single_match_card_png(
+    grp: dict[str, Any],
+    avatar_provider: SteamAvatarProvider,
+) -> bytes:
+    """
+    Renderiza um Card Grande (840px de largura, exibido a 550px inteiros no feed do Discord):
+    - Faixa superior grande: Medalhão Facção (60px) + Pílula VICTORY/DEFEAT grande + Horário | Mapa (64px) + Modo & Duração
+    - Duas colunas amplas lado a lado (AXIS PLAYERS vs ALLIES PLAYERS) com ícones 34px, ELO 20px, bandeira,
+      Avatar Steam 40px para brasileiros e apelidos em fonte 20px negrito (~4x maior no Discord sem precisar clicar!).
+    """
+    width = 860
+    recs = grp.get("records") or [grp.get("primary") or grp]
+    primary = recs[0]
+    axis_p, allies_p = extract_axis_and_allies_players(grp)
+
+    max_team = max(len(axis_p), len(allies_p), 1)
+    top_bar_h = 90
+    col_hdr_h = 38
+    row_pitch = 52
+    body_h = max_team * row_pitch + 22
+    total_h = top_bar_h + col_hdr_h + body_h
+
+    img = Image.new("RGBA", (width, total_h), (26, 28, 34, 255))
+    draw = ImageDraw.Draw(img)
+
+    winners = [r for r in recs if bool(r.get("win"))]
+    losers = [r for r in recs if not bool(r.get("win"))]
+    is_duel = bool(winners and losers)
+    is_win = bool(primary.get("win"))
+
+    if is_duel:
+        accent_col = (234, 179, 8, 255)
+        pill_col = (217, 119, 6, 255)
+        pill_text = "DUELO BR"
+    elif is_win:
+        accent_col = (29, 125, 250, 255)
+        pill_col = (28, 100, 242, 255)
+        old_e, new_e = primary.get("old_elo"), primary.get("new_elo")
+        if old_e and new_e:
+            diff = int(new_e) - int(old_e)
+            sign = f"+{diff}" if diff >= 0 else f"{diff}"
+            pill_text = f"VICTORY {sign}"
+        else:
+            pill_text = "VICTORY"
+    else:
+        accent_col = (224, 49, 49, 255)
+        pill_col = (214, 44, 44, 255)
+        old_e, new_e = primary.get("old_elo"), primary.get("new_elo")
+        if old_e and new_e:
+            diff = int(new_e) - int(old_e)
+            sign = f"+{diff}" if diff >= 0 else f"{diff}"
+            pill_text = f"DEFEAT {sign}"
+        else:
+            pill_text = "DEFEAT"
+
+    # Faixa superior escura
+    draw.rectangle((0, 0, width, top_bar_h), fill=(19, 21, 26, 255))
+    draw.line([(0, top_bar_h - 1), (width, top_bar_h - 1)], fill=(52, 56, 68, 255), width=2)
+
+    # Barra vertical lateral de status (8px de largura em toda a altura)
+    draw.rectangle((0, 0, 8, total_h), fill=accent_col)
+
+    # Lado Esquerdo do Topo: Medalhão 60x60 + Pílula Grande + Horário
+    fac_icon = get_faction_icon(str(primary.get("tracked_faction", "Wehrmacht")), size=60)
+    img.paste(fac_icon, (22, 15), fac_icon)
+
+    pill_w, pill_h = 194, 42
+    pill_x, pill_y = 96, 14
+    draw.rounded_rectangle((pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), radius=21, fill=pill_col)
+    pill_fnt = pick_font(pill_text, size=20, bold=True)
+    ptw = text_width(draw, pill_text, pill_fnt)
+    draw.text((pill_x + (pill_w - ptw) / 2, pill_y + 9), pill_text, font=pill_fnt, fill=(255, 255, 255, 255))
+
+    now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+    played_str = f"Played: {format_relative_played(int(primary.get('completion_time', 0)), now_ts=now_ts, live_label=True)}"
+    pl_fnt = pick_font(played_str, size=15, bold=True)
+    draw.text((100, 62), played_str, font=pl_fnt, fill=(195, 202, 214, 255))
+
+    # Lado Direito do Topo: Modo • Duração + Nome do Mapa + Miniatura Aérea 64x64
+    m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=64)
+    thumb_x = width - 84
+    img.paste(m_thumb, (thumb_x, 13), m_thumb)
+
+    map_label, m_fnt = truncate_to_px(draw, str(primary.get("map_clean") or "Unknown Map"), max_px=330, size=21, bold=True)
+    mw = text_width(draw, map_label, m_fnt)
+    draw.text((thumb_x - 16 - mw, 17), map_label, font=m_fnt, fill=(243, 244, 246, 255))
+
+    mode_dur_str = f"{format_mode_vs(str(primary.get('mode') or ''))}   •   {format_mm_ss(int(primary.get('duration_sec', 0)))}"
+    md_fnt = pick_font(mode_dur_str, size=17, bold=True)
+    mdw = text_width(draw, mode_dur_str, md_fnt)
+    draw.text((thumb_x - 16 - mdw, 49), mode_dur_str, font=md_fnt, fill=(176, 184, 196, 255))
+
+    # Cabeçalho das duas colunas de times (Axis Players | Allies Players)
+    draw.rectangle((8, top_bar_h, width, top_bar_h + col_hdr_h), fill=(22, 24, 30, 255))
+    draw.line([(8, top_bar_h + col_hdr_h - 1), (width, top_bar_h + col_hdr_h - 1)], fill=(46, 50, 62, 255), width=1)
+    mid_x = width // 2 + 3
+    draw.line([(mid_x, top_bar_h), (mid_x, total_h)], fill=(46, 50, 62, 255), width=1)
+
+    ch_fnt = pick_font("AXIS PLAYERS", size=16, bold=True, condensed=True)
+    draw.text((22, top_bar_h + 10), "AXIS PLAYERS", font=ch_fnt, fill=(235, 238, 244, 255))
+    draw.text((mid_x + 16, top_bar_h + 10), "ALLIES PLAYERS", font=ch_fnt, fill=(235, 238, 244, 255))
+
+    # Linhas amplas de jogadores em cada lado
+    base_py = top_bar_h + col_hdr_h + 11
+    for col_start_x, col_limit_x, team_list in (
+        (18, mid_x - 10, axis_p),
+        (mid_x + 14, width - 12, allies_p),
+    ):
+        for pidx, pl in enumerate(team_list):
+            py = base_py + pidx * row_pitch
+
+            # Medalhão da facção (32x32)
+            mini_fac = get_faction_icon(str(pl["faction"]), size=32)
+            img.paste(mini_fac, (col_start_x, py + 5), mini_fac)
+
+            # ELO Pré-Partida (20px negrito)
+            elo_val = pl.get("old_elo")
+            elo_txt = str(elo_val) if elo_val else "N/A"
+            elo_fnt = pick_font(elo_txt, size=20, bold=True, condensed=True)
+            ew = text_width(draw, elo_txt, elo_fnt)
+            elo_col = (243, 244, 246, 255) if elo_val else (156, 163, 175, 255)
+            draw.text((col_start_x + 84 - ew, py + 10), elo_txt, font=elo_fnt, fill=elo_col)
+
+            # Delta (+14 verde / -14 vermelho, 18px negrito com espaçamento limpo)
+            delta = pl.get("elo_delta")
+            if delta is not None:
+                d_txt = f"+{delta}" if delta >= 0 else f"{delta}"
+                d_col = (74, 222, 128, 255) if delta >= 0 else (248, 113, 113, 255)
+                d_fnt = pick_font(d_txt, size=18, bold=True, condensed=True)
+                dw = text_width(draw, d_txt, d_fnt)
+                draw.text((col_start_x + 126 - dw, py + 11), d_txt, font=d_fnt, fill=d_col)
+
+            # Bandeira nacional (24x17)
+            country = str(pl.get("country") or "un").lower()
+            flag_im = get_country_flag(country, w=24, h=17)
+            img.paste(flag_im, (col_start_x + 134, py + 13), flag_im)
+
+            name_x = col_start_x + 164
+            is_br = country == "br" or bool(pl.get("is_tracked"))
+
+            # Avatar Circular Real da Steam GRANDE (40x40) para brasileiros
+            if is_br:
+                ring = (56, 189, 248, 250) if pl.get("is_tracked") else (34, 197, 94, 230)
+                av_im = avatar_provider.get_circular_avatar(
+                    size=40,
+                    profile_id=int(pl.get("profile_id", 0)),
+                    steam_id=str(pl.get("steam_id") or ""),
+                    alias=str(pl.get("alias") or "BR"),
+                    ring_color=ring,
+                )
+                img.paste(av_im, (name_x, py + 1), av_im)
+                name_x += 46
+
+            is_tracked = bool(pl.get("is_tracked"))
+            max_alias_px = max(60, col_limit_x - name_x)
+            disp_alias, a_fnt = truncate_to_px(
+                draw,
+                str(pl.get("alias") or ""),
+                max_px=max_alias_px,
+                size=20,
+                bold=True,
+            )
+            alias_color = (56, 189, 248, 255) if is_tracked else (130, 186, 254, 255)
+            draw.text((name_x, py + 10), disp_alias, font=a_fnt, fill=alias_color)
+
+    draw.rectangle((0, 0, width - 1, total_h - 1), outline=(48, 52, 64, 255), width=1)
+    out = io.BytesIO()
+    img.convert("RGB").save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# RENDERIZADOR 1B: Tabela Horizontal Compacta e Legível (Mensagem Fixada)
 # ---------------------------------------------------------------------------
 def render_matches_table_png(
     grouped_matches: list[dict[str, Any]],
@@ -793,12 +996,14 @@ def render_matches_table_png(
     live_single: bool = False,
 ) -> bytes:
     """
-    Renderiza 1 ou N partidas no layout horizontal escuro do coh3stats.com (image.png):
-    Played | Result [VICTORY +12 / DEFEAT -20] | Axis Players | Allies Players | Map | Mode / Duration | Details / Replay
-    Com Avatares circulares da Steam para todos os jogadores brasileiros!
+    Quando live_single=True (nova partida no feed), gera o Card Grande 900px (render_single_match_card_png).
+    Quando live_single=False (lista fixada), gera a tabela horizontal sem espaços mortos (1020px) com fontes maiores.
     """
-    width = 1240
-    header_h = 40
+    if live_single and len(grouped_matches) == 1:
+        return render_single_match_card_png(grouped_matches[0], avatar_provider)
+
+    width = 1040
+    header_h = 44
 
     prepared_rows: list[dict[str, Any]] = []
     for grp in grouped_matches:
@@ -806,7 +1011,7 @@ def render_matches_table_png(
         primary = recs[0]
         axis_p, allies_p = extract_axis_and_allies_players(grp)
         max_team = max(len(axis_p), len(allies_p), 1)
-        row_h = max(94, 24 + max_team * 27)
+        row_h = max(108, 26 + max_team * 32)
         prepared_rows.append(
             {
                 "records": recs,
@@ -817,30 +1022,24 @@ def render_matches_table_png(
             }
         )
 
-    if not prepared_rows:
-        prepared_rows = []
-
-    total_h = header_h + sum(r["row_h"] for r in prepared_rows) + (2 if prepared_rows else 64)
+    total_h = header_h + sum(r["row_h"] for r in prepared_rows) + (2 if prepared_rows else 70)
     img = Image.new("RGBA", (width, total_h), (24, 26, 31, 255))
     draw = ImageDraw.Draw(img)
 
-    # Cabeçalho superior estilo coh3stats
-    draw.rectangle((0, 0, width, header_h), fill=(20, 22, 27, 255))
-    draw.line([(0, header_h - 1), (width, header_h - 1)], fill=(48, 52, 63, 255), width=1)
+    draw.rectangle((0, 0, width, header_h), fill=(19, 21, 26, 255))
+    draw.line([(0, header_h - 1), (width, header_h - 1)], fill=(52, 56, 68, 255), width=2)
 
-    hdr_font = pick_font("Played", size=13, bold=True)
-    hdr_color = (229, 231, 235, 255)
-    draw.text((20, 12), "Played  ↓", font=hdr_font, fill=hdr_color)
-    draw.text((140, 12), "Result", font=hdr_font, fill=hdr_color)
-    draw.text((274, 12), "Axis Players", font=hdr_font, fill=hdr_color)
-    draw.text((614, 12), "Allies Players", font=hdr_font, fill=hdr_color)
-    draw.text((982, 12), "Map", font=hdr_font, fill=hdr_color)
-    draw.text((1084, 5), "Mode", font=hdr_font, fill=hdr_color)
-    draw.text((1074, 21), "Duration", font=hdr_font, fill=hdr_color)
+    hdr_font = pick_font("Played", size=15, bold=True, condensed=True)
+    hdr_color = (235, 238, 244, 255)
+    draw.text((16, 13), "PLAYED ↓", font=hdr_font, fill=hdr_color)
+    draw.text((126, 13), "RESULT", font=hdr_font, fill=hdr_color)
+    draw.text((258, 13), "AXIS PLAYERS", font=hdr_font, fill=hdr_color)
+    draw.text((572, 13), "ALLIES PLAYERS", font=hdr_font, fill=hdr_color)
+    draw.text((905, 13), "MAP / MODE", font=hdr_font, fill=hdr_color)
 
     if not prepared_rows:
-        empty_fnt = pick_font("Nenhuma partida registrada ainda.", size=15, bold=False)
-        draw.text((460, header_h + 22), "Nenhuma partida registrada ainda.", font=empty_fnt, fill=(156, 163, 175, 255))
+        empty_fnt = pick_font("Nenhuma partida registrada ainda.", size=16, bold=False)
+        draw.text((380, header_h + 24), "Nenhuma partida registrada ainda.", font=empty_fnt, fill=(156, 163, 175, 255))
 
     y = header_h
     now_ts = int(datetime.now(tz=timezone.utc).timestamp())
@@ -850,7 +1049,7 @@ def render_matches_table_png(
         recs = row["records"]
         primary = row["primary"]
 
-        bg_col = (30, 32, 38, 255) if idx % 2 == 0 else (26, 28, 34, 255)
+        bg_col = (30, 32, 38, 255) if idx % 2 == 0 else (25, 27, 33, 255)
         draw.rectangle((0, y, width, y + rh), fill=bg_col)
         draw.line([(0, y + rh - 1), (width, y + rh - 1)], fill=(46, 49, 58, 255), width=1)
 
@@ -859,7 +1058,6 @@ def render_matches_table_png(
         is_duel = bool(winners and losers)
         is_win = bool(primary.get("win"))
 
-        # 1) Barra lateral esquerda de resultado + Medalhão Facção + Horário (Played)
         if is_duel:
             accent_col = (234, 179, 8, 255)
             pill_col = (217, 119, 6, 255)
@@ -885,146 +1083,94 @@ def render_matches_table_png(
             else:
                 pill_text = "DEFEAT"
 
-        draw.rectangle((0, y + 6, 5, y + rh - 6), fill=accent_col)
+        draw.rectangle((0, y + 5, 6, y + rh - 5), fill=accent_col)
 
-        fac_icon = get_faction_icon(str(primary.get("tracked_faction", "Wehrmacht")), size=46)
-        fac_x = 34
-        fac_y = y + (rh - 66) // 2
+        fac_icon = get_faction_icon(str(primary.get("tracked_faction", "Wehrmacht")), size=50)
+        fac_x = 26
+        fac_y = y + (rh - 72) // 2
         img.paste(fac_icon, (fac_x, fac_y), fac_icon)
 
-        played_str = format_relative_played(int(primary.get("completion_time", 0)), now_ts=now_ts, live_label=live_single)
-        p_fnt = pick_font(played_str, size=12, bold=False)
+        played_str = format_relative_played(int(primary.get("completion_time", 0)), now_ts=now_ts, live_label=False)
+        p_fnt = pick_font(played_str, size=14, bold=True)
         pw = text_width(draw, played_str, p_fnt)
-        draw.text((fac_x + 23 - pw / 2, fac_y + 51), played_str, font=p_fnt, fill=(209, 213, 219, 255))
+        draw.text((fac_x + 25 - pw / 2, fac_y + 54), played_str, font=p_fnt, fill=(215, 220, 228, 255))
 
-        # 2) Pílula de Resultado (VICTORY +12 / DEFEAT -20)
-        pill_w, pill_h = 112, 25
-        pill_x = 122
+        pill_w, pill_h = 128, 30
+        pill_x = 104
         pill_y = y + (rh - pill_h) // 2
-        draw.rounded_rectangle((pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), radius=12, fill=pill_col)
-        pill_fnt = pick_font(pill_text, size=12, bold=True)
+        draw.rounded_rectangle((pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), radius=15, fill=pill_col)
+        pill_fnt = pick_font(pill_text, size=14, bold=True)
         ptw = text_width(draw, pill_text, pill_fnt)
-        draw.text((pill_x + (pill_w - ptw) / 2, pill_y + 5), pill_text, font=pill_fnt, fill=(255, 255, 255, 255))
+        draw.text((pill_x + (pill_w - ptw) / 2, pill_y + 7), pill_text, font=pill_fnt, fill=(255, 255, 255, 255))
 
-        # 3 & 4) Colunas Axis Players (x=254) e Allies Players (x=594)
-        for col_x, team_list in ((254, row["axis"]), (594, row["allies"])):
-            line_pitch = 26
+        for col_x, team_list in ((246, row["axis"]), (562, row["allies"])):
+            line_pitch = 31
             block_h = len(team_list) * line_pitch
             start_py = y + (rh - block_h) // 2
             for pidx, pl in enumerate(team_list):
                 py = start_py + pidx * line_pitch
-                # Mini ícone da facção (19x19)
-                mini_fac = get_faction_icon(str(pl["faction"]), size=19)
-                img.paste(mini_fac, (col_x, py + 2), mini_fac)
+                mini_fac = get_faction_icon(str(pl["faction"]), size=23)
+                img.paste(mini_fac, (col_x, py + 3), mini_fac)
 
-                # ELO pré-partida (ou N/A) alinhado à direita
                 elo_val = pl.get("old_elo")
                 elo_txt = str(elo_val) if elo_val else "N/A"
-                elo_fnt = pick_font(elo_txt, size=13, bold=False)
+                elo_fnt = pick_font(elo_txt, size=15, bold=True, condensed=True)
                 ew = text_width(draw, elo_txt, elo_fnt)
-                elo_col = (229, 231, 235, 255) if elo_val else (156, 163, 175, 255)
-                draw.text((col_x + 58 - ew, py + 4), elo_txt, font=elo_fnt, fill=elo_col)
+                elo_col = (238, 240, 244, 255) if elo_val else (156, 163, 175, 255)
+                draw.text((col_x + 64 - ew, py + 6), elo_txt, font=elo_fnt, fill=elo_col)
 
-                # Delta ELO (+12 verde / -20 vermelho)
                 delta = pl.get("elo_delta")
                 if delta is not None:
                     d_txt = f"+{delta}" if delta >= 0 else f"{delta}"
                     d_col = (74, 222, 128, 255) if delta >= 0 else (248, 113, 113, 255)
-                else:
-                    d_txt = ""
-                    d_col = (156, 163, 175, 255)
-                if d_txt:
-                    d_fnt = pick_font(d_txt, size=13, bold=False)
+                    d_fnt = pick_font(d_txt, size=14, bold=True, condensed=True)
                     dw = text_width(draw, d_txt, d_fnt)
-                    draw.text((col_x + 93 - dw, py + 4), d_txt, font=d_fnt, fill=d_col)
+                    draw.text((col_x + 98 - dw, py + 6), d_txt, font=d_fnt, fill=d_col)
 
-                # Bandeira do país (18x13)
                 country = str(pl.get("country") or "un").lower()
-                flag_im = get_country_flag(country, w=18, h=13)
-                img.paste(flag_im, (col_x + 100, py + 5), flag_im)
+                flag_im = get_country_flag(country, w=20, h=14)
+                img.paste(flag_im, (col_x + 104, py + 8), flag_im)
 
-                name_x = col_x + 124
+                name_x = col_x + 130
                 is_br = country == "br" or bool(pl.get("is_tracked"))
 
-                # Avatar Circular Real da Steam para jogadores brasileiros!
                 if is_br:
-                    ring = (56, 189, 248, 240) if pl.get("is_tracked") else (34, 197, 94, 210)
+                    ring = (56, 189, 248, 245) if pl.get("is_tracked") else (34, 197, 94, 220)
                     av_im = avatar_provider.get_circular_avatar(
-                        size=22,
+                        size=27,
                         profile_id=int(pl.get("profile_id", 0)),
                         steam_id=str(pl.get("steam_id") or ""),
                         alias=str(pl.get("alias") or "BR"),
                         ring_color=ring,
                     )
                     img.paste(av_im, (name_x, py + 1), av_im)
-                    name_x += 27
+                    name_x += 32
 
-                max_alias_px = (col_x + 328) - name_x
+                max_alias_px = (col_x + 306) - name_x
                 is_tracked = bool(pl.get("is_tracked"))
                 disp_alias, a_fnt = truncate_to_px(
                     draw,
                     str(pl.get("alias") or ""),
-                    max_px=max_alias_px,
-                    size=13,
-                    bold=is_tracked,
+                    max_px=max(48, max_alias_px),
+                    size=15,
+                    bold=True,
                 )
-                alias_color = (56, 189, 248, 255) if is_tracked else (96, 165, 250, 255)
-                draw.text((name_x, py + 4), disp_alias, font=a_fnt, fill=alias_color)
+                alias_color = (56, 189, 248, 255) if is_tracked else (112, 172, 250, 255)
+                draw.text((name_x, py + 5), disp_alias, font=a_fnt, fill=alias_color)
 
-        # 5) Coluna Map (Miniatura tática 50x50 + Nome do Mapa)
-        map_cx = 995
-        m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=50)
-        thumb_y = y + (rh - 68) // 2
-        img.paste(m_thumb, (map_cx - 25, thumb_y), m_thumb)
+        map_cx = 954
+        m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=52)
+        thumb_y = y + (rh - 90) // 2
+        img.paste(m_thumb, (map_cx - 26, thumb_y), m_thumb)
 
-        map_label, m_fnt = truncate_to_px(
-            draw,
-            str(primary.get("map_clean") or "Unknown Map"),
-            max_px=138,
-            size=12,
-            bold=False,
-        )
+        map_label, m_fnt = truncate_to_px(draw, str(primary.get("map_clean") or "Map"), max_px=156, size=13, bold=True)
         mw = text_width(draw, map_label, m_fnt)
-        draw.text((map_cx - mw / 2, thumb_y + 54), map_label, font=m_fnt, fill=(212, 216, 224, 255))
+        draw.text((map_cx - mw / 2, thumb_y + 56), map_label, font=m_fnt, fill=(229, 231, 235, 255))
 
-        # 6) Coluna Mode / Duration
-        mode_cx = 1102
-        mode_str = format_mode_vs(str(primary.get("mode") or ""))
-        dur_str = format_mm_ss(int(primary.get("duration_sec", 0)))
-        md_fnt = pick_font(mode_str, size=13, bold=False)
-        du_fnt = pick_font(dur_str, size=13, bold=False)
-        mdw = text_width(draw, mode_str, md_fnt)
-        duw = text_width(draw, dur_str, du_fnt)
-        mid_my = y + rh // 2
-        draw.text((mode_cx - mdw / 2, mid_my - 17), mode_str, font=md_fnt, fill=(229, 231, 235, 255))
-        draw.text((mode_cx - duw / 2, mid_my + 3), dur_str, font=du_fnt, fill=(209, 213, 219, 255))
-
-        # 7) Botões visuais Details / Replay à direita (idêntico à image.png)
-        btn_x, btn_w, btn_h = 1150, 78, 28
-        b1_y = mid_my - 31
-        b2_y = mid_my + 3
-        for by, b_lbl in ((b1_y, "Details"), (b2_y, "Replay")):
-            draw.rounded_rectangle(
-                (btn_x, by, btn_x + btn_w, by + btn_h),
-                radius=4,
-                fill=(35, 38, 46, 255),
-                outline=(68, 73, 86, 255),
-                width=1,
-            )
-            bfnt = pick_font(b_lbl, size=12, bold=True)
-            bw = text_width(draw, b_lbl, bfnt)
-            draw.text((btn_x + (btn_w - bw) / 2 + 5, by + 6), b_lbl, font=bfnt, fill=(243, 244, 246, 255))
-
-        # Ícone olho minimalista em Details
-        ey_x, ey_y = btn_x + 12, b1_y + 14
-        draw.ellipse((ey_x - 5, ey_y - 3, ey_x + 5, ey_y + 3), outline=(209, 213, 219, 255), width=1)
-        draw.ellipse((ey_x - 1, ey_y - 1, ey_x + 1, ey_y + 1), fill=(209, 213, 219, 255))
-
-        # Ícone download minimalista em Replay
-        dl_x, dl_y = btn_x + 12, b2_y + 14
-        draw.line([(dl_x, dl_y - 4), (dl_x, dl_y + 2)], fill=(209, 213, 219, 255), width=1)
-        draw.polygon([(dl_x - 3, dl_y), (dl_x + 3, dl_y), (dl_x, dl_y + 3)], fill=(209, 213, 219, 255))
-        draw.line([(dl_x - 4, dl_y + 5), (dl_x + 4, dl_y + 5)], fill=(209, 213, 219, 255), width=1)
+        md_str = f"{format_mode_vs(str(primary.get('mode') or ''))} • {format_mm_ss(int(primary.get('duration_sec', 0)))}"
+        md_fnt = pick_font(md_str, size=13, bold=False)
+        mdw = text_width(draw, md_str, md_fnt)
+        draw.text((map_cx - mdw / 2, thumb_y + 73), md_str, font=md_fnt, fill=(165, 174, 188, 255))
 
         y += rh
 
@@ -1034,7 +1180,7 @@ def render_matches_table_png(
 
 
 # ---------------------------------------------------------------------------
-# RENDERIZADOR 2: Tabela Tática de Ranking (idêntica à image_2.png + Avatares Steam)
+# RENDERIZADOR 2: Tabela Tática de Ranking Ampliada (idêntica à image_2.png + Avatares Steam Maiores)
 # ---------------------------------------------------------------------------
 def render_ranking_table_png(
     entries: list[dict[str, Any]],
@@ -1043,54 +1189,51 @@ def render_ranking_table_png(
     max_rows: int = 25,
 ) -> bytes:
     """
-    Renderiza a tabela escura com cabeçalho dourado idêntica à image_2.png:
-    RANK | ELO ▼ | ALIAS [Avatar Steam Circular + 🇧🇷] | STREAK | WINS ▼ | LOSSES | RATIO | TOTAL | LAST GAME
+    Renderiza a tabela tática escura com cabeçalho dourado (image_2.png) em proporção otimizada (940px)
+    com fontes grandes (18px) e Avatares Steam 30x30 para maximizar a largura exibida no Discord.
     """
-    width = 1120
-    banner_h = 38
+    width = 940
+    banner_h = 36
     col_hdr_h = 34
-    row_h = 40
+    row_h = 36
 
     rows = entries[:max_rows]
     total_h = banner_h + col_hdr_h + max(1, len(rows)) * row_h + 4
     img = Image.new("RGBA", (width, total_h), (15, 17, 21, 255))
     draw = ImageDraw.Draw(img)
 
-    # Fundo tático escuro sutil no topo (remetendo ao mapa escuro de fundo da image_2.png)
     draw.rectangle((0, 0, width, banner_h + col_hdr_h), fill=(22, 20, 17, 255))
     rng = random.Random(hashlib.sha256(mode_title.encode("utf-8")).digest()[:8])
     for _ in range(10):
         x0, y0 = rng.randint(0, width), rng.randint(0, banner_h + col_hdr_h)
-        x1, y1 = x0 + rng.randint(-180, 180), y0 + rng.randint(-30, 30)
+        x1, y1 = x0 + rng.randint(-160, 160), y0 + rng.randint(-30, 30)
         draw.line([(x0, y0), (x1, y1)], fill=(46, 41, 33, 95), width=1)
 
-    # Faixa de título do Modo
-    title_txt = f"COH3 BRASIL  •  RANKING {mode_title.upper()} (MÉDIA ELO FACÇÕES ATIVAS)"
-    t_fnt = pick_font(title_txt, size=14, bold=True, condensed=True)
-    draw.text((22, 10), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
+    title_txt = f"COH3 BRASIL  •  RANKING {mode_title.upper()} (MÉDIA ELO)"
+    t_fnt = pick_font(title_txt, size=16, bold=True, condensed=True)
+    draw.text((20, 9), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
 
-    sub_txt = f"Top 20 + Convidados  •  {len(rows)} jogador(es)"
-    s_fnt = pick_font(sub_txt, size=12, bold=False)
+    sub_txt = f"Top 20 + Convidados ({len(rows)})"
+    s_fnt = pick_font(sub_txt, size=14, bold=True)
     sw = text_width(draw, sub_txt, s_fnt)
-    draw.text((width - 22 - sw, 11), sub_txt, font=s_fnt, fill=(180, 175, 165, 255))
+    draw.text((width - 20 - sw, 10), sub_txt, font=s_fnt, fill=(190, 184, 172, 255))
 
     draw.line([(0, banner_h), (width, banner_h)], fill=(48, 44, 36, 255), width=1)
 
-    # Cabeçalhos das 9 Colunas em Dourado (image_2.png)
     gold_col = (245, 184, 46, 255)
-    ch_y = banner_h + 9
-    hdr_fnt = pick_font("RANK", size=14, bold=True, condensed=True)
+    ch_y = banner_h + 7
+    hdr_fnt = pick_font("RANK", size=16, bold=True, condensed=True)
 
     col_specs = [
-        ("RANK", 44, "center"),
-        ("ELO ▾", 112, "center"),
-        ("ALIAS", 170, "left"),
-        ("STREAK", 665, "right"),
-        ("WINS ▾", 748, "right"),
-        ("LOSSES", 832, "right"),
-        ("RATIO", 912, "right"),
-        ("TOTAL", 990, "right"),
-        ("LAST GAME", 1098, "right"),
+        ("RANK", 42, "center"),
+        ("ELO ▾", 108, "center"),
+        ("ALIAS", 158, "left"),
+        ("STREAK", 492, "right"),
+        ("WINS ▾", 568, "right"),
+        ("LOSSES", 644, "right"),
+        ("RATIO", 714, "right"),
+        ("TOTAL", 784, "right"),
+        ("LAST GAME", 924, "right"),
     ]
     for lbl, cx, align in col_specs:
         lw = text_width(draw, lbl, hdr_fnt)
@@ -1102,24 +1245,23 @@ def render_ranking_table_png(
             tx = cx
         draw.text((tx, ch_y), lbl, font=hdr_fnt, fill=gold_col)
 
-    # Linha divisória dourada nítida exatamente abaixo do cabeçalho
     rule_y = banner_h + col_hdr_h - 1
-    draw.line([(12, rule_y), (width - 12, rule_y)], fill=(234, 179, 8, 255), width=2)
+    draw.line([(10, rule_y), (width - 10, rule_y)], fill=(234, 179, 8, 255), width=2)
 
     if not rows:
-        efnt = pick_font("Sem jogadores ranqueados neste modo.", size=14, bold=False)
-        draw.text((420, rule_y + 12), "Sem jogadores ranqueados neste modo.", font=efnt, fill=(156, 163, 175, 255))
+        efnt = pick_font("Sem jogadores ranqueados neste modo.", size=16, bold=False)
+        draw.text((310, rule_y + 9), "Sem jogadores ranqueados neste modo.", font=efnt, fill=(156, 163, 175, 255))
 
     y = banner_h + col_hdr_h
     for idx, entry in enumerate(rows):
         is_custom = bool(entry.get("is_custom"))
         if is_custom and int(entry.get("br_rank", 0)) > 20:
-            r_bg = (31, 27, 19, 255)
+            r_bg = (33, 28, 19, 255)
         else:
-            r_bg = (17, 19, 24, 255) if idx % 2 == 0 else (23, 26, 33, 255)
+            r_bg = (17, 19, 24, 255) if idx % 2 == 0 else (24, 27, 34, 255)
 
         draw.rectangle((0, y, width, y + row_h), fill=r_bg)
-        draw.line([(12, y + row_h - 1), (width - 12, y + row_h - 1)], fill=(34, 38, 46, 255), width=1)
+        draw.line([(10, y + row_h - 1), (width - 10, y + row_h - 1)], fill=(34, 38, 46, 255), width=1)
 
         rank_val = int(entry.get("br_rank", idx + 1))
         elo_int = int(round(float(entry.get("avg_elo", 0))))
@@ -1131,27 +1273,24 @@ def render_ranking_table_png(
         lmd = int(entry.get("last_match_date", 0))
         last_game_str = datetime.fromtimestamp(lmd, tz=BRT_TZ).strftime("%d/%m/%Y") if lmd > 0 else "—"
 
-        num_fnt = pick_font("1566", size=15, bold=True, condensed=True)
+        num_fnt = pick_font("1566", size=17, bold=True, condensed=True)
         white = (243, 244, 246, 255)
         rank_color = (250, 204, 21, 255) if rank_val == 1 else white
 
-        # 1) RANK
         r_str = str(rank_val)
         rw = text_width(draw, r_str, num_fnt)
-        draw.text((44 - rw / 2, y + 11), r_str, font=num_fnt, fill=rank_color)
+        draw.text((42 - rw / 2, y + 8), r_str, font=num_fnt, fill=rank_color)
 
-        # 2) ELO
         e_str = str(elo_int)
         ew = text_width(draw, e_str, num_fnt)
-        draw.text((112 - ew / 2, y + 11), e_str, font=num_fnt, fill=white)
+        draw.text((108 - ew / 2, y + 8), e_str, font=num_fnt, fill=white)
 
-        # 3) ALIAS: Avatar Circular Real da Steam (30x30) + Bandeira 🇧🇷 (20x14) + Nome
         pid = int(entry.get("profile_id", 0))
         sid = str(entry.get("steam_id") or "")
         alias_raw = str(entry.get("alias") or f"Player {pid}")
         country = str(entry.get("country") or "br").lower()
 
-        ring_col = (245, 184, 46, 240) if is_custom else (34, 197, 94, 220)
+        ring_col = (245, 184, 46, 245) if is_custom else (34, 197, 94, 230)
         av_im = avatar_provider.get_circular_avatar(
             size=30,
             profile_id=pid,
@@ -1159,25 +1298,24 @@ def render_ranking_table_png(
             alias=alias_raw,
             ring_color=ring_col,
         )
-        img.paste(av_im, (170, y + 5), av_im)
+        img.paste(av_im, (156, y + 3), av_im)
 
-        flag_im = get_country_flag(country, w=20, h=14)
-        img.paste(flag_im, (206, y + 13), flag_im)
+        flag_im = get_country_flag(country, w=21, h=15)
+        img.paste(flag_im, (192, y + 11), flag_im)
 
-        alias_max_px = 340 if is_custom else 390
-        disp_alias, a_fnt = truncate_to_px(draw, alias_raw, max_px=alias_max_px, size=14, bold=True)
-        draw.text((233, y + 11), disp_alias, font=a_fnt, fill=white)
+        alias_max_px = 165 if is_custom else 215
+        disp_alias, a_fnt = truncate_to_px(draw, alias_raw, max_px=alias_max_px, size=17, bold=True)
+        draw.text((220, y + 8), disp_alias, font=a_fnt, fill=white)
 
         if is_custom:
             aw = text_width(draw, disp_alias, a_fnt)
-            bx = int(233 + aw + 8)
+            bx = int(220 + aw + 6)
             badge_lbl = "★ EXTRA"
-            bfnt = pick_font(badge_lbl, size=10, bold=True)
+            bfnt = pick_font(badge_lbl, size=11, bold=True)
             bw = int(text_width(draw, badge_lbl, bfnt)) + 10
-            draw.rounded_rectangle((bx, y + 11, bx + bw, y + 28), radius=4, fill=(66, 50, 16, 255), outline=(234, 179, 8, 200))
-            draw.text((bx + 5, y + 13), badge_lbl, font=bfnt, fill=(250, 204, 21, 255))
+            draw.rounded_rectangle((bx, y + 9, bx + bw, y + 27), radius=4, fill=(66, 50, 16, 255), outline=(234, 179, 8, 210))
+            draw.text((bx + 5, y + 11), badge_lbl, font=bfnt, fill=(250, 204, 21, 255))
 
-        # 4) STREAK (+5 verde / -2 vermelho)
         if streak > 0:
             st_str = f"+{streak}"
             st_col = (74, 222, 128, 255)
@@ -1188,18 +1326,17 @@ def render_ranking_table_png(
             st_str = "0"
             st_col = (156, 163, 175, 255)
         stw = text_width(draw, st_str, num_fnt)
-        draw.text((665 - stw, y + 11), st_str, font=num_fnt, fill=st_col)
+        draw.text((492 - stw, y + 8), st_str, font=num_fnt, fill=st_col)
 
-        # 5..9) WINS, LOSSES, RATIO, TOTAL, LAST GAME
         for val_str, right_x in (
-            (str(wins), 748),
-            (str(losses), 832),
-            (f"{ratio}%", 912),
-            (str(total), 990),
-            (last_game_str, 1098),
+            (str(wins), 568),
+            (str(losses), 644),
+            (f"{ratio}%", 714),
+            (str(total), 784),
+            (last_game_str, 924),
         ):
             vw = text_width(draw, val_str, num_fnt)
-            draw.text((right_x - vw, y + 11), val_str, font=num_fnt, fill=white)
+            draw.text((right_x - vw, y + 8), val_str, font=num_fnt, fill=white)
 
         y += row_h
 

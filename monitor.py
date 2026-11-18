@@ -35,7 +35,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 SECRET_FILE_NAME = ".env.secret"
 SAFE_WEBHOOK_PLACEHOLDER = "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_WEBHOOK_URL"
-CURRENT_SUMMARY_LAYOUT_VERSION = "v3_graphical_steam_avatars"
+CURRENT_SUMMARY_LAYOUT_VERSION = "v4_large_hd_cards"
 
 
 def _read_local_secret_webhook(base_dir: Path) -> str:
