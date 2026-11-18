@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v5 — Ranking (Top 20 + 31 com setas ▲/▼) e Partidas dos 31 (SteamID)."""
+"""Monitor automático CoH3 Brasil v6 — Ranking (Top 20 + 31 únicos com setas ▲/▼) e Partidas (SteamID + contas mescladas)."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 SECRET_FILE_NAME = ".env.secret"
 SAFE_WEBHOOK_PLACEHOLDER = "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_WEBHOOK_URL"
-CURRENT_SUMMARY_LAYOUT_VERSION = "v5_ptbr_roster31_arrows"
+CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
 
 
 def _read_local_secret_webhook(base_dir: Path) -> str:
@@ -56,17 +56,18 @@ def _read_local_secret_webhook(base_dir: Path) -> str:
 
 def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
     """
-    Garante que os 31 jogadores brasileiros fixos estejam sempre atrelados pelo código Steam (steam_id)
-    e nick original em custom_players, ativando por padrão o monitoramento exclusivo de partidas dos 31 (Opção 2).
+    Garante que o elenco brasileiro fixo (incluindo arc, Alekel e a mesclagem gabe44arg -> É o Gabe)
+    esteja sempre sincronizado pelo código Steam (steam_id) em custom_players.
     """
     changed = False
     if "monitor_only_custom_matches" not in cfg:
         cfg["monitor_only_custom_matches"] = True
         changed = True
 
-    if int(cfg.get("leaderboard_refresh_minutes", 30)) >= 30:
-        cfg["leaderboard_refresh_minutes"] = 20
-        changed = True
+    if int(cfg.get("leaderboard_refresh_minutes", 30)) >= 20:
+        if int(cfg.get("leaderboard_refresh_minutes", 30)) != 15:
+            cfg["leaderboard_refresh_minutes"] = 15
+            changed = True
 
     existing_custom: list[dict[str, Any]] = list(cfg.get("custom_players", []))
     by_sid: dict[str, dict[str, Any]] = {}
@@ -89,16 +90,25 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
         c_sid = str(core["steam_id"])
         c_pid = int(core["profile_id"])
         c_orig = str(core["original_alias"])
+        c_known = list(core.get("known_aliases") or [])
+        c_merged_pid = int(core.get("merged_into_profile_id", 0) or 0)
+        c_merged_sid = str(core.get("merged_into_steam_id") or "")
 
         target = by_sid.get(c_sid) or by_pid.get(c_pid)
         if target is None:
-            new_entry = {
+            new_entry: dict[str, Any] = {
                 "profile_id": c_pid,
                 "steam_id": c_sid,
                 "original_alias": c_orig,
                 "alias": c_orig,
                 "is_core_roster": True,
             }
+            if c_known:
+                new_entry["known_aliases"] = c_known
+            if c_merged_pid:
+                new_entry["merged_into_profile_id"] = c_merged_pid
+            if c_merged_sid:
+                new_entry["merged_into_steam_id"] = c_merged_sid
             ordered_list.append(new_entry)
             by_sid[c_sid] = new_entry
             by_pid[c_pid] = new_entry
@@ -107,14 +117,24 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
             if target.get("steam_id") != c_sid:
                 target["steam_id"] = c_sid
                 changed = True
-            if not target.get("original_alias"):
+            if target.get("original_alias") != c_orig:
                 target["original_alias"] = c_orig
                 changed = True
-            if not target.get("alias"):
-                target["alias"] = c_orig
+            expected_alias = format_bound_display_alias(str(target.get("alias") or c_orig), c_orig, c_known)
+            if target.get("alias") != expected_alias:
+                target["alias"] = expected_alias
                 changed = True
             if not int(target.get("profile_id", 0) or 0):
                 target["profile_id"] = c_pid
+                changed = True
+            if c_known and target.get("known_aliases") != c_known:
+                target["known_aliases"] = c_known
+                changed = True
+            if c_merged_pid and int(target.get("merged_into_profile_id", 0) or 0) != c_merged_pid:
+                target["merged_into_profile_id"] = c_merged_pid
+                changed = True
+            if c_merged_sid and target.get("merged_into_steam_id") != c_merged_sid:
+                target["merged_into_steam_id"] = c_merged_sid
                 changed = True
             if not target.get("is_core_roster"):
                 target["is_core_roster"] = True
@@ -161,18 +181,86 @@ def save_config_file(config_path: Path, cfg_to_save: dict[str, Any]) -> None:
         config_path.write_text(serialized, encoding="utf-8")
 
 
+def _merge_player_stat_records(primary: dict[str, Any], secondary: dict[str, Any]) -> None:
+    """
+    Mescla estatísticas de uma conta secundária (ex.: gabe44arg #557890) na conta principal
+    (ex.: É o Gabe #559962) para unificar vitórias, derrotas, última partida e melhor ELO por facção no Ranking.
+    """
+    p_modes = primary.setdefault("modes", {})
+    p_inact = primary.setdefault("inactive_modes", {})
+    s_modes = secondary.get("modes", {})
+    s_inact = secondary.get("inactive_modes", {})
+
+    all_keys = set(p_modes.keys()) | set(p_inact.keys()) | set(s_modes.keys()) | set(s_inact.keys())
+    for key in all_keys:
+        pm = p_modes.get(key)
+        pi = p_inact.get(key)
+        sm = s_modes.get(key)
+        si = s_inact.get(key)
+
+        p_rec = pm or pi
+        s_rec = sm or si
+        if p_rec and not s_rec:
+            continue
+        if s_rec and not p_rec:
+            if sm:
+                p_modes[key] = dict(sm)
+            elif si:
+                p_inact[key] = dict(si)
+            continue
+
+        assert p_rec is not None and s_rec is not None
+        comb_wins = int(p_rec.get("wins", 0)) + int(s_rec.get("wins", 0))
+        comb_losses = int(p_rec.get("losses", 0)) + int(s_rec.get("losses", 0))
+        p_lmd = int(p_rec.get("lastmatchdate", 0))
+        s_lmd = int(s_rec.get("lastmatchdate", 0))
+        if s_lmd > p_lmd:
+            latest_lmd = s_lmd
+            latest_streak = int(s_rec.get("streak", 0))
+        else:
+            latest_lmd = p_lmd
+            latest_streak = int(p_rec.get("streak", 0))
+
+        active_candidates = [r for r in (pm, sm) if r is not None]
+        if active_candidates:
+            best_active = max(active_candidates, key=lambda r: int(r.get("elo", 0)))
+            merged_slot = dict(best_active)
+            merged_slot["wins"] = comb_wins
+            merged_slot["losses"] = comb_losses
+            merged_slot["lastmatchdate"] = latest_lmd
+            merged_slot["streak"] = latest_streak
+            p_modes[key] = merged_slot
+            p_inact.pop(key, None)
+        else:
+            best_inact = max((p_rec, s_rec), key=lambda r: int(r.get("elo", 0)))
+            merged_slot = dict(best_inact)
+            merged_slot["wins"] = comb_wins
+            merged_slot["losses"] = comb_losses
+            merged_slot["lastmatchdate"] = latest_lmd
+            merged_slot["streak"] = latest_streak
+            p_inact[key] = merged_slot
+
+    primary["total_wins"] = int(primary.get("total_wins", 0)) + int(secondary.get("total_wins", 0))
+    primary["total_losses"] = int(primary.get("total_losses", 0)) + int(secondary.get("total_losses", 0))
+    if int(secondary.get("max_elo", 0)) > int(primary.get("max_elo", 0)):
+        primary["max_elo"] = secondary["max_elo"]
+        primary["best_mode"] = secondary.get("best_mode", primary.get("best_mode", ""))
+    if int(secondary.get("last_match_date", 0)) > int(primary.get("last_match_date", 0)):
+        primary["last_match_date"] = secondary["last_match_date"]
+
+
 def merge_catalog_with_custom_players(
     base_players: list[dict[str, Any]],
     custom_players: list[dict[str, Any]],
     relic: RelicAPIClient,
 ) -> list[dict[str, Any]]:
     """
-    Consulta getPersonalStat por conta Steam (/steam/<steam_id>) para os 31 jogadores + convidados extras
-    (incluindo brasileiros registrados com outro país como 'us', ex: Lem22), atualizando profile_id e
-    preservando o nick original caso o jogador tenha trocado de apelido na Steam.
+    Consulta getPersonalStat por conta Steam (/steam/<steam_id>) para o elenco fixo + convidados,
+    aplica apelidos preferenciais (Alekel) e funde contas vinculadas do mesmo jogador (gabe44arg -> É o Gabe).
     """
     by_pid: dict[int, dict[str, Any]] = {int(p["profile_id"]): dict(p) for p in base_players}
     effective_custom = custom_players if custom_players else list(CORE_BR_ROSTER)
+    steam_map, pid_map = build_roster_lookup_maps(effective_custom)
 
     fetched_custom = fetch_custom_players_stats(relic, effective_custom)
     fetched_by_sid: dict[str, dict[str, Any]] = {}
@@ -194,6 +282,8 @@ def merge_catalog_with_custom_players(
                 existing["steam_id"] = sid
             existing["is_custom"] = True
             existing["is_br_roster"] = True
+            existing["merged_into_profile_id"] = int(cp_stat.get("merged_into_profile_id", 0) or 0)
+            existing["merged_into_steam_id"] = str(cp_stat.get("merged_into_steam_id") or "")
             existing.setdefault("inactive_modes", {}).update(cp_stat.get("inactive_modes", {}))
             existing.setdefault("modes", {}).update(cp_stat.get("modes", {}))
             if cp_stat.get("max_elo", 0) > existing.get("max_elo", 0):
@@ -204,18 +294,36 @@ def merge_catalog_with_custom_players(
         else:
             by_pid[pid] = cp_stat
 
-    # Sincroniza profile_id e alias formatado de volta na lista custom_players caso resolvido via SteamID64
+    # Funde contas secundárias (ex.: gabe44arg #557890) diretamente na conta principal (É o Gabe #559962)
+    merged_away_pids: list[int] = []
+    for pid, p_obj in list(by_pid.items()):
+        sid = str(p_obj.get("steam_id") or "")
+        r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
+        target_pid = int(p_obj.get("merged_into_profile_id") or r_entry.get("merged_into_profile_id") or 0)
+        if target_pid > 0 and target_pid != pid and target_pid in by_pid:
+            _merge_player_stat_records(by_pid[target_pid], p_obj)
+            merged_away_pids.append(pid)
+
+    for sec_pid in merged_away_pids:
+        by_pid.pop(sec_pid, None)
+
+    # Sincroniza profile_id e alias formatado de volta na lista custom_players
     for cp in custom_players:
         sid = str(cp.get("steam_id") or "").replace("/steam/", "").strip()
         pid = int(cp.get("profile_id", 0) or 0)
         resolved = fetched_by_sid.get(sid) or fetched_by_pid.get(pid)
+        r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
         if resolved:
             cp["profile_id"] = int(resolved["profile_id"])
             if resolved.get("steam_id"):
                 cp["steam_id"] = str(resolved["steam_id"])
-            orig = str(cp.get("original_alias") or resolved.get("original_alias") or resolved["alias"])
+            orig = str(r_entry.get("original_alias") or cp.get("original_alias") or resolved.get("original_alias") or resolved["alias"])
             cp["original_alias"] = orig
-            cp["alias"] = format_bound_display_alias(str(resolved.get("current_alias") or resolved["alias"]), orig)
+            cp["alias"] = format_bound_display_alias(
+                str(resolved.get("current_alias") or resolved["alias"]),
+                orig,
+                r_entry.get("known_aliases") or cp.get("known_aliases"),
+            )
 
     return list(by_pid.values())
 
@@ -234,7 +342,7 @@ def detect_and_apply_ranking_movements(
     custom_players: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
     """
-    Compara a posição atual de cada jogador do grupo (Top 20 + 31 monitorados) com o último snapshot salvo.
+    Compara a posição atual de cada jogador do grupo (Top 20 + monitorados) com o último snapshot salvo.
     - Retorna (movements_by_mode, has_new_movements) para disparo do Card de Movimentação no Discord.
     - Aplica rank_delta (+N para subida ▲ verde, -N para queda ▼ vermelha) nas linhas do Ranking.
     """
@@ -313,7 +421,6 @@ def detect_and_apply_ranking_movements(
             movements_by_mode[mode] = mode_moves
             last_deltas[mode] = mode_new_deltas
         else:
-            # Mantém as últimas setas registradas naquele modo na tabela fixa até a próxima oscilação
             saved_mode_deltas = last_deltas.get(mode, {})
             for e in entries:
                 key = _player_identity_key(e)
@@ -373,9 +480,9 @@ def maybe_refresh_top_rankings(
     is_oneshot: bool = False,
 ) -> bool:
     """
-    Revarre as leaderboards da Relic para atualizar o Ranking (Top 20 + 31 jogadores),
+    Revarre as leaderboards da Relic para atualizar o Ranking (Top 20 + monitorados únicos),
     detecta quem subiu (▲ verde) ou desceu (▼ vermelho), notifica movimentações no Discord e mantém
-    tracked_players focado exclusivamente nos 31 monitorados (Opção 2).
+    tracked_players focado nas contas monitoradas (incluindo contas mescladas).
     """
     raw_disk_cfg = json.loads(config_path.read_text(encoding="utf-8"))
     cfg_upgraded = ensure_core_roster_in_config(raw_disk_cfg)
@@ -383,7 +490,7 @@ def maybe_refresh_top_rankings(
     if not raw_disk_cfg.get("auto_follow_top_br", True) and not force and not cfg_upgraded:
         return False
 
-    refresh_mins = max(5, int(raw_disk_cfg.get("leaderboard_refresh_minutes", 20)))
+    refresh_mins = max(5, int(raw_disk_cfg.get("leaderboard_refresh_minutes", 15)))
     top_n = int(raw_disk_cfg.get("top_n_per_mode", 20))
     only_custom = bool(raw_disk_cfg.get("monitor_only_custom_matches", True))
     remove_dropped = bool(raw_disk_cfg.get("remove_if_drops_out_of_top", False))
@@ -393,14 +500,14 @@ def maybe_refresh_top_rankings(
     last_scan_str = db.get_state("last_leaderboard_scan_ts")
     last_scan_ts = int(last_scan_str) if last_scan_str and last_scan_str.isdigit() else 0
 
-    # Em execuções agendadas (--once no GitHub Actions), sempre varre o Ranking para não perder ciclos;
-    # no modo contínuo local, respeita leaderboard_refresh_minutes.
     if not force and not is_oneshot and not cfg_upgraded and last_scan_ts > 0 and (now - last_scan_ts) < (refresh_mins * 60):
         return False
 
+    unique_cnt = sum(1 for cp in custom_players if not cp.get("merged_into_profile_id"))
     logger.info(
-        "Atualizando Ranking BR (Top %d + %d monitorados SteamID: 1v1, 2v2, Jogos em Equipe)...",
+        "Atualizando Ranking BR (Top %d + %d monitorados únicos / %d contas Steam: 1v1, 2v2, Jogos em Equipe)...",
         top_n,
+        unique_cnt,
         len(custom_players),
     )
     players = relic.fetch_brazilian_players()
@@ -457,7 +564,7 @@ def maybe_refresh_top_rankings(
             pid = int(tp["profile_id"])
             if not only_custom and pid not in existing_by_id and not tp.get("is_custom"):
                 newly_entered.append(tp)
-            updated_by_id[pid] = {
+            rec_tp: dict[str, Any] = {
                 "profile_id": pid,
                 "alias": tp["alias"],
                 "original_alias": str(tp.get("original_alias") or tp["alias"]),
@@ -465,13 +572,16 @@ def maybe_refresh_top_rankings(
                 "placements": tp["placements"],
                 "is_custom": bool(tp.get("is_custom")),
             }
+            if tp.get("merged_into_profile_id"):
+                rec_tp["merged_into_profile_id"] = int(tp["merged_into_profile_id"])
+            updated_by_id[pid] = rec_tp
     else:
         updated_by_id = dict(existing_by_id)
         for tp in current_tracked:
             pid = int(tp["profile_id"])
             if pid not in updated_by_id and not tp.get("is_custom"):
                 newly_entered.append(tp)
-            updated_by_id[pid] = {
+            rec_tp = {
                 "profile_id": pid,
                 "alias": tp["alias"],
                 "original_alias": str(tp.get("original_alias") or tp["alias"]),
@@ -479,6 +589,9 @@ def maybe_refresh_top_rankings(
                 "placements": tp["placements"],
                 "is_custom": bool(tp.get("is_custom")) or (pid in custom_ids),
             }
+            if tp.get("merged_into_profile_id"):
+                rec_tp["merged_into_profile_id"] = int(tp["merged_into_profile_id"])
+            updated_by_id[pid] = rec_tp
 
     db.set_state("last_leaderboard_scan_ts", str(now))
     if has_new_movements or table_stats_changed or not had_prev_snap or force or cfg_upgraded:
@@ -526,10 +639,10 @@ def run_cycle(
     is_oneshot: bool = False,
 ) -> tuple[int, int]:
     """
-    Executa um ciclo completo v5:
-    1) Atualiza Ranking (Top 20 + 31 brasileiros) e publica movimentações com setas verdes ▲ / vermelhas ▼
-    2) Monitora partidas finalizadas EXCLUSIVAMENTE dos 31 jogadores brasileiros listados (via conta Steam)
-    3) Atualiza automaticamente o Painel Fixado em PT-BR no Discord
+    Executa um ciclo completo v6:
+    1) Atualiza Ranking (Top 20 + 31 brasileiros únicos) e publica movimentações com setas verdes ▲ / vermelhas ▼
+    2) Monitora partidas finalizadas EXCLUSIVAMENTE das contas brasileiras monitoradas (incluindo contas mescladas)
+    3) Atualiza automaticamente o Painel em PT-BR no Discord
     """
     cfg = load_config(config_path)
     db_path = Path(cfg.get("sqlite_db_path", "./coh3_br_matches.db"))
@@ -578,6 +691,7 @@ def run_cycle(
     newly_finished: list[dict[str, Any]] = []
     seeded_count = 0
     players_changed = False
+    now_ts = int(time.time())
 
     def _fetch_one_player(pl: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]] | None, Exception | None]:
         p_id = int(pl["profile_id"])
@@ -613,11 +727,13 @@ def run_cycle(
         )
 
         if not is_baseline_done:
-            for m in reversed(recent_matches[:seed_limit]):
+            for idx_m, m in enumerate(recent_matches):
+                is_very_recent = (now_ts - int(m.get("completion_time", 0))) <= 2700
                 if db.insert_match(m):
-                    seeded_count += 1
-            for m in recent_matches[seed_limit:]:
-                db.insert_match(m)
+                    if is_very_recent:
+                        newly_finished.append(m)
+                    elif idx_m < seed_limit:
+                        seeded_count += 1
             db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
             players_changed = True
             logger.info(
@@ -680,13 +796,14 @@ def run_cycle(
                     rankings_by_mode=cached_rankings,
                     custom_players=custom_players,
                     top_n=top_n,
+                    recreate_message=layout_needs_upgrade,
                 )
                 if new_summary_id:
                     if new_summary_id != summary_msg_id:
                         db.set_state("summary_message_id", new_summary_id)
-                        logger.info("Mensagem Fixada criada no Discord (ID %s).", new_summary_id)
+                        logger.info("Painel Resumo publicado no Discord (ID %s).", new_summary_id)
                     else:
-                        logger.info("Painel Fixado (Ranking + Partidas dos 31) atualizado automaticamente no Discord.")
+                        logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
                     db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
                     db.set_state("rankings_updated_flag", "0")
             except Exception as exc:
@@ -699,13 +816,13 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v5 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v6 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
         "--force-rank-scan",
         action="store_true",
-        help="Força revarredura imediata do Ranking (Top 20 + 31) neste ciclo",
+        help="Força revarredura imediata do Ranking (Top 20 + monitorados) neste ciclo",
     )
     args = parser.parse_args()
 
@@ -724,7 +841,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v5 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v6 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:

@@ -143,7 +143,7 @@ def _rebuild_rankings_and_config(cfg: dict[str, Any], relic: RelicAPIClient, res
 
     for p in monitored_list:
         pid = int(p["profile_id"])
-        merged_by_id[pid] = {
+        rec_p: dict[str, Any] = {
             "profile_id": pid,
             "alias": p["alias"],
             "original_alias": str(p.get("original_alias") or p["alias"]),
@@ -151,6 +151,9 @@ def _rebuild_rankings_and_config(cfg: dict[str, Any], relic: RelicAPIClient, res
             "placements": p["placements"],
             "is_custom": bool(p.get("is_custom")) or (pid in custom_ids),
         }
+        if p.get("merged_into_profile_id"):
+            rec_p["merged_into_profile_id"] = int(p["merged_into_profile_id"])
+        merged_by_id[pid] = rec_p
 
     cfg["custom_players"] = custom_players
     cfg["tracked_players"] = list(merged_by_id.values())

@@ -14,7 +14,7 @@
       "steam_id": "76561198061434984",
       "placements": [
         "#80 1v1 (média 1523.0) ⭐",
-        "#161 2v2 (média 1614.5) ⭐",
+        "#160 2v2 (média 1614.5) ⭐",
         "#16 Jogos em Equipe (média 1369.0)"
       ],
       "is_custom": true
@@ -57,13 +57,25 @@
     },
     {
       "profile_id": 509690,
-      "alias": "Minhoca de ferro!",
-      "original_alias": "Minhoca de ferro!",
+      "alias": "Alekel",
+      "original_alias": "Alekel",
       "steam_id": "76561198053226112",
       "placements": [
         "#93 1v1 (média 954.5) ⭐",
-        "#162 2v2 (média 1219.2) ⭐",
+        "#161 2v2 (média 1219.2) ⭐",
         "#6 Jogos em Equipe (média 1524.5)"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1005730,
+      "alias": "arc",
+      "original_alias": "arc",
+      "steam_id": "76561199791811246",
+      "placements": [
+        "#84 1v1 (média 1137.0) ⭐",
+        "#4 2v2 (média 1497.0)",
+        "#7 Jogos em Equipe (média 1512.0)"
       ],
       "is_custom": true
     },
@@ -74,7 +86,7 @@
       "steam_id": "76561198001604015",
       "placements": [
         "#81 1v1 (média 1454.2) ⭐",
-        "#11 2v2 (média 1330.0)",
+        "#12 2v2 (média 1330.0)",
         "#30 Jogos em Equipe (média 1272.0) ⭐"
       ],
       "is_custom": true
@@ -97,7 +109,7 @@
       "original_alias": "Cunha",
       "steam_id": "76561198005412401",
       "placements": [
-        "#88 1v1 (média 1049.0) ⭐",
+        "#89 1v1 (média 1049.0) ⭐",
         "#33 2v2 (média 1214.0) ⭐",
         "#18 Jogos em Equipe (média 1350.5)"
       ],
@@ -110,7 +122,7 @@
       "steam_id": "76561198115923932",
       "placements": [
         "#8 1v1 (média 1306.3)",
-        "#10 2v2 (média 1338.0)",
+        "#11 2v2 (média 1338.0)",
         "#55 Jogos em Equipe (média 1187.7) ⭐"
       ],
       "is_custom": true
@@ -121,7 +133,7 @@
       "original_alias": "BinhoBiceps",
       "steam_id": "76561197996817129",
       "placements": [
-        "#84 1v1 (média 1128.2) ⭐",
+        "#85 1v1 (média 1128.2) ⭐",
         "#20 2v2 (média 1284.7)",
         "#19 Jogos em Equipe (média 1335.2)"
       ],
@@ -133,8 +145,8 @@
       "original_alias": "Showtaro",
       "steam_id": "76561197986271242",
       "placements": [
-        "#87 1v1 (média 1070.0) ⭐",
-        "#14 2v2 (média 1311.0)",
+        "#88 1v1 (média 1070.0) ⭐",
+        "#15 2v2 (média 1311.0)",
         "#26 Jogos em Equipe (média 1286.8) ⭐"
       ],
       "is_custom": true
@@ -145,7 +157,7 @@
       "original_alias": "Dragoness",
       "steam_id": "76561198135142137",
       "placements": [
-        "#86 1v1 (média 1076.0) ⭐",
+        "#87 1v1 (média 1076.0) ⭐",
         "#30 2v2 (média 1217.0) ⭐",
         "#23 Jogos em Equipe (média 1305.0) ⭐"
       ],
@@ -158,7 +170,7 @@
       "steam_id": "76561198070545853",
       "placements": [
         "#15 1v1 (média 1216.0)",
-        "#16 2v2 (média 1299.0)",
+        "#17 2v2 (média 1299.0)",
         "#47 Jogos em Equipe (média 1217.0) ⭐"
       ],
       "is_custom": true
@@ -169,7 +181,7 @@
       "original_alias": "nigo_BR ᵀᴹ",
       "steam_id": "76561197963741792",
       "placements": [
-        "#85 1v1 (média 1090.8) ⭐",
+        "#86 1v1 (média 1090.8) ⭐",
         "#46 2v2 (média 1161.5) ⭐",
         "#28 Jogos em Equipe (média 1279.0) ⭐"
       ],
@@ -182,7 +194,7 @@
       "steam_id": "76561198121484554",
       "placements": [
         "#82 1v1 (média 1156.0) ⭐",
-        "#163 2v2 (média 1118.0) ⭐",
+        "#162 2v2 (média 1118.0) ⭐",
         "#32 Jogos em Equipe (média 1271.0) ⭐"
       ],
       "is_custom": true
@@ -218,7 +230,7 @@
       "steam_id": "76561198058548575",
       "placements": [
         "#92 1v1 (média 958.0) ⭐",
-        "#164 2v2 (média 1084.0) ⭐",
+        "#163 2v2 (média 1084.0) ⭐",
         "#51 Jogos em Equipe (média 1199.6) ⭐"
       ],
       "is_custom": true
@@ -290,7 +302,7 @@
       "steam_id": "76561198054318813",
       "placements": [
         "#91 1v1 (média 994.0) ⭐",
-        "#165 2v2 (média 1031.5) ⭐",
+        "#164 2v2 (média 1031.5) ⭐",
         "#67 Jogos em Equipe (média 1147.5) ⭐"
       ],
       "is_custom": true
@@ -313,7 +325,7 @@
       "original_alias": "gbytes™",
       "steam_id": "76561198063124280",
       "placements": [
-        "#166 2v2 (média 1028.2) ⭐",
+        "#165 2v2 (média 1028.2) ⭐",
         "#76 Jogos em Equipe (média 1128.2) ⭐"
       ],
       "is_custom": true
@@ -355,33 +367,32 @@
       "is_custom": true
     },
     {
-      "profile_id": 557890,
-      "alias": "gabe44arg",
-      "original_alias": "gabe44arg",
-      "steam_id": "76561199538846112",
-      "placements": [
-        "#89 1v1 (média 1018.0) ⭐",
-        "#107 2v2 (média 879.0) ⭐",
-        "#238 Jogos em Equipe (média 873.5) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 13450,
       "alias": "7 DIVISAO PHANTOM",
       "original_alias": "7 DIVISAO PHANTOM",
       "steam_id": "76561198284234077",
       "placements": [
         "#97 1v1 (média 936.3) ⭐",
-        "#167 2v2 (média 835.8) ⭐",
-        "#249 Jogos em Equipe (média 856.2) ⭐"
+        "#166 2v2 (média 835.8) ⭐",
+        "#250 Jogos em Equipe (média 856.2) ⭐"
       ],
       "is_custom": true
+    },
+    {
+      "profile_id": 557890,
+      "alias": "É o Gabe",
+      "original_alias": "É o Gabe",
+      "steam_id": "76561199538846112",
+      "placements": [
+        "🔗 Conta mesclada em É o Gabe (#559962)"
+      ],
+      "is_custom": true,
+      "merged_into_profile_id": 559962
     }
   ],
   "auto_follow_top_br": true,
   "top_n_per_mode": 20,
-  "leaderboard_refresh_minutes": 20,
+  "leaderboard_refresh_minutes": 15,
   "remove_if_drops_out_of_top": false,
   "custom_players": [
     {
@@ -485,9 +496,14 @@
     {
       "profile_id": 509690,
       "steam_id": "76561198053226112",
-      "original_alias": "Minhoca de ferro!",
-      "alias": "Minhoca de ferro!",
-      "is_core_roster": true
+      "original_alias": "Alekel",
+      "alias": "Alekel",
+      "is_core_roster": true,
+      "known_aliases": [
+        "Minhoca de ferro!",
+        "Minhoca de ferro",
+        "Alekel"
+      ]
     },
     {
       "profile_id": 1114404,
@@ -569,9 +585,16 @@
     {
       "profile_id": 557890,
       "steam_id": "76561199538846112",
-      "original_alias": "gabe44arg",
-      "alias": "gabe44arg",
-      "is_core_roster": true
+      "original_alias": "É o Gabe",
+      "alias": "É o Gabe",
+      "is_core_roster": true,
+      "known_aliases": [
+        "gabe44arg",
+        "gabe444arg",
+        "É o Gabe"
+      ],
+      "merged_into_profile_id": 559962,
+      "merged_into_steam_id": "76561198062871244"
     },
     {
       "profile_id": 26910,
@@ -599,6 +622,13 @@
       "steam_id": "76561198054318813",
       "original_alias": "Liquid",
       "alias": "Liquid",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1005730,
+      "steam_id": "76561199791811246",
+      "original_alias": "arc",
+      "alias": "arc",
       "is_core_roster": true
     }
   ],

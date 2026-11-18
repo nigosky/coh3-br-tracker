@@ -769,8 +769,12 @@ def _resolve_roster_participant(
     clean_sid = str(steam_id or "").replace("/steam/", "").strip()
     r_entry = steam_map.get(clean_sid) or pid_map.get(pid)
     if r_entry:
-        bound_sid = clean_sid or str(r_entry.get("steam_id") or "")
-        disp = fmt_fn(raw_alias, str(r_entry.get("original_alias") or ""))
+        bound_sid = str(r_entry.get("merged_into_steam_id") or clean_sid or r_entry.get("steam_id") or "")
+        disp = fmt_fn(
+            raw_alias,
+            str(r_entry.get("original_alias") or ""),
+            r_entry.get("known_aliases"),
+        )
         return bound_sid, disp, str(country or "br").lower(), True
     return clean_sid, raw_alias, str(country or ("br" if is_tracked else "un")).lower(), is_tracked
 
@@ -778,7 +782,7 @@ def _resolve_roster_participant(
 def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """
     Reconstrói todos os jogadores únicos da partida e separa em (Jogadores do Eixo, Jogadores Aliados),
-    aplicando vínculo de conta Steam e nick original aos 31 brasileiros monitorados.
+    aplicando vínculo de conta Steam, substituição de apelido (Alekel) e unificação (É o Gabe).
     """
     try:
         from relic_api import build_roster_lookup_maps, format_bound_display_alias
@@ -786,7 +790,7 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
         steam_map, pid_map = build_roster_lookup_maps()
     except Exception:
         steam_map, pid_map = {}, {}
-        format_bound_display_alias = lambda cur, orig="": cur or orig
+        format_bound_display_alias = lambda cur, orig="", _known=None: cur or orig
 
     records = group.get("records") or [group.get("primary") or group]
     primary = records[0]
@@ -1326,14 +1330,19 @@ def render_ranking_table_png(
         x1, y1 = x0 + rng.randint(-160, 160), y0 + rng.randint(-30, 30)
         draw.line([(x0, y0), (x1, y1)], fill=(46, 41, 33, 95), width=1)
 
-    mode_pt = format_mode_title_pt(mode_title)
-    title_txt = f"COH3 BRASIL  •  RANKING {mode_pt} (MÉDIA ELO)"
-    t_fnt = pick_font(title_txt, size=16, bold=True, condensed=True)
-    draw.text((20, 9), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
-
     sub_txt = subtitle_override or f"Top 20 + 31 Monitorados ({len(rows)})"
     s_fnt = pick_font(sub_txt, size=14, bold=True)
     sw = text_width(draw, sub_txt, s_fnt)
+
+    mode_pt = format_mode_title_pt(mode_title)
+    title_txt = f"COH3 BRASIL  •  RANKING {mode_pt} (MÉDIA ELO)"
+    t_fnt = pick_font(title_txt, size=16, bold=True, condensed=True)
+    max_title_w = width - 44 - sw
+    if text_width(draw, title_txt, t_fnt) > max_title_w:
+        title_txt = f"COH3 BRASIL • RANKING {mode_pt}"
+        title_txt, t_fnt = truncate_to_px(draw, title_txt, int(max_title_w), size=15, bold=True)
+
+    draw.text((20, 9), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
     draw.text((width - 20 - sw, 10), sub_txt, font=s_fnt, fill=(190, 184, 172, 255))
 
     draw.line([(0, banner_h), (width, banner_h)], fill=(48, 44, 36, 255), width=1)

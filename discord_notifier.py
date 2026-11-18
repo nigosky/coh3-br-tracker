@@ -219,12 +219,12 @@ def build_match_embed_payload(
     mode_badge = compact_mode(primary.get("mode"))
 
     if winners and losers:
-        w_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 28) for r in winners[:3])
-        l_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 28) for r in losers[:3])
+        w_names = " & ".join(list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 28) for r in winners))[:3])
+        l_names = " & ".join(list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 28) for r in losers))[:3])
         headline = f"⚔️ **DUELO BR — {w_names} vs {l_names}** (`{mode_badge}` • **{safe_map}**)"
     else:
         win = bool(primary["win"])
-        names = " & ".join(sanitize_discord_text(r["tracked_alias"], 28) for r in records[:4])
+        names = " & ".join(list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 28) for r in records))[:4])
         res_lbl = "VITÓRIA" if win else "DERROTA"
         badge = "🔵" if win else "🔴"
         headline = f"{badge} **{res_lbl} — {names}** (`{mode_badge}` • **{safe_map}**)"
@@ -312,10 +312,11 @@ def build_summary_list_payload(
         for entries in (rankings_by_mode or {}).values()
         for e in entries
     }
+    unique_roster_count = sum(1 for cp in custom_list if not cp.get("merged_into_profile_id")) or len(tracked_players)
     unranked_guests = [
         sanitize_discord_text(cp.get("alias"), 20)
         for cp in custom_list
-        if int(cp.get("profile_id", 0)) not in ranked_pids
+        if int(cp.get("profile_id", 0)) not in ranked_pids and not cp.get("merged_into_profile_id")
     ]
 
     if rankings_by_mode and has_ranking_images:
@@ -338,8 +339,8 @@ def build_summary_list_payload(
             if not first_embed_added:
                 first_embed_added = True
                 desc_note = (
-                    f"🎯 **Ranking Top 20 + {len(custom_list) or len(tracked_players)} brasileiros fixos** "
-                    f"• Partidas monitoradas exclusivamente dos **{len(tracked_players)} jogadores da lista**\n"
+                    f"🎯 **Ranking Top 20 + {unique_roster_count} brasileiros fixos** "
+                    f"• Partidas monitoradas exclusivamente dos **{unique_roster_count} jogadores da lista**\n"
                     f"🟢 `▲` Subiu de posição   •   🔴 `▼` Perdeu posição"
                 )
                 if unranked_guests:
@@ -361,14 +362,15 @@ def build_summary_list_payload(
         primary = grp["primary"]
         recs = grp["records"]
         safe_url = build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
-        names = " + ".join(sanitize_discord_text(r["tracked_alias"], 20) for r in recs[:2])
+        uniq_names = list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 20) for r in recs))[:2]
+        names = " + ".join(uniq_names)
         safe_map = sanitize_discord_text(primary.get("map_clean"), 22)
         quick_links.append(f"`#{row_idx}` **{names}** ({safe_map}) ➔ [👁️ Detalhes / ⬇️ Replay ↗]({safe_url})")
 
-    links_desc = "\n".join(quick_links) if quick_links else "_Aguardando novas partidas dos 31 jogadores monitorados._"
+    links_desc = "\n".join(quick_links) if quick_links else f"_Aguardando novas partidas dos {unique_roster_count} jogadores monitorados._"
 
     matches_embed: dict[str, Any] = {
-        "title": "📌 ÚLTIMAS PARTIDAS DOS 31 MONITORADOS — COH3 BRASIL",
+        "title": f"📌 ÚLTIMAS PARTIDAS DOS {unique_roster_count} MONITORADOS — COH3 BRASIL",
         "description": links_desc[:4000],
         "color": COLOR_SUMMARY,
         "image": {"url": "attachment://recent_matches.png"},
@@ -486,28 +488,29 @@ class DiscordWebhookClient:
         self,
         method: str,
         url: str,
-        payload: dict[str, Any],
+        payload: dict[str, Any] | None = None,
         files: list[tuple[str, bytes, str]] | None = None,
     ) -> tuple[int, dict[str, Any] | None]:
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme != "https" or (parsed.hostname or "").lower() not in ALLOWED_DISCORD_HOSTS:
             raise ValueError("URL de destino bloqueada pela política de segurança do DiscordWebhookClient.")
 
-        if files:
-            body, content_type = _encode_multipart_formdata(payload, files)
+        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/6.0"}
+        if method.upper() == "DELETE":
+            body = None
+        elif files:
+            body, content_type = _encode_multipart_formdata(payload or {}, files)
+            headers["Content-Type"] = content_type
         else:
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-            content_type = "application/json"
+            body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
 
         for _attempt in range(3):
             req = urllib.request.Request(
                 url,
                 data=body,
                 method=method,
-                headers={
-                    "Content-Type": content_type,
-                    "User-Agent": "CoH3-BR-Discord-Tracker/5.0",
-                },
+                headers=headers,
             )
             try:
                 with _SECURE_OPENER.open(req, timeout=25) as resp:
@@ -586,8 +589,9 @@ class DiscordWebhookClient:
         rankings_by_mode: dict[str, list[dict[str, Any]]] | None = None,
         custom_players: list[dict[str, Any]] | None = None,
         top_n: int = 20,
+        recreate_message: bool = False,
     ) -> str | None:
-        """Atualiza (PATCH multipart) a Mensagem Fixada com os PNGs de Ranking + Partidas ou cria uma nova (POST)."""
+        """Atualiza (PATCH multipart) a Mensagem Fixada com os PNGs de Ranking + Partidas ou recria (DELETE + POST)."""
         if not self.is_configured:
             return None
 
@@ -612,13 +616,19 @@ class DiscordWebhookClient:
         clean_msg_id = (existing_message_id or "").strip()
         if clean_msg_id and SNOWFLAKE_ID_RE.fullmatch(clean_msg_id):
             parsed = urllib.parse.urlparse(self._webhook_url)
-            edit_path = parsed.path.rstrip("/") + f"/messages/{clean_msg_id}"
-            edit_url = urllib.parse.urlunparse(parsed._replace(path=edit_path))
-            status, data = self._request("PATCH", edit_url, payload, files=files)
-            if status != 404 and data and "id" in data:
-                ret_id = str(data["id"])
-                return ret_id if SNOWFLAKE_ID_RE.fullmatch(ret_id) else None
-            logger.info("Mensagem resumo anterior (%s) não encontrada (404); criando nova.", clean_msg_id)
+            msg_path = parsed.path.rstrip("/") + f"/messages/{clean_msg_id}"
+            msg_url = urllib.parse.urlunparse(parsed._replace(path=msg_path))
+            if recreate_message:
+                try:
+                    self._request("DELETE", msg_url)
+                except Exception as exc:
+                    logger.warning("Não foi possível remover painel anterior (%s): %s", clean_msg_id, exc)
+            else:
+                status, data = self._request("PATCH", msg_url, payload, files=files)
+                if status != 404 and data and "id" in data:
+                    ret_id = str(data["id"])
+                    return ret_id if SNOWFLAKE_ID_RE.fullmatch(ret_id) else None
+                logger.info("Mensagem resumo anterior (%s) não encontrada (404); criando nova.", clean_msg_id)
 
         post_url = self._append_wait_param(self._webhook_url)
         _, data = self._request("POST", post_url, payload, files=files)

@@ -461,7 +461,7 @@ class RelicAPIClient:
         return parsed_matches
 
 
-# Lista fixa dos 31 jogadores brasileiros monitorados (atrelados ao SteamID64 imutável + nick original)
+# Lista fixa dos 31 jogadores brasileiros únicos monitorados (32 contas Steam vinculadas por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
@@ -477,7 +477,12 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 19747, "steam_id": "76561198058548575", "original_alias": "twitch.tv/luck22ai"},
     {"profile_id": 944488, "steam_id": "76561198063124280", "original_alias": "gbytes™"},
     {"profile_id": 21206, "steam_id": "76561198061434984", "original_alias": "hjax"},
-    {"profile_id": 509690, "steam_id": "76561198053226112", "original_alias": "Minhoca de ferro!"},
+    {
+        "profile_id": 509690,
+        "steam_id": "76561198053226112",
+        "original_alias": "Alekel",
+        "known_aliases": ["Minhoca de ferro!", "Minhoca de ferro", "Alekel"],
+    },
     {"profile_id": 1114404, "steam_id": "76561198024118058", "original_alias": "Vikitor"},
     {"profile_id": 366826, "steam_id": "76561198014985380", "original_alias": "Lem22"},
     {"profile_id": 1282592, "steam_id": "76561198028644178", "original_alias": "SapoBoi_BR"},
@@ -489,21 +494,34 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 1022333, "steam_id": "76561198264285149", "original_alias": "gaules"},
     {"profile_id": 32922, "steam_id": "76561197986271242", "original_alias": "Showtaro"},
     {"profile_id": 153969, "steam_id": "76561198005412401", "original_alias": "Cunha"},
-    {"profile_id": 557890, "steam_id": "76561199538846112", "original_alias": "gabe44arg"},
+    {
+        "profile_id": 557890,
+        "steam_id": "76561199538846112",
+        "original_alias": "É o Gabe",
+        "merged_into_profile_id": 559962,
+        "merged_into_steam_id": "76561198062871244",
+        "known_aliases": ["gabe44arg", "gabe444arg", "É o Gabe"],
+    },
     {"profile_id": 26910, "steam_id": "76561197963741792", "original_alias": "nigo_BR ᵀᴹ"},
     {"profile_id": 6557, "steam_id": "76561198135142137", "original_alias": "Dragoness"},
     {"profile_id": 1226910, "steam_id": "76561198140782132", "original_alias": "Lupus Alba"},
     {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
+    {"profile_id": 1005730, "steam_id": "76561199791811246", "original_alias": "arc"},
 ]
 
 STEAM_ID64_VALID_RE = re.compile(r"^7656119\d{10}$")
 
 
-def format_bound_display_alias(current_alias: str, original_alias: str = "") -> str:
+def format_bound_display_alias(
+    current_alias: str,
+    original_alias: str = "",
+    known_aliases: list[str] | tuple[str, ...] | None = None,
+) -> str:
     """
-    Se o jogador atrelado por SteamID mudar o nick na Steam no futuro, exibe o nick original
-    seguido do atual: 'NickOriginal (NovoNick)'. Se apenas maiúsculas/minúsculas mudarem ou for igual,
-    mantém o nick limpo.
+    Exibe o nome preferencial/original vinculado à conta Steam:
+    - Se current_alias estiver em known_aliases (ex.: 'Minhoca de ferro!' -> 'Alekel', 'gabe44arg' -> 'É o Gabe')
+      ou coincidir com original_alias, exibe apenas original_alias limpo.
+    - Se o jogador trocar para um nick inédito na Steam no futuro, exibe 'NickOriginal (NovoNick)'.
     """
     cur = (current_alias or "").strip()
     orig = (original_alias or "").strip()
@@ -511,9 +529,17 @@ def format_bound_display_alias(current_alias: str, original_alias: str = "") -> 
         return cur or "Jogador"
     if not cur:
         return orig
+
+    known_cf = {str(k).strip().casefold() for k in (known_aliases or []) if str(k).strip()}
+    if cur.casefold() in known_cf:
+        return orig
+    # Caso cur já estivesse no formato 'NickAntigo (NickSteam)' de versão anterior
+    for k_cf in known_cf:
+        if cur.casefold().startswith(k_cf + " (") or cur.casefold().endswith(f"({k_cf})"):
+            return orig
+
     if cur.casefold() == orig.casefold():
-        return cur if cur == orig else orig
-    # Evita duplicação caso current_alias já venha formatado
+        return orig
     if cur.casefold().startswith(orig.casefold() + " ("):
         return cur
     return f"{orig} ({cur})"
@@ -522,29 +548,50 @@ def format_bound_display_alias(current_alias: str, original_alias: str = "") -> 
 def build_roster_lookup_maps(
     custom_players: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]]:
-    """Cria mapas rápidos por steam_id (primário) e profile_id (secundário) unindo os 31 + extras."""
+    """Cria mapas rápidos por steam_id (primário) e profile_id (secundário) unindo o elenco fixo + extras."""
     steam_map: dict[str, dict[str, Any]] = {}
     pid_map: dict[int, dict[str, Any]] = {}
 
-    for src in (CORE_BR_ROSTER, custom_players or []):
+    # CORE_BR_ROSTER aplicado por último nas propriedades de identidade para garantir overrides (ex.: Alekel, É o Gabe)
+    for src in (custom_players or [], CORE_BR_ROSTER):
         for item in src:
             pid = int(item.get("profile_id", 0) or 0)
             sid = str(item.get("steam_id") or "").replace("/steam/", "").strip()
             orig = str(item.get("original_alias") or item.get("alias") or "").strip()
-            rec = {
+            known = list(item.get("known_aliases") or [])
+            merged_pid = int(item.get("merged_into_profile_id", 0) or 0)
+            merged_sid = str(item.get("merged_into_steam_id") or "").strip()
+            rec: dict[str, Any] = {
                 "profile_id": pid,
                 "steam_id": sid if STEAM_ID64_VALID_RE.fullmatch(sid) else "",
                 "original_alias": orig,
+                "known_aliases": known,
+                "merged_into_profile_id": merged_pid,
+                "merged_into_steam_id": merged_sid,
             }
             if rec["steam_id"]:
-                if rec["steam_id"] in steam_map and steam_map[rec["steam_id"]].get("original_alias"):
-                    rec["original_alias"] = steam_map[rec["steam_id"]]["original_alias"]
+                prev = steam_map.get(rec["steam_id"], {})
+                if not rec["original_alias"] and prev.get("original_alias"):
+                    rec["original_alias"] = prev["original_alias"]
+                if not rec["known_aliases"] and prev.get("known_aliases"):
+                    rec["known_aliases"] = prev["known_aliases"]
+                if not rec["merged_into_profile_id"] and prev.get("merged_into_profile_id"):
+                    rec["merged_into_profile_id"] = prev["merged_into_profile_id"]
+                if not rec["merged_into_steam_id"] and prev.get("merged_into_steam_id"):
+                    rec["merged_into_steam_id"] = prev["merged_into_steam_id"]
                 steam_map[rec["steam_id"]] = rec
             if pid > 0:
-                if pid in pid_map and pid_map[pid].get("original_alias"):
-                    rec["original_alias"] = pid_map[pid]["original_alias"]
-                if pid in pid_map and pid_map[pid].get("steam_id") and not rec["steam_id"]:
-                    rec["steam_id"] = pid_map[pid]["steam_id"]
+                prev_p = pid_map.get(pid, {})
+                if not rec["original_alias"] and prev_p.get("original_alias"):
+                    rec["original_alias"] = prev_p["original_alias"]
+                if not rec["steam_id"] and prev_p.get("steam_id"):
+                    rec["steam_id"] = prev_p["steam_id"]
+                if not rec["known_aliases"] and prev_p.get("known_aliases"):
+                    rec["known_aliases"] = prev_p["known_aliases"]
+                if not rec["merged_into_profile_id"] and prev_p.get("merged_into_profile_id"):
+                    rec["merged_into_profile_id"] = prev_p["merged_into_profile_id"]
+                if not rec["merged_into_steam_id"] and prev_p.get("merged_into_steam_id"):
+                    rec["merged_into_steam_id"] = prev_p["merged_into_steam_id"]
                 pid_map[pid] = rec
 
     return steam_map, pid_map
@@ -555,8 +602,8 @@ def enrich_match_with_roster(
     roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
 ) -> dict[str, Any]:
     """
-    Aplica vínculo por SteamID64 e preservação de nick original ao jogador monitorado,
-    aliados e oponentes da partida (incluindo brasileiros com país 'us' como Lem22).
+    Aplica vínculo por SteamID64, substituição de apelidos (ex.: Alekel) e unificação de contas
+    (ex.: gabe44arg -> É o Gabe) ao jogador monitorado, aliados e oponentes da partida.
     """
     steam_map, pid_map = roster_maps
 
@@ -564,12 +611,18 @@ def enrich_match_with_roster(
     t_sid = str(match.get("tracked_steam_id") or "").replace("/steam/", "").strip()
     r_entry = steam_map.get(t_sid) or pid_map.get(t_pid)
     if r_entry:
-        if r_entry.get("steam_id") and not t_sid:
+        if r_entry.get("merged_into_steam_id"):
+            match["tracked_steam_id"] = r_entry["merged_into_steam_id"]
+        elif r_entry.get("steam_id") and not t_sid:
             match["tracked_steam_id"] = r_entry["steam_id"]
         raw_cur = str(match.get("tracked_current_alias") or match.get("tracked_alias") or "")
         match["tracked_current_alias"] = raw_cur
         match["tracked_original_alias"] = r_entry.get("original_alias", "")
-        match["tracked_alias"] = format_bound_display_alias(raw_cur, r_entry.get("original_alias", ""))
+        match["tracked_alias"] = format_bound_display_alias(
+            raw_cur,
+            r_entry.get("original_alias", ""),
+            r_entry.get("known_aliases"),
+        )
         match["is_br_roster"] = True
 
     for side_key in ("allies", "opponents"):
@@ -578,12 +631,18 @@ def enrich_match_with_roster(
             p_sid = str(part.get("steam_id") or "").replace("/steam/", "").strip()
             p_entry = steam_map.get(p_sid) or pid_map.get(p_pid)
             if p_entry:
-                if p_entry.get("steam_id") and not p_sid:
+                if p_entry.get("merged_into_steam_id"):
+                    part["steam_id"] = p_entry["merged_into_steam_id"]
+                elif p_entry.get("steam_id") and not p_sid:
                     part["steam_id"] = p_entry["steam_id"]
                 raw_p_cur = str(part.get("current_alias") or part.get("alias") or "")
                 part["current_alias"] = raw_p_cur
                 part["original_alias"] = p_entry.get("original_alias", "")
-                part["alias"] = format_bound_display_alias(raw_p_cur, p_entry.get("original_alias", ""))
+                part["alias"] = format_bound_display_alias(
+                    raw_p_cur,
+                    p_entry.get("original_alias", ""),
+                    p_entry.get("known_aliases"),
+                )
                 part["is_br_roster"] = True
 
     return match
@@ -708,7 +767,11 @@ def _ingest_personal_stat_payload(
             r_entry = steam_map.get(steam_id) or pid_map.get(pid) or {}
             orig_alias = str(r_entry.get("original_alias") or "")
             cur_alias = str(mem.get("alias") or orig_alias or f"Player {pid}")
-            disp_alias = format_bound_display_alias(cur_alias, orig_alias)
+            disp_alias = format_bound_display_alias(
+                cur_alias,
+                orig_alias,
+                r_entry.get("known_aliases"),
+            )
 
             results_by_pid[pid] = {
                 "profile_id": pid,
@@ -716,6 +779,8 @@ def _ingest_personal_stat_payload(
                 "current_alias": cur_alias,
                 "original_alias": orig_alias or cur_alias,
                 "steam_id": steam_id or str(r_entry.get("steam_id") or ""),
+                "merged_into_profile_id": int(r_entry.get("merged_into_profile_id", 0) or 0),
+                "merged_into_steam_id": str(r_entry.get("merged_into_steam_id") or ""),
                 "country": str(mem.get("country") or "br").lower(),
                 "level": int(mem.get("level", 0)),
                 "xp": int(mem.get("xp", 0)),
@@ -1047,19 +1112,26 @@ def build_top_tracked_players(
             if item["avg_elo"] > rec["best_avg_elo"]:
                 rec["best_avg_elo"] = item["avg_elo"]
 
-    # Garante que todos os 31 jogadores monitorados estejam presentes mesmo se ainda sem partida ranqueada
+    # Garante que todos os monitorados (incluindo contas secundárias mescladas como gabe44arg -> É o Gabe) sejam rastreados
     for pid, cp in custom_by_id.items():
         if pid not in consolidated:
             sid = str(cp.get("steam_id") or "")
             r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
             orig_alias = str(r_entry.get("original_alias") or cp.get("original_alias") or cp.get("alias") or f"Player {pid}")
             cur_alias = str(cp.get("alias") or orig_alias)
+            merged_pid = int(r_entry.get("merged_into_profile_id") or cp.get("merged_into_profile_id") or 0)
+            placements_lbl = (
+                [f"🔗 Conta mesclada em {orig_alias} (#{merged_pid})"]
+                if merged_pid
+                else ["⭐ Monitorado (aguardando ranking)"]
+            )
             consolidated[pid] = {
                 "profile_id": pid,
-                "alias": format_bound_display_alias(cur_alias, orig_alias),
+                "alias": format_bound_display_alias(cur_alias, orig_alias, r_entry.get("known_aliases")),
                 "original_alias": orig_alias,
                 "steam_id": sid or str(r_entry.get("steam_id") or ""),
-                "placements": ["⭐ Monitorado (aguardando ranking)"],
+                "merged_into_profile_id": merged_pid,
+                "placements": placements_lbl,
                 "best_avg_elo": 0.0,
                 "is_custom": True,
             }

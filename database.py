@@ -109,8 +109,8 @@ class MatchDatabase:
                     ON CONFLICT(profile_id) DO UPDATE SET
                         alias = excluded.alias,
                         original_alias = CASE
-                            WHEN tracked_players.original_alias != '' THEN tracked_players.original_alias
-                            ELSE excluded.original_alias
+                            WHEN excluded.original_alias != '' THEN excluded.original_alias
+                            ELSE tracked_players.original_alias
                         END,
                         steam_id = CASE WHEN excluded.steam_id != '' THEN excluded.steam_id ELSE tracked_players.steam_id END,
                         active = 1
