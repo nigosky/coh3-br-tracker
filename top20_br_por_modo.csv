@@ -1,7 +1,7 @@
 mode,br_rank,profile_id,alias,avg_elo,active_rankings,elo_usf,elo_ukf,elo_dak,elo_wehr,mode_wins,mode_losses,coh3stats_url
 1v1,1,1390350,TearsInTheRain,1535.0,1/4,1535,,,,35,17,https://coh3stats.com/players/1390350
 1v1,2,639157,Itaperuna,1500.0,1/4,,,1500,,676,504,https://coh3stats.com/players/639157
-1v1,3,79327,Chacineiro,1478.0,3/4,1569,,1391,1474,147,81,https://coh3stats.com/players/79327
+1v1,3,79327,Chacineiro,1477.0,3/4,1566,,1391,1474,147,81,https://coh3stats.com/players/79327
 1v1,4,1333418,Charles Bronson,1451.0,2/4,1469,,,1433,31,4,https://coh3stats.com/players/1333418
 1v1,5,40833,Tokai Teio,1426.0,3/4,1532,1377,,1369,246,181,https://coh3stats.com/players/40833
 1v1,6,649535,pensss,1348.7,3/4,1497,1264,,1285,210,153,https://coh3stats.com/players/649535
@@ -14,7 +14,7 @@ mode,br_rank,profile_id,alias,avg_elo,active_rankings,elo_usf,elo_ukf,elo_dak,el
 1v1,13,1297870,AVESTRUZ TE SEDUZ,1239.0,1/4,1239,,,,822,786,https://coh3stats.com/players/1297870
 1v1,14,900358,Margheriti,1216.0,2/4,,1137,,1295,135,118,https://coh3stats.com/players/900358
 1v1,15,217935,sakul,1214.0,1/4,,,1214,,1344,1390,https://coh3stats.com/players/217935
-1v1,16,1707,Anhangá,1199.5,2/4,1123,,,1276,3039,2952,https://coh3stats.com/players/1707
+1v1,16,1707,Anhangá,1212.5,2/4,1123,,,1302,3041,2952,https://coh3stats.com/players/1707
 1v1,17,1088455,luiz_fmh,1196.8,4/4,1317,1240,1032,1198,471,413,https://coh3stats.com/players/1088455
 1v1,18,12522,Caramez,1189.5,2/4,1198,1181,,,995,998,https://coh3stats.com/players/12522
 1v1,19,31145,vonMises,1187.5,2/4,,1157,,1218,35,24,https://coh3stats.com/players/31145
@@ -46,11 +46,11 @@ Team Games,4,71299,Bruno.s,1583.0,1/8,1583,,,,141,102,https://coh3stats.com/play
 Team Games,5,509690,Minhoca de ferro!,1524.5,4/8,1669,1338,1550,1541,5921,5152,https://coh3stats.com/players/509690
 Team Games,6,1005730,arc,1501.5,2/8,,1502,,,329,249,https://coh3stats.com/players/1005730
 Team Games,7,79327,Chacineiro,1496.3,3/8,1520,1451,,1518,289,183,https://coh3stats.com/players/79327
-Team Games,8,1297821,General Winter,1486.0,7/8,1567,1327,1417,1554,308,161,https://coh3stats.com/players/1297821
+Team Games,8,1297821,General Winter,1480.7,7/8,1548,1327,1417,1554,308,164,https://coh3stats.com/players/1297821
 Team Games,9,31145,vonMises,1480.0,1/8,,1480,,,39,12,https://coh3stats.com/players/31145
 Team Games,10,2583,Manupktd,1459.0,1/8,1459,,,,576,505,https://coh3stats.com/players/2583
 Team Games,11,975900,[COHBR/RJ]Roney,1445.0,1/8,,,,1445,1436,1455,https://coh3stats.com/players/975900
-Team Games,12,845669,PH0BB05,1418.0,3/8,1578,,,1098,1235,918,https://coh3stats.com/players/845669
+Team Games,12,845669,PH0BB05,1405.7,3/8,1560,,,1098,1235,921,https://coh3stats.com/players/845669
 Team Games,13,357310,Sleeping Sheep,1387.4,8/8,1287,1480,1386,1396,1329,1114,https://coh3stats.com/players/357310
 Team Games,14,1178218,joauleonardo,1369.9,8/8,1102,1245,1619,1513,972,841,https://coh3stats.com/players/1178218
 Team Games,15,21206,Hjax,1369.0,2/8,,,,1369,86,54,https://coh3stats.com/players/21206
