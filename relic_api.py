@@ -116,7 +116,9 @@ def normalize_mode_name(matchtype_id: int, raw_name: str | None = None) -> str:
     return f"Modo {matchtype_id}"
 
 
+import concurrent.futures
 import ssl
+import threading
 import urllib.parse
 
 ALLOWED_RELIC_HOST = "coh3-api.reliclink.com"
@@ -147,16 +149,26 @@ def _build_relic_opener() -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(urllib.request.HTTPSHandler(context=ctx), _RelicNoRedirectHandler())
 
 
-_RELIC_OPENER = _build_relic_opener()
+_THREAD_LOCAL = threading.local()
+
+
+def _get_thread_opener() -> urllib.request.OpenerDirector:
+    opener = getattr(_THREAD_LOCAL, "opener", None)
+    if opener is None:
+        opener = _build_relic_opener()
+        _THREAD_LOCAL.opener = opener
+    return opener
 
 
 class RelicAPIClient:
-    """Cliente HTTPS endurecido com TLS 1.2+, allowlist de host, limite de memória e rate limit."""
+    """Cliente HTTPS endurecido com TLS 1.2+, allowlist de host, limite de memória e rate limit thread-safe."""
 
-    def __init__(self, min_interval_sec: float = 0.25, timeout_sec: float = 15.0) -> None:
+    def __init__(self, min_interval_sec: float = 0.08, timeout_sec: float = 15.0) -> None:
         self.min_interval_sec = min_interval_sec
         self.timeout_sec = timeout_sec
         self._last_req_ts = 0.0
+        self._rate_lock = threading.Lock()
+        self._meta_lock = threading.Lock()
         self.races: dict[int, str] = dict(FALLBACK_RACES)
         self.match_types: dict[int, str] = {}
         self._metadata_loaded = False
@@ -166,19 +178,22 @@ class RelicAPIClient:
         if parsed.scheme != "https" or (parsed.hostname or "").lower() != ALLOWED_RELIC_HOST:
             raise ValueError(f"Host não autorizado para consulta da API Relic: {parsed.hostname}")
 
-        elapsed = time.monotonic() - self._last_req_ts
-        if elapsed < self.min_interval_sec:
-            time.sleep(self.min_interval_sec - elapsed)
+        with self._rate_lock:
+            now_m = time.monotonic()
+            elapsed = now_m - self._last_req_ts
+            if elapsed < self.min_interval_sec:
+                time.sleep(self.min_interval_sec - elapsed)
+            self._last_req_ts = time.monotonic()
 
+        opener = _get_thread_opener()
         last_err: Exception | None = None
         for attempt in range(retries):
             try:
                 req = urllib.request.Request(
                     url,
-                    headers={"User-Agent": "CoH3-BR-Discord-Tracker/1.0", "Accept": "application/json"},
+                    headers={"User-Agent": "CoH3-BR-Discord-Tracker/5.0", "Accept": "application/json"},
                 )
-                self._last_req_ts = time.monotonic()
-                with _RELIC_OPENER.open(req, timeout=self.timeout_sec) as resp:
+                with opener.open(req, timeout=self.timeout_sec) as resp:
                     raw_bytes = resp.read(MAX_RELIC_RESPONSE_BYTES + 1)
                     if len(raw_bytes) > MAX_RELIC_RESPONSE_BYTES:
                         raise RuntimeError("Resposta da API Relic excedeu o limite máximo seguro de 5 MB.")
@@ -195,21 +210,24 @@ class RelicAPIClient:
     def ensure_metadata(self) -> None:
         if self._metadata_loaded:
             return
-        try:
-            data = self._get_json(f"{BASE_URL}/getAvailableLeaderboards?title={TITLE_STEAM}")
-            for race in data.get("races", []):
-                rid = race.get("id")
-                name = race.get("localizedName") or race.get("name")
-                if rid is not None and name and rid not in FALLBACK_RACES:
-                    self.races[int(rid)] = str(name)
-            for mt in data.get("matchTypes", []):
-                mid = mt.get("id")
-                name = mt.get("localizedName") or mt.get("name")
-                if mid is not None and name:
-                    self.match_types[int(mid)] = str(name)
-            self._metadata_loaded = True
-        except Exception as exc:
-            logger.warning("Não foi possível atualizar metadados dinâmicos; usando fallback: %s", exc)
+        with self._meta_lock:
+            if self._metadata_loaded:
+                return
+            try:
+                data = self._get_json(f"{BASE_URL}/getAvailableLeaderboards?title={TITLE_STEAM}")
+                for race in data.get("races", []):
+                    rid = race.get("id")
+                    name = race.get("localizedName") or race.get("name")
+                    if rid is not None and name and rid not in FALLBACK_RACES:
+                        self.races[int(rid)] = str(name)
+                for mt in data.get("matchTypes", []):
+                    mid = mt.get("id")
+                    name = mt.get("localizedName") or mt.get("name")
+                    if mid is not None and name:
+                        self.match_types[int(mid)] = str(name)
+                self._metadata_loaded = True
+            except Exception as exc:
+                logger.warning("Não foi possível atualizar metadados dinâmicos; usando fallback: %s", exc)
 
     def fetch_brazilian_players(
         self,
@@ -217,91 +235,100 @@ class RelicAPIClient:
         max_sa_rank: int = 1000,
     ) -> list[dict[str, Any]]:
         """
-        Varre todos os modos ranqueados da Steam (1v1, 2v2, 3v3, 4v4 nas 4 facções),
+        Varre em paralelo seguro todos os modos ranqueados da Steam (1v1, 2v2, 3v3, 4v4 nas 4 facções),
         filtrando jogadores com country == 'br'.
         """
         players: dict[int, dict[str, Any]] = {}
+        ingest_lock = threading.Lock()
 
         def ingest_response(data: dict[str, Any], mode: str, faction: str) -> int:
             stat_groups = {sg["id"]: sg for sg in data.get("statGroups", [])}
             lb_stats = data.get("leaderboardStats", [])
-            for st in lb_stats:
-                sg = stat_groups.get(st.get("statgroup_id"), {})
-                for member in sg.get("members", []):
-                    if str(member.get("country", "")).lower() != "br":
-                        continue
-                    pid = int(member["profile_id"])
-                    steam_raw = str(member.get("name", ""))
-                    steam_id = steam_raw.replace("/steam/", "") if steam_raw.startswith("/steam/") else ""
-                    if pid not in players:
-                        players[pid] = {
-                            "profile_id": pid,
-                            "alias": member.get("alias") or f"Player {pid}",
-                            "steam_id": steam_id,
-                            "country": "br",
-                            "level": member.get("level", 0),
-                            "xp": member.get("xp", 0),
-                            "max_elo": 0,
-                            "best_mode": "",
-                            "total_wins": 0,
-                            "total_losses": 0,
-                            "last_match_date": 0,
-                            "modes": {},
-                            "coh3stats_url": f"https://coh3stats.com/players/{pid}",
-                        }
-                    p = players[pid]
-                    elo = int(round(st.get("rating", 0)))
-                    wins = int(st.get("wins", 0))
-                    losses = int(st.get("losses", 0))
-                    lmd = int(st.get("lastmatchdate", 0))
-                    key = f"{mode}_{faction}"
-                    if key not in p["modes"]:
-                        p["modes"][key] = {
-                            "mode": mode,
-                            "faction": faction,
-                            "elo": elo,
-                            "rank": st.get("rank", 0),
-                            "regionrank": st.get("regionrank", 0),
-                            "wins": wins,
-                            "losses": losses,
-                            "streak": st.get("streak", 0),
-                            "lastmatchdate": lmd,
-                        }
-                        p["total_wins"] += wins
-                        p["total_losses"] += losses
-                    if elo > p["max_elo"]:
-                        p["max_elo"] = elo
-                        p["best_mode"] = f"{mode.upper()} ({faction.upper()})"
-                    if lmd > p["last_match_date"]:
-                        p["last_match_date"] = lmd
+            with ingest_lock:
+                for st in lb_stats:
+                    sg = stat_groups.get(st.get("statgroup_id"), {})
+                    for member in sg.get("members", []):
+                        if str(member.get("country", "")).lower() != "br":
+                            continue
+                        pid = int(member["profile_id"])
+                        steam_raw = str(member.get("name", ""))
+                        steam_id = steam_raw.replace("/steam/", "") if steam_raw.startswith("/steam/") else ""
+                        if pid not in players:
+                            players[pid] = {
+                                "profile_id": pid,
+                                "alias": member.get("alias") or f"Player {pid}",
+                                "steam_id": steam_id,
+                                "country": "br",
+                                "level": member.get("level", 0),
+                                "xp": member.get("xp", 0),
+                                "max_elo": 0,
+                                "best_mode": "",
+                                "total_wins": 0,
+                                "total_losses": 0,
+                                "last_match_date": 0,
+                                "modes": {},
+                                "coh3stats_url": f"https://coh3stats.com/players/{pid}",
+                            }
+                        p = players[pid]
+                        elo = int(round(st.get("rating", 0)))
+                        wins = int(st.get("wins", 0))
+                        losses = int(st.get("losses", 0))
+                        lmd = int(st.get("lastmatchdate", 0))
+                        key = f"{mode}_{faction}"
+                        if key not in p["modes"]:
+                            p["modes"][key] = {
+                                "mode": mode,
+                                "faction": faction,
+                                "elo": elo,
+                                "rank": st.get("rank", 0),
+                                "regionrank": st.get("regionrank", 0),
+                                "wins": wins,
+                                "losses": losses,
+                                "streak": st.get("streak", 0),
+                                "lastmatchdate": lmd,
+                            }
+                            p["total_wins"] += wins
+                            p["total_losses"] += losses
+                        if elo > p["max_elo"]:
+                            p["max_elo"] = elo
+                            p["best_mode"] = f"{mode.upper()} ({faction.upper()})"
+                        if lmd > p["last_match_date"]:
+                            p["last_match_date"] = lmd
             return len(lb_stats)
 
-        for mode, factions in STEAM_LEADERBOARDS.items():
-            for faction, lb_id in factions.items():
-                # 1) Varredura completa na região América do Sul
-                start = 1
-                while start <= max_sa_rank:
-                    url = (
-                        f"{BASE_URL}/getleaderboard2?title={TITLE_STEAM}&leaderboard_id={lb_id}"
-                        f"&sortBy=1&count=200&start={start}&leaderboardRegion_id={SOUTH_AMERICA_REGION_ID}"
-                    )
-                    data = self._get_json(url)
-                    count_rows = ingest_response(data, mode, faction)
-                    rank_total = int(data.get("rankTotal", 0))
-                    if count_rows == 0 or start + 200 > rank_total:
-                        break
-                    start += 200
+        def scan_single_leaderboard(mode: str, faction: str, lb_id: int) -> None:
+            start = 1
+            while start <= max_sa_rank:
+                url = (
+                    f"{BASE_URL}/getleaderboard2?title={TITLE_STEAM}&leaderboard_id={lb_id}"
+                    f"&sortBy=1&count=200&start={start}&leaderboardRegion_id={SOUTH_AMERICA_REGION_ID}"
+                )
+                data = self._get_json(url)
+                count_rows = ingest_response(data, mode, faction)
+                rank_total = int(data.get("rankTotal", 0))
+                if count_rows == 0 or start + 200 > rank_total:
+                    break
+                start += 200
 
-                # 2) Top páginas globais para capturar brasileiros jogando fora da região SA
-                for page in range(include_global_top_pages):
-                    g_start = 1 + page * 200
-                    g_url = (
-                        f"{BASE_URL}/getleaderboard2?title={TITLE_STEAM}&leaderboard_id={lb_id}"
-                        f"&sortBy=1&count=200&start={g_start}"
-                    )
-                    g_data = self._get_json(g_url)
-                    if ingest_response(g_data, mode, faction) == 0:
-                        break
+            for page in range(include_global_top_pages):
+                g_start = 1 + page * 200
+                g_url = (
+                    f"{BASE_URL}/getleaderboard2?title={TITLE_STEAM}&leaderboard_id={lb_id}"
+                    f"&sortBy=1&count=200&start={g_start}"
+                )
+                g_data = self._get_json(g_url)
+                if ingest_response(g_data, mode, faction) == 0:
+                    break
+
+        tasks = [
+            (mode, faction, lb_id)
+            for mode, factions in STEAM_LEADERBOARDS.items()
+            for faction, lb_id in factions.items()
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(scan_single_leaderboard, m, f, lid) for m, f, lid in tasks]
+            for fut in concurrent.futures.as_completed(futures):
+                fut.result()
 
         sorted_list = sorted(players.values(), key=lambda x: (-x["max_elo"], -x["last_match_date"]))
         return sorted_list
@@ -311,11 +338,14 @@ class RelicAPIClient:
         profile_id: int,
         fallback_alias: str = "",
         only_automatch: bool = False,
+        roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Retorna as partidas recentes de um jogador ordenadas da mais recente para a mais antiga.
+        Retorna as partidas recentes de um jogador ordenadas da mais recente para a mais antiga,
+        aplicando vínculo por conta Steam e preservação do nick original.
         """
         self.ensure_metadata()
+        active_roster_maps = roster_maps or build_roster_lookup_maps()
         url = f"{BASE_URL}/getRecentMatchHistoryByProfileId?title={TITLE_STEAM}&profile_id={profile_id}"
         data = self._get_json(url)
 
@@ -402,34 +432,161 @@ class RelicAPIClient:
             my_faction = self.races.get(int(my_rep.get("race_id", -1)), "Unknown")
             result_type = int(my_rep.get("resulttype", 0))
 
-            parsed_matches.append(
-                {
-                    "match_id": match_id,
-                    "tracked_profile_id": profile_id,
-                    "tracked_alias": tracked_alias,
-                    "tracked_steam_id": tracked_steam_id,
-                    "tracked_faction": my_faction,
-                    "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
-                    "win": result_type == 1,
-                    "resulttype": result_type,
-                    "mode": mode_label,
-                    "matchtype_id": mt_id,
-                    "map_raw": raw_map,
-                    "map_clean": clean_map_name(raw_map),
-                    "start_time": start_ts,
-                    "completion_time": end_ts,
-                    "duration_sec": duration_sec,
-                    "old_elo": old_elo,
-                    "new_elo": new_elo,
-                    "allies": allies,
-                    "opponents": opponents,
-                    "counters": counters,
-                    "has_replay": len(match.get("matchurls", [])) > 0,
-                    "coh3stats_url": f"https://coh3stats.com/players/{profile_id}/matches/{match_id}",
-                }
-            )
+            m_obj = {
+                "match_id": match_id,
+                "tracked_profile_id": profile_id,
+                "tracked_alias": tracked_alias,
+                "tracked_steam_id": tracked_steam_id,
+                "tracked_faction": my_faction,
+                "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
+                "win": result_type == 1,
+                "resulttype": result_type,
+                "mode": mode_label,
+                "matchtype_id": mt_id,
+                "map_raw": raw_map,
+                "map_clean": clean_map_name(raw_map),
+                "start_time": start_ts,
+                "completion_time": end_ts,
+                "duration_sec": duration_sec,
+                "old_elo": old_elo,
+                "new_elo": new_elo,
+                "allies": allies,
+                "opponents": opponents,
+                "counters": counters,
+                "has_replay": len(match.get("matchurls", [])) > 0,
+                "coh3stats_url": f"https://coh3stats.com/players/{profile_id}/matches/{match_id}",
+            }
+            parsed_matches.append(enrich_match_with_roster(m_obj, active_roster_maps))
 
         return parsed_matches
+
+
+# Lista fixa dos 31 jogadores brasileiros monitorados (atrelados ao SteamID64 imutável + nick original)
+CORE_BR_ROSTER: list[dict[str, Any]] = [
+    {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
+    {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
+    {"profile_id": 1088455, "steam_id": "76561198108568598", "original_alias": "luiz_fmh"},
+    {"profile_id": 735940, "steam_id": "76561198034510845", "original_alias": "Jimmy Duelista"},
+    {"profile_id": 559962, "steam_id": "76561198062871244", "original_alias": "É o Gabe"},
+    {"profile_id": 648514, "steam_id": "76561198372757032", "original_alias": "Halokoo"},
+    {"profile_id": 35952, "steam_id": "76561198121484554", "original_alias": "Sauronzinho"},
+    {"profile_id": 900358, "steam_id": "76561198070545853", "original_alias": "Margheriti"},
+    {"profile_id": 691, "steam_id": "76561198001604015", "original_alias": "Vítor"},
+    {"profile_id": 5768, "steam_id": "76561198205052385", "original_alias": "The Dog"},
+    {"profile_id": 13450, "steam_id": "76561198284234077", "original_alias": "7 DIVISAO PHANTOM"},
+    {"profile_id": 19747, "steam_id": "76561198058548575", "original_alias": "twitch.tv/luck22ai"},
+    {"profile_id": 944488, "steam_id": "76561198063124280", "original_alias": "gbytes™"},
+    {"profile_id": 21206, "steam_id": "76561198061434984", "original_alias": "hjax"},
+    {"profile_id": 509690, "steam_id": "76561198053226112", "original_alias": "Minhoca de ferro!"},
+    {"profile_id": 1114404, "steam_id": "76561198024118058", "original_alias": "Vikitor"},
+    {"profile_id": 366826, "steam_id": "76561198014985380", "original_alias": "Lem22"},
+    {"profile_id": 1282592, "steam_id": "76561198028644178", "original_alias": "SapoBoi_BR"},
+    {"profile_id": 639157, "steam_id": "76561197979883434", "original_alias": "Itaperuna"},
+    {"profile_id": 110078, "steam_id": "76561198024839791", "original_alias": "Bineto"},
+    {"profile_id": 1143262, "steam_id": "76561198105073246", "original_alias": "Mazzaroppee"},
+    {"profile_id": 55693, "steam_id": "76561197996817129", "original_alias": "BinhoBiceps"},
+    {"profile_id": 337051, "steam_id": "76561197981615184", "original_alias": "Maiti"},
+    {"profile_id": 1022333, "steam_id": "76561198264285149", "original_alias": "gaules"},
+    {"profile_id": 32922, "steam_id": "76561197986271242", "original_alias": "Showtaro"},
+    {"profile_id": 153969, "steam_id": "76561198005412401", "original_alias": "Cunha"},
+    {"profile_id": 557890, "steam_id": "76561199538846112", "original_alias": "gabe44arg"},
+    {"profile_id": 26910, "steam_id": "76561197963741792", "original_alias": "nigo_BR ᵀᴹ"},
+    {"profile_id": 6557, "steam_id": "76561198135142137", "original_alias": "Dragoness"},
+    {"profile_id": 1226910, "steam_id": "76561198140782132", "original_alias": "Lupus Alba"},
+    {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
+]
+
+STEAM_ID64_VALID_RE = re.compile(r"^7656119\d{10}$")
+
+
+def format_bound_display_alias(current_alias: str, original_alias: str = "") -> str:
+    """
+    Se o jogador atrelado por SteamID mudar o nick na Steam no futuro, exibe o nick original
+    seguido do atual: 'NickOriginal (NovoNick)'. Se apenas maiúsculas/minúsculas mudarem ou for igual,
+    mantém o nick limpo.
+    """
+    cur = (current_alias or "").strip()
+    orig = (original_alias or "").strip()
+    if not orig:
+        return cur or "Jogador"
+    if not cur:
+        return orig
+    if cur.casefold() == orig.casefold():
+        return cur if cur == orig else orig
+    # Evita duplicação caso current_alias já venha formatado
+    if cur.casefold().startswith(orig.casefold() + " ("):
+        return cur
+    return f"{orig} ({cur})"
+
+
+def build_roster_lookup_maps(
+    custom_players: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]]:
+    """Cria mapas rápidos por steam_id (primário) e profile_id (secundário) unindo os 31 + extras."""
+    steam_map: dict[str, dict[str, Any]] = {}
+    pid_map: dict[int, dict[str, Any]] = {}
+
+    for src in (CORE_BR_ROSTER, custom_players or []):
+        for item in src:
+            pid = int(item.get("profile_id", 0) or 0)
+            sid = str(item.get("steam_id") or "").replace("/steam/", "").strip()
+            orig = str(item.get("original_alias") or item.get("alias") or "").strip()
+            rec = {
+                "profile_id": pid,
+                "steam_id": sid if STEAM_ID64_VALID_RE.fullmatch(sid) else "",
+                "original_alias": orig,
+            }
+            if rec["steam_id"]:
+                if rec["steam_id"] in steam_map and steam_map[rec["steam_id"]].get("original_alias"):
+                    rec["original_alias"] = steam_map[rec["steam_id"]]["original_alias"]
+                steam_map[rec["steam_id"]] = rec
+            if pid > 0:
+                if pid in pid_map and pid_map[pid].get("original_alias"):
+                    rec["original_alias"] = pid_map[pid]["original_alias"]
+                if pid in pid_map and pid_map[pid].get("steam_id") and not rec["steam_id"]:
+                    rec["steam_id"] = pid_map[pid]["steam_id"]
+                pid_map[pid] = rec
+
+    return steam_map, pid_map
+
+
+def enrich_match_with_roster(
+    match: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+) -> dict[str, Any]:
+    """
+    Aplica vínculo por SteamID64 e preservação de nick original ao jogador monitorado,
+    aliados e oponentes da partida (incluindo brasileiros com país 'us' como Lem22).
+    """
+    steam_map, pid_map = roster_maps
+
+    t_pid = int(match.get("tracked_profile_id", 0))
+    t_sid = str(match.get("tracked_steam_id") or "").replace("/steam/", "").strip()
+    r_entry = steam_map.get(t_sid) or pid_map.get(t_pid)
+    if r_entry:
+        if r_entry.get("steam_id") and not t_sid:
+            match["tracked_steam_id"] = r_entry["steam_id"]
+        raw_cur = str(match.get("tracked_current_alias") or match.get("tracked_alias") or "")
+        match["tracked_current_alias"] = raw_cur
+        match["tracked_original_alias"] = r_entry.get("original_alias", "")
+        match["tracked_alias"] = format_bound_display_alias(raw_cur, r_entry.get("original_alias", ""))
+        match["is_br_roster"] = True
+
+    for side_key in ("allies", "opponents"):
+        for part in match.get(side_key, []):
+            p_pid = int(part.get("profile_id", 0))
+            p_sid = str(part.get("steam_id") or "").replace("/steam/", "").strip()
+            p_entry = steam_map.get(p_sid) or pid_map.get(p_pid)
+            if p_entry:
+                if p_entry.get("steam_id") and not p_sid:
+                    part["steam_id"] = p_entry["steam_id"]
+                raw_p_cur = str(part.get("current_alias") or part.get("alias") or "")
+                part["current_alias"] = raw_p_cur
+                part["original_alias"] = p_entry.get("original_alias", "")
+                part["alias"] = format_bound_display_alias(raw_p_cur, p_entry.get("original_alias", ""))
+                part["is_br_roster"] = True
+
+    return match
 
 
 def export_players_files(players: list[dict[str, Any]], json_path: Path, csv_path: Path) -> None:
@@ -481,6 +638,7 @@ def export_players_files(players: list[dict[str, Any]], json_path: Path, csv_pat
 
 
 PROFILE_ID_EXTRACT_RE = re.compile(r"(?:coh3stats\.com/(?:[a-z]{2}/)?players/)?(\d{1,12})")
+STEAM_URL_EXTRACT_RE = re.compile(r"steamcommunity\.com/profiles/(7656119\d{10})", re.IGNORECASE)
 
 LEADERBOARD_ID_TO_MODE_FACTION: dict[int, tuple[str, str]] = {
     lb_id: (m_name, f_name)
@@ -493,11 +651,14 @@ def parse_profile_id_input(raw_input: str) -> int | None:
     """
     Extrai de forma segura o Relic profile_id numérico tanto de um ID puro ('87314')
     quanto de um link completo do coh3stats ('https://coh3stats.com/players/87314-...').
+    Nota: IDs de 17 dígitos da Steam (7656119...) são tratados via parse_steam_id_input.
     """
     txt = (raw_input or "").strip()
     if not txt:
         return None
-    if txt.isdigit():
+    if STEAM_ID64_VALID_RE.fullmatch(txt) or STEAM_URL_EXTRACT_RE.search(txt):
+        return None
+    if txt.isdigit() and len(txt) <= 12:
         val = int(txt)
         return val if val > 0 else None
     m = re.search(r"coh3stats\.com/(?:[a-z]{2}/)?players/(\d{1,12})", txt, flags=re.IGNORECASE)
@@ -507,90 +668,188 @@ def parse_profile_id_input(raw_input: str) -> int | None:
     return None
 
 
-def fetch_custom_players_stats(client: RelicAPIClient, profile_ids: list[int]) -> list[dict[str, Any]]:
+def parse_steam_id_input(raw_input: str) -> str | None:
+    """Extrai SteamID64 de 17 dígitos puro ou de URL https://steamcommunity.com/profiles/7656119..."""
+    txt = (raw_input or "").strip().replace("/steam/", "")
+    if STEAM_ID64_VALID_RE.fullmatch(txt):
+        return txt
+    m = STEAM_URL_EXTRACT_RE.search(txt)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _ingest_personal_stat_payload(
+    data: dict[str, Any],
+    results_by_pid: dict[int, dict[str, Any]],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    allowed_pids: set[int] | None = None,
+    allowed_sids: set[str] | None = None,
+) -> None:
+    steam_map, pid_map = roster_maps
+    solo_sg_to_pid: dict[int, int] = {}
+
+    for sg in data.get("statGroups", []):
+        members = sg.get("members", [])
+        if sg.get("type") == 1 and len(members) == 1:
+            mem = members[0]
+            pid = int(mem.get("profile_id", 0))
+            steam_raw = str(mem.get("name", ""))
+            steam_id = steam_raw.replace("/steam/", "") if steam_raw.startswith("/steam/") else ""
+            if allowed_sids is not None and steam_id not in allowed_sids:
+                if allowed_pids is None or pid not in allowed_pids:
+                    continue
+            elif allowed_sids is None and allowed_pids is not None and pid not in allowed_pids:
+                continue
+
+            sg_id = int(sg["id"])
+            solo_sg_to_pid[sg_id] = pid
+
+            r_entry = steam_map.get(steam_id) or pid_map.get(pid) or {}
+            orig_alias = str(r_entry.get("original_alias") or "")
+            cur_alias = str(mem.get("alias") or orig_alias or f"Player {pid}")
+            disp_alias = format_bound_display_alias(cur_alias, orig_alias)
+
+            results_by_pid[pid] = {
+                "profile_id": pid,
+                "alias": disp_alias,
+                "current_alias": cur_alias,
+                "original_alias": orig_alias or cur_alias,
+                "steam_id": steam_id or str(r_entry.get("steam_id") or ""),
+                "country": str(mem.get("country") or "br").lower(),
+                "level": int(mem.get("level", 0)),
+                "xp": int(mem.get("xp", 0)),
+                "max_elo": 0,
+                "best_mode": "",
+                "total_wins": 0,
+                "total_losses": 0,
+                "last_match_date": 0,
+                "modes": {},
+                "inactive_modes": {},
+                "is_custom": True,
+                "is_br_roster": True,
+                "coh3stats_url": f"https://coh3stats.com/players/{pid}",
+            }
+
+    for st in data.get("leaderboardStats", []):
+        sg_id = int(st.get("statgroup_id", -1))
+        lb_id = int(st.get("leaderboard_id", -1))
+        if sg_id not in solo_sg_to_pid or lb_id not in LEADERBOARD_ID_TO_MODE_FACTION:
+            continue
+        pid = solo_sg_to_pid[sg_id]
+        p = results_by_pid[pid]
+        mode, faction = LEADERBOARD_ID_TO_MODE_FACTION[lb_id]
+        elo = int(round(st.get("rating", 0)))
+        if elo <= 0:
+            continue
+        wins = int(st.get("wins", 0))
+        losses = int(st.get("losses", 0))
+        lmd = int(st.get("lastmatchdate", 0))
+        rank_val = int(st.get("rank", -1))
+        key = f"{mode}_{faction}"
+        stat_obj = {
+            "mode": mode,
+            "faction": faction,
+            "elo": elo,
+            "rank": rank_val,
+            "regionrank": int(st.get("regionrank", -1)),
+            "wins": wins,
+            "losses": losses,
+            "streak": int(st.get("streak", 0)),
+            "lastmatchdate": lmd,
+        }
+        if rank_val > 0:
+            p["modes"][key] = stat_obj
+        else:
+            p["inactive_modes"][key] = stat_obj
+        p["total_wins"] += wins
+        p["total_losses"] += losses
+        if elo > p["max_elo"]:
+            p["max_elo"] = elo
+            p["best_mode"] = f"{mode.upper()} ({faction.upper()})"
+        if lmd > p["last_match_date"]:
+            p["last_match_date"] = lmd
+
+
+def fetch_custom_players_stats(
+    client: RelicAPIClient,
+    targets: list[int] | list[dict[str, Any]],
+    steam_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """
-    Consulta getPersonalStat na API da Relic para obter alias e ELOs de todas as facções
-    de jogadores convidados/extras (mesmo fora do Top 20 ou fora das leaderboards ativas).
+    Consulta getPersonalStat na API da Relic em lotes seguros de até 10 contas (limite estrito da Relic),
+    priorizando o código da conta Steam (/steam/<steam_id>) para continuar monitorando mesmo se o jogador
+    mudar de nome no futuro, preservando o nick original.
     """
-    clean_ids = sorted({int(pid) for pid in profile_ids if int(pid) > 0})
-    if not clean_ids:
-        return []
+    dict_targets: list[dict[str, Any]] = []
+    steam_set: set[str] = set()
+    fallback_pid_set: set[int] = set()
+
+    for item in targets or []:
+        if isinstance(item, dict):
+            dict_targets.append(item)
+            sid = str(item.get("steam_id") or "").replace("/steam/", "").strip()
+            pid = int(item.get("profile_id", 0) or 0)
+            if STEAM_ID64_VALID_RE.fullmatch(sid):
+                steam_set.add(sid)
+            elif pid > 0:
+                fallback_pid_set.add(pid)
+        else:
+            pid = int(item or 0)
+            if pid > 0:
+                fallback_pid_set.add(pid)
+
+    for sid in steam_ids or []:
+        clean_sid = str(sid or "").replace("/steam/", "").strip()
+        if STEAM_ID64_VALID_RE.fullmatch(clean_sid):
+            steam_set.add(clean_sid)
+
+    roster_maps = build_roster_lookup_maps(dict_targets)
+    steam_map, pid_map = roster_maps
+
+    # Se algum pid em fallback já tem steam_id conhecido no roster, consulta direto pelo steam_id
+    for pid in list(fallback_pid_set):
+        known = pid_map.get(pid)
+        if known and known.get("steam_id"):
+            steam_set.add(known["steam_id"])
+            fallback_pid_set.discard(pid)
 
     results_by_pid: dict[int, dict[str, Any]] = {}
-    for idx in range(0, len(clean_ids), 25):
-        batch = clean_ids[idx : idx + 25]
-        encoded_ids = urllib.parse.quote("[" + ",".join(str(i) for i in batch) + "]")
+
+    # 1) Consulta primária por conta Steam (/steam/7656119...) — máximo 10 por chamada na API Relic
+    ordered_sids = sorted(steam_set)
+    for idx in range(0, len(ordered_sids), 10):
+        batch_sids = ordered_sids[idx : idx + 10]
+        names_json = json.dumps([f"/steam/{s}" for s in batch_sids], separators=(",", ":"))
+        encoded_names = urllib.parse.quote(names_json)
+        url = f"{BASE_URL}/getPersonalStat?title={TITLE_STEAM}&profile_names={encoded_names}"
+        data = client._get_json(url)
+        _ingest_personal_stat_payload(
+            data,
+            results_by_pid,
+            roster_maps=roster_maps,
+            allowed_sids=set(batch_sids),
+        )
+
+    # 2) Fallback por profile_id para contas recém-adicionadas apenas por ID numérico (lotes de 10)
+    resolved_sids = {str(v.get("steam_id") or "") for v in results_by_pid.values()}
+    unresolved_sids = [s for s in ordered_sids if s not in resolved_sids]
+    for s in unresolved_sids:
+        if s in steam_map and int(steam_map[s].get("profile_id", 0)) > 0:
+            fallback_pid_set.add(int(steam_map[s]["profile_id"]))
+
+    ordered_pids = sorted(pid for pid in fallback_pid_set if pid not in results_by_pid)
+    for idx in range(0, len(ordered_pids), 10):
+        batch_pids = ordered_pids[idx : idx + 10]
+        encoded_ids = urllib.parse.quote("[" + ",".join(str(i) for i in batch_pids) + "]")
         url = f"{BASE_URL}/getPersonalStat?title={TITLE_STEAM}&profile_ids={encoded_ids}"
         data = client._get_json(url)
-
-        solo_sg_to_pid: dict[int, int] = {}
-        for sg in data.get("statGroups", []):
-            members = sg.get("members", [])
-            if sg.get("type") == 1 and len(members) == 1:
-                mem = members[0]
-                pid = int(mem.get("profile_id", 0))
-                if pid not in batch:
-                    continue
-                sg_id = int(sg["id"])
-                solo_sg_to_pid[sg_id] = pid
-                steam_raw = str(mem.get("name", ""))
-                steam_id = steam_raw.replace("/steam/", "") if steam_raw.startswith("/steam/") else ""
-                results_by_pid[pid] = {
-                    "profile_id": pid,
-                    "alias": str(mem.get("alias") or f"Player {pid}"),
-                    "steam_id": steam_id,
-                    "country": str(mem.get("country") or "br").lower(),
-                    "level": int(mem.get("level", 0)),
-                    "xp": int(mem.get("xp", 0)),
-                    "max_elo": 0,
-                    "best_mode": "",
-                    "total_wins": 0,
-                    "total_losses": 0,
-                    "last_match_date": 0,
-                    "modes": {},
-                    "inactive_modes": {},
-                    "is_custom": True,
-                    "coh3stats_url": f"https://coh3stats.com/players/{pid}",
-                }
-
-        for st in data.get("leaderboardStats", []):
-            sg_id = int(st.get("statgroup_id", -1))
-            lb_id = int(st.get("leaderboard_id", -1))
-            if sg_id not in solo_sg_to_pid or lb_id not in LEADERBOARD_ID_TO_MODE_FACTION:
-                continue
-            pid = solo_sg_to_pid[sg_id]
-            p = results_by_pid[pid]
-            mode, faction = LEADERBOARD_ID_TO_MODE_FACTION[lb_id]
-            elo = int(round(st.get("rating", 0)))
-            if elo <= 0:
-                continue
-            wins = int(st.get("wins", 0))
-            losses = int(st.get("losses", 0))
-            lmd = int(st.get("lastmatchdate", 0))
-            rank_val = int(st.get("rank", -1))
-            key = f"{mode}_{faction}"
-            stat_obj = {
-                "mode": mode,
-                "faction": faction,
-                "elo": elo,
-                "rank": rank_val,
-                "regionrank": int(st.get("regionrank", -1)),
-                "wins": wins,
-                "losses": losses,
-                "streak": int(st.get("streak", 0)),
-                "lastmatchdate": lmd,
-            }
-            if rank_val > 0:
-                p["modes"][key] = stat_obj
-            else:
-                p["inactive_modes"][key] = stat_obj
-            p["total_wins"] += wins
-            p["total_losses"] += losses
-            if elo > p["max_elo"]:
-                p["max_elo"] = elo
-                p["best_mode"] = f"{mode.upper()} ({faction.upper()})"
-            if lmd > p["last_match_date"]:
-                p["last_match_date"] = lmd
+        _ingest_personal_stat_payload(
+            data,
+            results_by_pid,
+            roster_maps=roster_maps,
+            allowed_pids=set(batch_pids),
+        )
 
     return list(results_by_pid.values())
 
@@ -614,14 +873,15 @@ def compute_merged_mode_rankings(
     players: list[dict[str, Any]],
     mode_groups: dict[str, tuple[str, ...]] | None = None,
     custom_ids: set[int] | None = None,
+    custom_steam_ids: set[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
     Mescla os rankings das facções ativas dentro de cada categoria ('1v1', '2v2', 'Team Games').
-    Jogadores extras em custom_ids entram na classificação geral pela média de ELO (usando rankings
-    ativos e, caso não tenham ranking ativo recente no modo, seu ELO histórico daquele modo).
+    Os 31 jogadores monitorados + convidados entram na classificação geral pela média de ELO.
     """
     groups = mode_groups or STUDY_MODE_GROUPS
     custom_set = {int(x) for x in (custom_ids or set())}
+    custom_sid_set = {str(s) for s in (custom_steam_ids or set()) if s}
     rankings_by_mode: dict[str, list[dict[str, Any]]] = {}
 
     for group_name, sub_modes in groups.items():
@@ -630,7 +890,8 @@ def compute_merged_mode_rankings(
 
         for p in players:
             pid = int(p["profile_id"])
-            is_custom = pid in custom_set or bool(p.get("is_custom"))
+            sid = str(p.get("steam_id") or "")
+            is_custom = pid in custom_set or (sid and sid in custom_sid_set) or bool(p.get("is_custom"))
             p_modes = p.get("modes", {})
             p_inactive = p.get("inactive_modes", {})
             all_active_elos: list[int] = []
@@ -661,7 +922,7 @@ def compute_merged_mode_rankings(
                             latest_streak_ts = lmd_val
                             latest_streak = int(st.get("streak", 0))
 
-            # Se for jogador convidado sem ranking ativo atualmente no modo, aproveita seu ELO pessoal salvo na Relic
+            # Se for jogador monitorado sem ranking ativo recente no modo, aproveita seu ELO pessoal salvo na Relic
             if not all_active_elos and is_custom and p_inactive:
                 used_inactive_fallback = True
                 for sub in sub_modes:
@@ -699,7 +960,9 @@ def compute_merged_mode_rankings(
                 {
                     "profile_id": pid,
                     "alias": str(p["alias"]),
-                    "steam_id": str(p.get("steam_id", "")),
+                    "current_alias": str(p.get("current_alias") or p["alias"]),
+                    "original_alias": str(p.get("original_alias") or p["alias"]),
+                    "steam_id": sid,
                     "country": str(p.get("country") or "br").lower(),
                     "mode": group_name,
                     "sub_modes": list(sub_modes),
@@ -717,13 +980,17 @@ def compute_merged_mode_rankings(
                     "ratio": win_ratio,
                     "last_match_date": last_match_mode,
                     "is_custom": is_custom,
+                    "is_br_roster": bool(p.get("is_br_roster")) or is_custom,
                     "inactive_fallback": used_inactive_fallback,
+                    "rank_delta": int(p.get("rank_delta", 0)),
+                    "prev_rank": p.get("prev_rank"),
                     "coh3stats_url": f"https://coh3stats.com/players/{pid}",
                 }
             )
 
         mode_entries.sort(
             key=lambda x: (
+                1 if x.get("inactive_fallback") else 0,
                 -x["avg_elo"],
                 -x["active_rankings_count"],
                 -x["max_mode_elo"],
@@ -742,42 +1009,57 @@ def build_top_tracked_players(
     rankings_by_mode: dict[str, list[dict[str, Any]]],
     top_n: int = 20,
     custom_players: list[dict[str, Any]] | None = None,
+    only_custom: bool = False,
 ) -> list[dict[str, Any]]:
     """
-    Seleciona os Top N colocados brasileiros de cada modo ('1v1', '2v2', 'Team Games')
-    + todos os jogadores convidados (custom_players), sem duplicatas.
+    Quando only_custom=True (padrão v5: Opção 2), retorna APENAS os 31 jogadores brasileiros listados
+    (+ convidados extras) para monitoramento de partidas terminadas, ignorando os demais estranhos do Top 20.
     """
-    custom_by_id = {int(cp["profile_id"]): cp for cp in (custom_players or [])}
+    steam_map, pid_map = build_roster_lookup_maps(custom_players)
+    custom_by_id = {int(cp["profile_id"]): cp for cp in (custom_players or []) if int(cp.get("profile_id", 0)) > 0}
+    custom_sids = {str(cp.get("steam_id") or "") for cp in (custom_players or []) if cp.get("steam_id")}
     consolidated: dict[int, dict[str, Any]] = {}
 
     for mode, entries in rankings_by_mode.items():
+        mode_pt = "Jogos em Equipe" if mode == "Team Games" else mode
         for idx, item in enumerate(entries):
-            pid = item["profile_id"]
-            if idx >= top_n and pid not in custom_by_id and not item.get("is_custom"):
+            pid = int(item["profile_id"])
+            sid = str(item.get("steam_id") or "")
+            is_cust = pid in custom_by_id or (sid and sid in custom_sids) or bool(item.get("is_custom"))
+            if only_custom and not is_cust:
+                continue
+            if not only_custom and idx >= top_n and not is_cust:
                 continue
             if pid not in consolidated:
+                r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
                 consolidated[pid] = {
                     "profile_id": pid,
                     "alias": item["alias"],
-                    "steam_id": item["steam_id"],
+                    "original_alias": str(r_entry.get("original_alias") or item.get("original_alias") or item["alias"]),
+                    "steam_id": sid or str(r_entry.get("steam_id") or ""),
                     "placements": [],
                     "best_avg_elo": item["avg_elo"],
-                    "is_custom": pid in custom_by_id or bool(item.get("is_custom")),
+                    "is_custom": is_cust,
                 }
             rec = consolidated[pid]
             tag = " ⭐" if rec["is_custom"] and idx >= top_n else ""
-            rec["placements"].append(f"#{item['br_rank']} {mode} (média {item['avg_elo']:.1f}){tag}")
+            rec["placements"].append(f"#{item['br_rank']} {mode_pt} (média {item['avg_elo']:.1f}){tag}")
             if item["avg_elo"] > rec["best_avg_elo"]:
                 rec["best_avg_elo"] = item["avg_elo"]
 
-    # Garante que mesmo um convidado sem nenhuma partida ranqueada anterior seja seguido
+    # Garante que todos os 31 jogadores monitorados estejam presentes mesmo se ainda sem partida ranqueada
     for pid, cp in custom_by_id.items():
         if pid not in consolidated:
+            sid = str(cp.get("steam_id") or "")
+            r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
+            orig_alias = str(r_entry.get("original_alias") or cp.get("original_alias") or cp.get("alias") or f"Player {pid}")
+            cur_alias = str(cp.get("alias") or orig_alias)
             consolidated[pid] = {
                 "profile_id": pid,
-                "alias": str(cp.get("alias") or f"Player {pid}"),
-                "steam_id": str(cp.get("steam_id") or ""),
-                "placements": ["⭐ Convidado (aguardando ranking)"],
+                "alias": format_bound_display_alias(cur_alias, orig_alias),
+                "original_alias": orig_alias,
+                "steam_id": sid or str(r_entry.get("steam_id") or ""),
+                "placements": ["⭐ Monitorado (aguardando ranking)"],
                 "best_avg_elo": 0.0,
                 "is_custom": True,
             }
@@ -794,19 +1076,21 @@ def export_merged_top_rankings(
     custom_players: list[dict[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
-    Exporta as tabelas dos Top N brasileiros + quaisquer convidados extras posicionados além do Top N.
-    Retorna o dicionário filtrado por modo (pronto para exibição no Discord).
+    Exporta as tabelas dos Top 20 brasileiros + todos os 31 jogadores monitorados (20 + 31).
+    Retorna o dicionário filtrado por modo (pronto para exibição no Discord e detecção de movimentação).
     """
-    custom_ids = {int(cp["profile_id"]) for cp in (custom_players or [])}
+    custom_ids = {int(cp["profile_id"]) for cp in (custom_players or []) if int(cp.get("profile_id", 0)) > 0}
+    custom_sids = {str(cp.get("steam_id") or "") for cp in (custom_players or []) if cp.get("steam_id")}
     trimmed: dict[str, list[dict[str, Any]]] = {}
     for mode, entries in rankings_by_mode.items():
         selected_rows = []
         for idx, e in enumerate(entries):
-            if idx < top_n or e["profile_id"] in custom_ids or e.get("is_custom"):
+            sid = str(e.get("steam_id") or "")
+            if idx < top_n or e["profile_id"] in custom_ids or (sid and sid in custom_sids) or e.get("is_custom"):
                 selected_rows.append(e)
         trimmed[mode] = selected_rows
 
-    unique_players = build_top_tracked_players(rankings_by_mode, top_n=top_n, custom_players=custom_players)
+    unique_players = build_top_tracked_players(rankings_by_mode, top_n=top_n, custom_players=custom_players, only_custom=False)
 
     json_path.write_text(
         json.dumps(
@@ -831,9 +1115,12 @@ def export_merged_top_rankings(
             [
                 "mode",
                 "br_rank",
-                "is_custom",
+                "rank_delta",
+                "is_monitored_31",
                 "profile_id",
-                "alias",
+                "steam_id",
+                "original_alias",
+                "display_alias",
                 "avg_elo",
                 "active_rankings",
                 "elo_usf",
@@ -853,8 +1140,11 @@ def export_merged_top_rankings(
                     [
                         sanitize_csv_cell(mode),
                         e["br_rank"],
+                        e.get("rank_delta", 0),
                         "sim" if e.get("is_custom") else "nao",
                         pid_int,
+                        sanitize_csv_cell(e.get("steam_id", "")),
+                        sanitize_csv_cell(e.get("original_alias", "")),
                         sanitize_csv_cell(e["alias"]),
                         e["avg_elo"],
                         f"{e['active_rankings_count']}/{e['max_rankings_slots']}",
@@ -869,5 +1159,3 @@ def export_merged_top_rankings(
                 )
 
     return trimmed
-
-

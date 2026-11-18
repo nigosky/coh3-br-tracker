@@ -86,9 +86,13 @@ class MatchDatabase:
                 conn.execute("ALTER TABLE recorded_matches ADD COLUMN tracked_steam_id TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE tracked_players ADD COLUMN original_alias TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
 
     def sync_tracked_players(self, players_cfg: list[dict[str, Any]]) -> None:
-        """Sincroniza a lista de jogadores escolhidos do config.json com a tabela tracked_players."""
+        """Sincroniza a lista de jogadores monitorados do config.json com a tabela tracked_players."""
         now = int(time.time())
         active_ids: set[int] = set()
         with self._connect() as conn:
@@ -96,17 +100,22 @@ class MatchDatabase:
                 pid = int(item["profile_id"])
                 active_ids.add(pid)
                 alias = str(item.get("alias") or f"Player {pid}")
+                orig_alias = str(item.get("original_alias") or alias)
                 steam_id = str(item.get("steam_id") or "")
                 conn.execute(
                     """
-                    INSERT INTO tracked_players (profile_id, alias, steam_id, active, baseline_synced, added_at)
-                    VALUES (?, ?, ?, 1, 0, ?)
+                    INSERT INTO tracked_players (profile_id, alias, original_alias, steam_id, active, baseline_synced, added_at)
+                    VALUES (?, ?, ?, ?, 1, 0, ?)
                     ON CONFLICT(profile_id) DO UPDATE SET
                         alias = excluded.alias,
+                        original_alias = CASE
+                            WHEN tracked_players.original_alias != '' THEN tracked_players.original_alias
+                            ELSE excluded.original_alias
+                        END,
                         steam_id = CASE WHEN excluded.steam_id != '' THEN excluded.steam_id ELSE tracked_players.steam_id END,
                         active = 1
                     """,
-                    (pid, alias, steam_id, now),
+                    (pid, alias, orig_alias, steam_id, now),
                 )
             if active_ids:
                 placeholders = ",".join("?" for _ in active_ids)
@@ -212,7 +221,9 @@ class MatchDatabase:
             if only_active_players:
                 rows = conn.execute(
                     """
-                    SELECT rm.*, COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id
+                    SELECT rm.*,
+                           COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
+                           COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
                     FROM recorded_matches rm
                     JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
                     WHERE tp.active = 1
@@ -224,7 +235,9 @@ class MatchDatabase:
             else:
                 rows = conn.execute(
                     """
-                    SELECT rm.*, COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id
+                    SELECT rm.*,
+                           COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
+                           COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
                     FROM recorded_matches rm
                     LEFT JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
                     ORDER BY rm.completion_time DESC
@@ -237,6 +250,9 @@ class MatchDatabase:
         for r in rows:
             d = dict(r)
             d["tracked_steam_id"] = d.pop("resolved_steam_id", "") or d.get("tracked_steam_id", "")
+            disp_alias = d.pop("resolved_display_alias", "")
+            if disp_alias:
+                d["tracked_alias"] = disp_alias
             d["win"] = bool(d["win"])
             d["has_replay"] = bool(d["has_replay"])
             d["allies"] = json.loads(d.pop("allies_json"))

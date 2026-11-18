@@ -18,15 +18,16 @@ from typing import Any
 from card_renderer import (
     SteamAvatarProvider,
     render_matches_table_png,
+    render_ranking_movement_card_png,
     render_ranking_table_png,
 )
 
 logger = logging.getLogger("coh3_br.discord")
 
-COLOR_WIN = 0x1D7DFA      # Azul Vitória (padrão coh3stats image.png)
-COLOR_LOSS = 0xE03131     # Vermelho Derrota (padrão coh3stats image.png)
+COLOR_WIN = 0x1D7DFA      # Azul Vitória
+COLOR_LOSS = 0xE03131     # Vermelho Derrota
 COLOR_DUEL = 0xEAB308     # Ouro Duelo Brasileiro
-COLOR_RANKING = 0xEAB308  # Ouro Tabela de Ranking Tático (image_2.png)
+COLOR_RANKING = 0xEAB308  # Ouro Tabela de Ranking Tático
 COLOR_SUMMARY = 0x1D7DFA  # Azul Lista Horizontal de Partidas
 
 BOT_AVATAR_URL = "https://coh3stats.com/logo/android-icon-192x192.png"
@@ -36,7 +37,7 @@ MODE_COMPACT_LABELS: dict[str, str] = {
     "Team Games (4v4)": "4 vs 4",
     "1v1": "1 vs 1",
     "2v2": "2 vs 2",
-    "Custom": "Custom",
+    "Custom": "Personalizada",
 }
 
 ALLOWED_DISCORD_HOSTS = frozenset(
@@ -122,7 +123,7 @@ def format_duration(seconds: int) -> str:
 
 def format_elo_compact(old_elo: int | None, new_elo: int | None) -> str:
     if not old_elo or not new_elo:
-        return "N/A"
+        return "S/R"
     old_i, new_i = int(old_elo), int(new_elo)
     diff = new_i - old_i
     sign = f"+{diff}" if diff >= 0 else f"{diff}"
@@ -131,7 +132,7 @@ def format_elo_compact(old_elo: int | None, new_elo: int | None) -> str:
 
 def group_matches_by_id(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Agrupa registros que pertencem ao mesmo match_id (quando 2+ brasileiros seguidos
+    Agrupa registros que pertencem ao mesmo match_id (quando 2+ brasileiros monitorados
     jogam juntos em equipe ou se enfrentam num duelo BR), preservando a ordem original.
     """
     grouped_map: dict[int, dict[str, Any]] = {}
@@ -166,14 +167,12 @@ def _encode_multipart_formdata(
     ]
 
     chunks: list[bytes] = []
-    # Parte 0: payload_json
     chunks.append(f"--{boundary}\r\n".encode("ascii"))
     chunks.append(b'Content-Disposition: form-data; name="payload_json"\r\n')
     chunks.append(b"Content-Type: application/json\r\n\r\n")
     chunks.append(json.dumps(payload_copy, ensure_ascii=False).encode("utf-8"))
     chunks.append(b"\r\n")
 
-    # Partes 1..N: files[idx]
     for idx, (fname, file_bytes, mime_type) in enumerate(files):
         if not SAFE_ATTACHMENT_NAME_RE.fullmatch(fname):
             raise ValueError(f"Nome de anexo inválido bloqueado: {fname}")
@@ -195,8 +194,8 @@ def build_match_embed_payload(
     attachment_filename: str | None = None,
 ) -> dict[str, Any]:
     """
-    Monta uma mensagem de largura máxima (550px fora de Embed) com o Card Grande estilo coh3stats
-    e cabeçalho clicável (Details / Replay com <url> sem gerar preview extra).
+    Monta mensagem PT-BR de largura máxima (550px fora de Embed) com o Card Grande estilo coh3stats
+    e cabeçalho clicável (Detalhes / Replay com <url> sem gerar preview extra).
     """
     if isinstance(match_or_group, list):
         records = match_or_group
@@ -220,22 +219,65 @@ def build_match_embed_payload(
     mode_badge = compact_mode(primary.get("mode"))
 
     if winners and losers:
-        w_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 24) for r in winners[:3])
-        l_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 24) for r in losers[:3])
+        w_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 28) for r in winners[:3])
+        l_names = " & ".join(sanitize_discord_text(r["tracked_alias"], 28) for r in losers[:3])
         headline = f"⚔️ **DUELO BR — {w_names} vs {l_names}** (`{mode_badge}` • **{safe_map}**)"
     else:
         win = bool(primary["win"])
-        names = " & ".join(sanitize_discord_text(r["tracked_alias"], 24) for r in records[:4])
-        res_lbl = "VICTORY" if win else "DEFEAT"
+        names = " & ".join(sanitize_discord_text(r["tracked_alias"], 28) for r in records[:4])
+        res_lbl = "VITÓRIA" if win else "DERROTA"
         badge = "🔵" if win else "🔴"
         headline = f"{badge} **{res_lbl} — {names}** (`{mode_badge}` • **{safe_map}**)"
 
     content = (
         f"{headline}\n"
         f"🕒 <t:{ts}:R>   •   "
-        f"[👁️ **Details** (Ficha Completa) ↗](<{safe_url}>)   •   "
-        f"[⬇️ **Replay** (Download) ↗](<{safe_url}>)"
+        f"[👁️ **Detalhes** (Ficha Completa) ↗](<{safe_url}>)   •   "
+        f"[⬇️ **Replay** (Baixar) ↗](<{safe_url}>)"
     )
+
+    return {
+        "username": sanitize_discord_text(bot_username, max_len=80),
+        "avatar_url": BOT_AVATAR_URL,
+        "allowed_mentions": SAFE_ALLOWED_MENTIONS,
+        "content": content[:2000],
+        "embeds": [],
+    }
+
+
+def build_ranking_movement_payload(
+    movements_by_mode: dict[str, list[dict[str, Any]]],
+    bot_username: str = "CoH3 Brasil Monitor",
+) -> dict[str, Any]:
+    """Monta cabeçalho PT-BR para o Card de Movimentação no Ranking (setas verdes ▲ e vermelhas ▼)."""
+    climbed = 0
+    dropped = 0
+    highlights: list[str] = []
+
+    for mode_key, items in movements_by_mode.items():
+        mode_lbl = "Equipe" if mode_key == "Team Games" else mode_key
+        for mv in items:
+            d = int(mv.get("rank_delta", 0))
+            nm = sanitize_discord_text(mv.get("alias"), 22)
+            cur = int(mv.get("br_rank", 0))
+            if mv.get("is_new_entry"):
+                climbed += 1
+                if len(highlights) < 5:
+                    highlights.append(f"🆕 **{nm}** (`#{cur}` {mode_lbl})")
+            elif d > 0:
+                climbed += 1
+                if len(highlights) < 5:
+                    highlights.append(f"🟢 ▲ **{nm}** (`#{cur}` {mode_lbl})")
+            elif d < 0:
+                dropped += 1
+                if len(highlights) < 5:
+                    highlights.append(f"🔴 ▼ **{nm}** (`#{cur}` {mode_lbl})")
+
+    summary_line = "  •  ".join(highlights)
+    content = (
+        f"📊 **ATUALIZAÇÃO DE RANKING BRASILEIRO** — `🟢 {climbed} subiu`  |  `🔴 {dropped} desceu`\n"
+        f"{summary_line}"
+    ).strip()
 
     return {
         "username": sanitize_discord_text(bot_username, max_len=80),
@@ -253,14 +295,16 @@ def build_summary_list_payload(
     rankings_by_mode: dict[str, list[dict[str, Any]]] | None = None,
     custom_players: list[dict[str, Any]] | None = None,
     has_ranking_images: bool = True,
+    attachment_names: list[str] | None = None,
 ) -> dict[str, Any]:
     """
-    Monta o payload da Mensagem Fixada com as Tabelas Gráficas de Ranking (1v1, 2v2, Team Games)
-    no estilo tático dourado + Tabela Horizontal de Últimas Partidas estilo coh3stats + Links Details/Replay.
+    Monta o payload da Mensagem Fixada em PT-BR com as Tabelas Gráficas de Ranking (Top 20 + 31 monitorados,
+    paginadas em blocos de até 20 linhas para largura máxima) + Tabela de Últimas Partidas dos 31 monitorados.
     """
     grouped = group_matches_by_id(matches)[:5]
     now_iso = datetime.now(tz=timezone.utc).isoformat()
     embeds_list: list[dict[str, Any]] = []
+    att_set = set(attachment_names) if attachment_names is not None else None
 
     custom_list = custom_players or []
     ranked_pids = {
@@ -276,38 +320,55 @@ def build_summary_list_payload(
 
     if rankings_by_mode and has_ranking_images:
         mode_defs = [
-            ("1v1", "🏆 RANKING BRASILEIRO — 1v1", "ranking_1v1.png"),
-            ("2v2", "🏆 RANKING BRASILEIRO — 2v2", "ranking_2v2.png"),
-            ("Team Games", "🏆 RANKING BRASILEIRO — TEAM GAMES (3v3 + 4v4)", "ranking_team.png"),
+            ("1v1", "🏆 RANKING BRASILEIRO — 1v1", "ranking_1v1.png", "ranking_1v1_p2.png"),
+            ("2v2", "🏆 RANKING BRASILEIRO — 2v2", "ranking_2v2.png", "ranking_2v2_p2.png"),
+            ("Team Games", "🏆 RANKING BRASILEIRO — JOGOS EM EQUIPE (3v3 + 4v4)", "ranking_team.png", "ranking_team_p2.png"),
         ]
-        for idx, (m_key, m_title, fname) in enumerate(mode_defs):
+        first_embed_added = False
+        for m_key, m_title, fname1, fname2 in mode_defs:
             if not rankings_by_mode.get(m_key):
+                continue
+            if att_set is not None and fname1 not in att_set:
                 continue
             r_embed: dict[str, Any] = {
                 "title": m_title,
                 "color": COLOR_RANKING,
-                "image": {"url": f"attachment://{fname}"},
+                "image": {"url": f"attachment://{fname1}"},
             }
-            if idx == 0:
-                desc_note = f"🎯 **{len(tracked_players)} jogadores monitorados** (Top 20 por modo + convidados `★ EXTRA`)"
+            if not first_embed_added:
+                first_embed_added = True
+                desc_note = (
+                    f"🎯 **Ranking Top 20 + {len(custom_list) or len(tracked_players)} brasileiros fixos** "
+                    f"• Partidas monitoradas exclusivamente dos **{len(tracked_players)} jogadores da lista**\n"
+                    f"🟢 `▲` Subiu de posição   •   🔴 `▼` Perdeu posição"
+                )
                 if unranked_guests:
                     desc_note += "\n⭐ *Aguardando 1ª ranqueada:* " + ", ".join(f"**{g}**" for g in unranked_guests[:8])
                 r_embed["description"] = desc_note
             embeds_list.append(r_embed)
+
+            if att_set is not None and fname2 in att_set:
+                embeds_list.append(
+                    {
+                        "title": f"{m_title} (Continuação • Monitorados)",
+                        "color": COLOR_RANKING,
+                        "image": {"url": f"attachment://{fname2}"},
+                    }
+                )
 
     quick_links: list[str] = []
     for row_idx, grp in enumerate(grouped, start=1):
         primary = grp["primary"]
         recs = grp["records"]
         safe_url = build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
-        names = " + ".join(sanitize_discord_text(r["tracked_alias"], 16) for r in recs[:2])
+        names = " + ".join(sanitize_discord_text(r["tracked_alias"], 20) for r in recs[:2])
         safe_map = sanitize_discord_text(primary.get("map_clean"), 22)
-        quick_links.append(f"`#{row_idx}` **{names}** ({safe_map}) ➔ [👁️ Details / ⬇️ Replay ↗]({safe_url})")
+        quick_links.append(f"`#{row_idx}` **{names}** ({safe_map}) ➔ [👁️ Detalhes / ⬇️ Replay ↗]({safe_url})")
 
-    links_desc = "\n".join(quick_links) if quick_links else "_Aguardando novas partidas dos jogadores seguidos._"
+    links_desc = "\n".join(quick_links) if quick_links else "_Aguardando novas partidas dos 31 jogadores monitorados._"
 
     matches_embed: dict[str, Any] = {
-        "title": "📌 ÚLTIMAS PARTIDAS GRAVADAS — COH3 BRASIL",
+        "title": "📌 ÚLTIMAS PARTIDAS DOS 31 MONITORADOS — COH3 BRASIL",
         "description": links_desc[:4000],
         "color": COLOR_SUMMARY,
         "image": {"url": "attachment://recent_matches.png"},
@@ -322,7 +383,7 @@ def build_summary_list_payload(
         "username": sanitize_discord_text(bot_username, max_len=80),
         "avatar_url": BOT_AVATAR_URL,
         "allowed_mentions": SAFE_ALLOWED_MENTIONS,
-        "embeds": embeds_list,
+        "embeds": embeds_list[:10],
     }
 
 
@@ -332,14 +393,17 @@ def render_summary_attachments(
     avatar_provider: SteamAvatarProvider,
     top_n: int = 20,
 ) -> list[tuple[str, bytes, str]]:
-    """Gera os PNGs da Mensagem Fixada (3 tabelas de Ranking + 1 tabela horizontal de Partidas)."""
+    """
+    Gera os PNGs da Mensagem Fixada em blocos de até 20 linhas por imagem de Ranking
+    (evitando que o Discord comprima a largura quando há 20 + 31 jogadores no modo).
+    """
     files: list[tuple[str, bytes, str]] = []
 
     if rankings_by_mode:
-        for m_key, fname in (
-            ("1v1", "ranking_1v1.png"),
-            ("2v2", "ranking_2v2.png"),
-            ("Team Games", "ranking_team.png"),
+        for m_key, fname1, fname2 in (
+            ("1v1", "ranking_1v1.png", "ranking_1v1_p2.png"),
+            ("2v2", "ranking_2v2.png", "ranking_2v2_p2.png"),
+            ("Team Games", "ranking_team.png", "ranking_team_p2.png"),
         ):
             entries = rankings_by_mode.get(m_key, [])
             if not entries:
@@ -347,13 +411,38 @@ def render_summary_attachments(
             selected = [
                 e for idx, e in enumerate(entries) if idx < top_n or bool(e.get("is_custom"))
             ]
-            png_bytes = render_ranking_table_png(
-                entries=selected,
+            if len(selected) <= 25:
+                chunk_size = len(selected)
+                page1 = selected
+                page2 = []
+            else:
+                chunk_size = (len(selected) + 1) // 2
+                page1 = selected[:chunk_size]
+                page2 = selected[chunk_size:]
+
+            sub1 = (
+                f"Parte 1/2 • {len(selected)} no Ranking"
+                if page2
+                else f"Top 20 + Monitorados ({len(selected)})"
+            )
+            png1 = render_ranking_table_png(
+                entries=page1,
                 mode_title=m_key,
                 avatar_provider=avatar_provider,
-                max_rows=max(top_n + 6, 25),
+                max_rows=chunk_size,
+                subtitle_override=sub1,
             )
-            files.append((fname, png_bytes, "image/png"))
+            files.append((fname1, png1, "image/png"))
+
+            if page2:
+                png2 = render_ranking_table_png(
+                    entries=page2,
+                    mode_title=m_key,
+                    avatar_provider=avatar_provider,
+                    max_rows=len(page2),
+                    subtitle_override=f"Parte 2/2 • Monitorados (+{len(page2)})",
+                )
+                files.append((fname2, png2, "image/png"))
 
     grouped = group_matches_by_id(matches)[:5]
     matches_png = render_matches_table_png(grouped, avatar_provider=avatar_provider, live_single=False)
@@ -417,7 +506,7 @@ class DiscordWebhookClient:
                 method=method,
                 headers={
                     "Content-Type": content_type,
-                    "User-Agent": "CoH3-BR-Discord-Tracker/3.0",
+                    "User-Agent": "CoH3-BR-Discord-Tracker/5.0",
                 },
             )
             try:
@@ -454,7 +543,7 @@ class DiscordWebhookClient:
         return urllib.parse.urlunparse(parsed._replace(query=urllib.parse.urlencode(q)))
 
     def send_match_card(self, match_or_group: dict[str, Any] | list[dict[str, Any]]) -> str | None:
-        """Renderiza o Card Horizontal coh3stats com Avatares Steam BR e envia ao Discord."""
+        """Renderiza o Card Grande em PT-BR com Avatares Steam BR e envia ao Discord."""
         if not self.is_configured:
             return None
         if isinstance(match_or_group, list):
@@ -468,6 +557,21 @@ class DiscordWebhookClient:
         fname = f"match_{mid}.png"
         png_bytes = render_matches_table_png([grp], avatar_provider=self.get_avatar_provider(), live_single=True)
         payload = build_match_embed_payload(grp, bot_username=self.bot_username, attachment_filename=fname)
+
+        url = self._append_wait_param(self._webhook_url)
+        _, data = self._request("POST", url, payload, files=[(fname, png_bytes, "image/png")])
+        msg_id = str(data["id"]) if data and "id" in data else None
+        return msg_id if msg_id and SNOWFLAKE_ID_RE.fullmatch(msg_id) else None
+
+    def send_ranking_movement_card(self, movements_by_mode: dict[str, list[dict[str, Any]]]) -> str | None:
+        """Publica no Discord o Card Gráfico de Movimentação do Ranking (setas verdes ▲ / vermelhas ▼)."""
+        has_any = any(bool(v) for v in (movements_by_mode or {}).values())
+        if not has_any or not self.is_configured:
+            return None
+
+        fname = f"ranking_move_{int(time.time())}.png"
+        png_bytes = render_ranking_movement_card_png(movements_by_mode, avatar_provider=self.get_avatar_provider())
+        payload = build_ranking_movement_payload(movements_by_mode, bot_username=self.bot_username)
 
         url = self._append_wait_param(self._webhook_url)
         _, data = self._request("POST", url, payload, files=[(fname, png_bytes, "image/png")])
@@ -493,7 +597,8 @@ class DiscordWebhookClient:
             avatar_provider=self.get_avatar_provider(),
             top_n=top_n,
         )
-        has_rank_imgs = any(f[0].startswith("ranking_") for f in files)
+        att_names = [f[0] for f in files]
+        has_rank_imgs = any(nm.startswith("ranking_") for nm in att_names)
         payload = build_summary_list_payload(
             matches=matches,
             tracked_players=tracked_players,
@@ -501,6 +606,7 @@ class DiscordWebhookClient:
             rankings_by_mode=rankings_by_mode,
             custom_players=custom_players,
             has_ranking_images=has_rank_imgs,
+            attachment_names=att_names,
         )
 
         clean_msg_id = (existing_message_id or "").strip()
@@ -520,7 +626,7 @@ class DiscordWebhookClient:
         return ret_id if ret_id and SNOWFLAKE_ID_RE.fullmatch(ret_id) else None
 
     def send_new_top_entrant_card(self, new_entrants: list[dict[str, Any]], top_n: int = 20) -> str | None:
-        """Envia alerta no Discord quando novos brasileiros entram no Top N e passam a ser seguidos."""
+        """Envia alerta no Discord quando novos brasileiros entram no Top N."""
         if not new_entrants or not self.is_configured:
             return None
         lines = []
@@ -538,10 +644,10 @@ class DiscordWebhookClient:
                 "name": "COH3 BRASIL  •  RADAR TOP 20",
                 "icon_url": BOT_AVATAR_URL,
             },
-            "title": f"🆕 Novo(s) Brasileiro(s) no Top {int(top_n)} — Seguindo Automaticamente!",
+            "title": f"🆕 Novo(s) Brasileiro(s) no Top {int(top_n)}!",
             "description": "\n".join(lines)[:4000],
             "color": COLOR_RANKING,
-            "footer": {"text": "Monitoramento automático dos rankings 1v1, 2v2 e Team Games (3v3 + 4v4)"},
+            "footer": {"text": "Monitoramento automático dos rankings 1v1, 2v2 e Jogos em Equipe (3v3 + 4v4)"},
             "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         }
         payload = {

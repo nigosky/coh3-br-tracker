@@ -8,396 +8,599 @@
   "sqlite_db_path": "./coh3_br_matches.db",
   "tracked_players": [
     {
-      "profile_id": 17169,
-      "alias": "Guh",
-      "steam_id": "76561198066101827",
+      "profile_id": 21206,
+      "alias": "hjax",
+      "original_alias": "hjax",
+      "steam_id": "76561198061434984",
       "placements": [
-        "#1 Team Games (média 1789.5)"
+        "#80 1v1 (média 1523.0) ⭐",
+        "#160 2v2 (média 1614.5) ⭐",
+        "#16 Jogos em Equipe (média 1369.0)"
       ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 462597,
-      "alias": "General Winter",
-      "steam_id": "76561198133760614",
-      "placements": [
-        "#2 Team Games (média 1691.2)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1318162,
-      "alias": "General Winter",
-      "steam_id": "76561198708550887",
-      "placements": [
-        "#3 Team Games (média 1634.2)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 71299,
-      "alias": "Bruno.s",
-      "steam_id": "76561198089205644",
-      "placements": [
-        "#4 Team Games (média 1583.0)"
-      ],
-      "is_custom": false
+      "is_custom": true
     },
     {
       "profile_id": 639157,
       "alias": "Itaperuna",
+      "original_alias": "Itaperuna",
       "steam_id": "76561197979883434",
       "placements": [
         "#2 1v1 (média 1500.0)",
-        "#1 2v2 (média 1576.3)"
+        "#1 2v2 (média 1576.3)",
+        "#388 Jogos em Equipe (média 1308.1) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
-      "profile_id": 1390350,
-      "alias": "TearsInTheRain",
-      "steam_id": "76561198089278659",
+      "profile_id": 366826,
+      "alias": "Lem22",
+      "original_alias": "Lem22",
+      "steam_id": "76561198014985380",
       "placements": [
-        "#1 1v1 (média 1549.0)"
+        "#83 1v1 (média 1153.0) ⭐",
+        "#19 2v2 (média 1286.0)",
+        "#5 Jogos em Equipe (média 1563.0)"
       ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1333418,
-      "alias": "Charles Bronson",
-      "steam_id": "76561198698969876",
-      "placements": [
-        "#4 1v1 (média 1451.0)",
-        "#2 2v2 (média 1525.0)"
-      ],
-      "is_custom": false
+      "is_custom": true
     },
     {
       "profile_id": 79327,
       "alias": "Chacineiro",
+      "original_alias": "Chacineiro",
       "steam_id": "76561197963172584",
       "placements": [
         "#3 1v1 (média 1477.0)",
         "#3 2v2 (média 1524.8)",
-        "#7 Team Games (média 1496.3)"
+        "#8 Jogos em Equipe (média 1496.3)"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
       "profile_id": 509690,
       "alias": "Minhoca de ferro!",
+      "original_alias": "Minhoca de ferro!",
       "steam_id": "76561198053226112",
       "placements": [
-        "#5 Team Games (média 1524.5)"
+        "#93 1v1 (média 954.5) ⭐",
+        "#161 2v2 (média 1219.2) ⭐",
+        "#6 Jogos em Equipe (média 1524.5)"
       ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1005730,
-      "alias": "arc",
-      "steam_id": "76561199791811246",
-      "placements": [
-        "#4 2v2 (média 1497.0)",
-        "#6 Team Games (média 1513.5)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1297821,
-      "alias": "General Winter",
-      "steam_id": "76561198722284920",
-      "placements": [
-        "#8 Team Games (média 1483.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 31145,
-      "alias": "vonMises",
-      "steam_id": "76561197985268629",
-      "placements": [
-        "#19 1v1 (média 1187.5)",
-        "#7 2v2 (média 1431.7)",
-        "#9 Team Games (média 1480.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 357310,
-      "alias": "Sleeping Sheep",
-      "steam_id": "76561197994129168",
-      "placements": [
-        "#7 1v1 (média 1345.0)",
-        "#5 2v2 (média 1477.2)",
-        "#13 Team Games (média 1387.4)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 2583,
-      "alias": "Manupktd",
-      "steam_id": "76561198142536814",
-      "placements": [
-        "#18 2v2 (média 1287.5)",
-        "#10 Team Games (média 1459.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 975900,
-      "alias": "[COHBR/RJ]Roney",
-      "steam_id": "76561198326055603",
-      "placements": [
-        "#11 Team Games (média 1445.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 16867,
-      "alias": "COHBRAMACHINE",
-      "steam_id": "76561198874381986",
-      "placements": [
-        "#6 2v2 (média 1438.0)",
-        "#20 Team Games (média 1311.3)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 40833,
-      "alias": "Tokai Teio",
-      "steam_id": "76561198216174113",
-      "placements": [
-        "#5 1v1 (média 1426.0)",
-        "#12 2v2 (média 1315.7)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 845669,
-      "alias": "PH0BB05",
-      "steam_id": "76561199696199477",
-      "placements": [
-        "#12 Team Games (média 1405.7)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 16507,
-      "alias": "Honest Copper Dealer",
-      "steam_id": "76561198064299508",
-      "placements": [
-        "#9 2v2 (média 1409.2)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 649535,
-      "alias": "pensss",
-      "steam_id": "76561197974916464",
-      "placements": [
-        "#6 1v1 (média 1348.7)",
-        "#8 2v2 (média 1421.3)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1178218,
-      "alias": "joauleonardo",
-      "steam_id": "76561199219878733",
-      "placements": [
-        "#14 Team Games (média 1369.9)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 21206,
-      "alias": "Hjax",
-      "steam_id": "76561198061434984",
-      "placements": [
-        "#15 Team Games (média 1369.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1114404,
-      "alias": "Vikitor",
-      "steam_id": "76561198024118058",
-      "placements": [
-        "#12 1v1 (média 1248.0)",
-        "#16 Team Games (média 1364.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 153969,
-      "alias": "Cunha",
-      "steam_id": "76561198005412401",
-      "placements": [
-        "#17 Team Games (média 1350.5)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 991764,
-      "alias": "SaNgar [BR]",
-      "steam_id": "76561198115923932",
-      "placements": [
-        "#8 1v1 (média 1306.3)",
-        "#10 2v2 (média 1338.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 55693,
-      "alias": "BinhoBiceps",
-      "steam_id": "76561197996817129",
-      "placements": [
-        "#19 2v2 (média 1284.7)",
-        "#18 Team Games (média 1335.2)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1159891,
-      "alias": "GDI",
-      "steam_id": "76561199473666246",
-      "placements": [
-        "#19 Team Games (média 1333.0)"
-      ],
-      "is_custom": false
+      "is_custom": true
     },
     {
       "profile_id": 691,
       "alias": "Vítor",
+      "original_alias": "Vítor",
       "steam_id": "76561198001604015",
       "placements": [
-        "#11 2v2 (média 1330.0)"
+        "#81 1v1 (média 1454.2) ⭐",
+        "#11 2v2 (média 1330.0)",
+        "#30 Jogos em Equipe (média 1272.0) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
+    },
+    {
+      "profile_id": 1114404,
+      "alias": "Vikitor",
+      "original_alias": "Vikitor",
+      "steam_id": "76561198024118058",
+      "placements": [
+        "#12 1v1 (média 1248.0)",
+        "#26 2v2 (média 1243.0) ⭐",
+        "#17 Jogos em Equipe (média 1364.0)"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 153969,
+      "alias": "Cunha",
+      "original_alias": "Cunha",
+      "steam_id": "76561198005412401",
+      "placements": [
+        "#88 1v1 (média 1049.0) ⭐",
+        "#33 2v2 (média 1214.0) ⭐",
+        "#18 Jogos em Equipe (média 1350.5)"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 991764,
+      "alias": "SaNgar [BR]",
+      "original_alias": "SaNgar [BR]",
+      "steam_id": "76561198115923932",
+      "placements": [
+        "#8 1v1 (média 1306.3)",
+        "#10 2v2 (média 1338.0)",
+        "#55 Jogos em Equipe (média 1187.7) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 55693,
+      "alias": "BinhoBiceps",
+      "original_alias": "BinhoBiceps",
+      "steam_id": "76561197996817129",
+      "placements": [
+        "#84 1v1 (média 1128.2) ⭐",
+        "#20 2v2 (média 1284.7)",
+        "#19 Jogos em Equipe (média 1335.2)"
+      ],
+      "is_custom": true
     },
     {
       "profile_id": 32922,
       "alias": "Showtaro",
+      "original_alias": "Showtaro",
       "steam_id": "76561197986271242",
       "placements": [
-        "#14 2v2 (média 1311.0)"
+        "#87 1v1 (média 1070.0) ⭐",
+        "#14 2v2 (média 1311.0)",
+        "#26 Jogos em Equipe (média 1286.8) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
-      "profile_id": 1423426,
-      "alias": "geladeira velha",
-      "steam_id": "76561199482388323",
+      "profile_id": 6557,
+      "alias": "Dragoness",
+      "original_alias": "Dragoness",
+      "steam_id": "76561198135142137",
       "placements": [
-        "#15 2v2 (média 1308.0)"
+        "#86 1v1 (média 1076.0) ⭐",
+        "#30 2v2 (média 1217.0) ⭐",
+        "#23 Jogos em Equipe (média 1305.0) ⭐"
       ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 7375,
-      "alias": "pigote",
-      "steam_id": "76561198047826077",
-      "placements": [
-        "#10 1v1 (média 1290.0)",
-        "#13 2v2 (média 1311.3)"
-      ],
-      "is_custom": false
+      "is_custom": true
     },
     {
       "profile_id": 900358,
       "alias": "Margheriti",
+      "original_alias": "Margheriti",
       "steam_id": "76561198070545853",
       "placements": [
         "#15 1v1 (média 1216.0)",
-        "#16 2v2 (média 1299.0)"
+        "#16 2v2 (média 1299.0)",
+        "#47 Jogos em Equipe (média 1217.0) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
-      "profile_id": 1356223,
-      "alias": "Manu-chan",
-      "steam_id": "76561198188738303",
+      "profile_id": 26910,
+      "alias": "nigo_BR ᵀᴹ",
+      "original_alias": "nigo_BR ᵀᴹ",
+      "steam_id": "76561197963741792",
       "placements": [
-        "#9 1v1 (média 1292.3)"
+        "#85 1v1 (média 1090.8) ⭐",
+        "#46 2v2 (média 1161.5) ⭐",
+        "#28 Jogos em Equipe (média 1279.0) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
-      "profile_id": 207342,
-      "alias": "AkvaBr",
-      "steam_id": "76561197961608539",
+      "profile_id": 35952,
+      "alias": "Sauronzinho",
+      "original_alias": "Sauronzinho",
+      "steam_id": "76561198121484554",
       "placements": [
-        "#11 1v1 (média 1263.0)",
-        "#17 2v2 (média 1292.0)"
+        "#82 1v1 (média 1156.0) ⭐",
+        "#162 2v2 (média 1118.0) ⭐",
+        "#32 Jogos em Equipe (média 1271.0) ⭐"
       ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 81751,
-      "alias": "Razi",
-      "steam_id": "76561198080023560",
-      "placements": [
-        "#20 2v2 (média 1275.7)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1297870,
-      "alias": "AVESTRUZ TE SEDUZ",
-      "steam_id": "76561198047131936",
-      "placements": [
-        "#13 1v1 (média 1239.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 217935,
-      "alias": "sakul",
-      "steam_id": "76561197981477167",
-      "placements": [
-        "#16 1v1 (média 1214.0)"
-      ],
-      "is_custom": false
-    },
-    {
-      "profile_id": 1707,
-      "alias": "Anhangá",
-      "steam_id": "76561197998487466",
-      "placements": [
-        "#14 1v1 (média 1229.5)"
-      ],
-      "is_custom": false
+      "is_custom": true
     },
     {
       "profile_id": 1088455,
       "alias": "luiz_fmh",
+      "original_alias": "luiz_fmh",
       "steam_id": "76561198108568598",
       "placements": [
-        "#17 1v1 (média 1196.8)"
+        "#17 1v1 (média 1196.8)",
+        "#41 2v2 (média 1180.0) ⭐",
+        "#46 Jogos em Equipe (média 1217.7) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
-      "profile_id": 12522,
-      "alias": "Caramez",
-      "steam_id": "76561198108513961",
+      "profile_id": 337051,
+      "alias": "Maiti",
+      "original_alias": "Maiti",
+      "steam_id": "76561197981615184",
       "placements": [
-        "#18 1v1 (média 1189.5)"
+        "#96 1v1 (média 948.0) ⭐",
+        "#34 2v2 (média 1212.0) ⭐",
+        "#79 Jogos em Equipe (média 1124.0) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
     },
     {
-      "profile_id": 87314,
-      "alias": "Pedro Jedi",
-      "steam_id": "76561197986521921",
+      "profile_id": 19747,
+      "alias": "twitch.tv/luck22ai",
+      "original_alias": "twitch.tv/luck22ai",
+      "steam_id": "76561198058548575",
       "placements": [
-        "#20 1v1 (média 1175.0)"
+        "#92 1v1 (média 958.0) ⭐",
+        "#163 2v2 (média 1084.0) ⭐",
+        "#51 Jogos em Equipe (média 1199.6) ⭐"
       ],
-      "is_custom": false
+      "is_custom": true
+    },
+    {
+      "profile_id": 1022333,
+      "alias": "gaules",
+      "original_alias": "gaules",
+      "steam_id": "76561198264285149",
+      "placements": [
+        "#95 1v1 (média 950.0) ⭐",
+        "#39 2v2 (média 1183.5) ⭐",
+        "#58 Jogos em Equipe (média 1180.4) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 648514,
+      "alias": "Halokoo",
+      "original_alias": "Halokoo",
+      "steam_id": "76561198372757032",
+      "placements": [
+        "#48 1v1 (média 936.5) ⭐",
+        "#52 2v2 (média 1110.0) ⭐",
+        "#62 Jogos em Equipe (média 1171.3) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 559962,
+      "alias": "É o Gabe",
+      "original_alias": "É o Gabe",
+      "steam_id": "76561198062871244",
+      "placements": [
+        "#27 1v1 (média 1113.0) ⭐",
+        "#43 2v2 (média 1171.0) ⭐",
+        "#64 Jogos em Equipe (média 1154.8) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1143262,
+      "alias": "Mazzaroppee",
+      "original_alias": "Mazzaroppee",
+      "steam_id": "76561198105073246",
+      "placements": [
+        "#43 1v1 (média 978.0) ⭐",
+        "#78 2v2 (média 1009.0) ⭐",
+        "#66 Jogos em Equipe (média 1148.0) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 735940,
+      "alias": "Jimmy Duelista",
+      "original_alias": "Jimmy Duelista",
+      "steam_id": "76561198034510845",
+      "placements": [
+        "#22 1v1 (média 1147.5) ⭐",
+        "#61 2v2 (média 1071.5) ⭐",
+        "#101 Jogos em Equipe (média 1074.0) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 3895,
+      "alias": "Liquid",
+      "original_alias": "Liquid",
+      "steam_id": "76561198054318813",
+      "placements": [
+        "#91 1v1 (média 994.0) ⭐",
+        "#164 2v2 (média 1031.5) ⭐",
+        "#67 Jogos em Equipe (média 1147.5) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 110078,
+      "alias": "Bineto",
+      "original_alias": "Bineto",
+      "steam_id": "76561198024839791",
+      "placements": [
+        "#23 1v1 (média 1145.0) ⭐",
+        "#50 2v2 (média 1123.0) ⭐",
+        "#389 Jogos em Equipe (média 1077.6) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 944488,
+      "alias": "gbytes™",
+      "original_alias": "gbytes™",
+      "steam_id": "76561198063124280",
+      "placements": [
+        "#165 2v2 (média 1028.2) ⭐",
+        "#76 Jogos em Equipe (média 1128.2) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1226910,
+      "alias": "Lupus Alba",
+      "original_alias": "Lupus Alba",
+      "steam_id": "76561198140782132",
+      "placements": [
+        "#94 1v1 (média 951.5) ⭐",
+        "#95 2v2 (média 945.0) ⭐",
+        "#83 Jogos em Equipe (média 1113.6) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1282592,
+      "alias": "SapoBoi_BR",
+      "original_alias": "SapoBoi_BR",
+      "steam_id": "76561198028644178",
+      "placements": [
+        "#34 1v1 (média 1076.0) ⭐",
+        "#71 2v2 (média 1028.5) ⭐",
+        "#93 Jogos em Equipe (média 1085.8) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 5768,
+      "alias": "The Dog",
+      "original_alias": "The Dog",
+      "steam_id": "76561198205052385",
+      "placements": [
+        "#90 1v1 (média 996.2) ⭐",
+        "#58 2v2 (média 1080.0) ⭐",
+        "#135 Jogos em Equipe (média 1003.5) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 557890,
+      "alias": "gabe44arg",
+      "original_alias": "gabe44arg",
+      "steam_id": "76561199538846112",
+      "placements": [
+        "#89 1v1 (média 1018.0) ⭐",
+        "#106 2v2 (média 879.0) ⭐",
+        "#238 Jogos em Equipe (média 873.5) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 13450,
+      "alias": "7 DIVISAO PHANTOM",
+      "original_alias": "7 DIVISAO PHANTOM",
+      "steam_id": "76561198284234077",
+      "placements": [
+        "#97 1v1 (média 936.3) ⭐",
+        "#166 2v2 (média 835.8) ⭐",
+        "#249 Jogos em Equipe (média 856.2) ⭐"
+      ],
+      "is_custom": true
     }
   ],
   "auto_follow_top_br": true,
   "top_n_per_mode": 20,
-  "leaderboard_refresh_minutes": 30,
-  "remove_if_drops_out_of_top": false
+  "leaderboard_refresh_minutes": 20,
+  "remove_if_drops_out_of_top": false,
+  "custom_players": [
+    {
+      "profile_id": 79327,
+      "steam_id": "76561197963172584",
+      "original_alias": "Chacineiro",
+      "alias": "Chacineiro",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 991764,
+      "steam_id": "76561198115923932",
+      "original_alias": "SaNgar [BR]",
+      "alias": "SaNgar [BR]",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1088455,
+      "steam_id": "76561198108568598",
+      "original_alias": "luiz_fmh",
+      "alias": "luiz_fmh",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 735940,
+      "steam_id": "76561198034510845",
+      "original_alias": "Jimmy Duelista",
+      "alias": "Jimmy Duelista",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 559962,
+      "steam_id": "76561198062871244",
+      "original_alias": "É o Gabe",
+      "alias": "É o Gabe",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 648514,
+      "steam_id": "76561198372757032",
+      "original_alias": "Halokoo",
+      "alias": "Halokoo",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 35952,
+      "steam_id": "76561198121484554",
+      "original_alias": "Sauronzinho",
+      "alias": "Sauronzinho",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 900358,
+      "steam_id": "76561198070545853",
+      "original_alias": "Margheriti",
+      "alias": "Margheriti",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 691,
+      "steam_id": "76561198001604015",
+      "original_alias": "Vítor",
+      "alias": "Vítor",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 5768,
+      "steam_id": "76561198205052385",
+      "original_alias": "The Dog",
+      "alias": "The Dog",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 13450,
+      "steam_id": "76561198284234077",
+      "original_alias": "7 DIVISAO PHANTOM",
+      "alias": "7 DIVISAO PHANTOM",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 19747,
+      "steam_id": "76561198058548575",
+      "original_alias": "twitch.tv/luck22ai",
+      "alias": "twitch.tv/luck22ai",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 944488,
+      "steam_id": "76561198063124280",
+      "original_alias": "gbytes™",
+      "alias": "gbytes™",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 21206,
+      "steam_id": "76561198061434984",
+      "original_alias": "hjax",
+      "alias": "hjax",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 509690,
+      "steam_id": "76561198053226112",
+      "original_alias": "Minhoca de ferro!",
+      "alias": "Minhoca de ferro!",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1114404,
+      "steam_id": "76561198024118058",
+      "original_alias": "Vikitor",
+      "alias": "Vikitor",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 366826,
+      "steam_id": "76561198014985380",
+      "original_alias": "Lem22",
+      "alias": "Lem22",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1282592,
+      "steam_id": "76561198028644178",
+      "original_alias": "SapoBoi_BR",
+      "alias": "SapoBoi_BR",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 639157,
+      "steam_id": "76561197979883434",
+      "original_alias": "Itaperuna",
+      "alias": "Itaperuna",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 110078,
+      "steam_id": "76561198024839791",
+      "original_alias": "Bineto",
+      "alias": "Bineto",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1143262,
+      "steam_id": "76561198105073246",
+      "original_alias": "Mazzaroppee",
+      "alias": "Mazzaroppee",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 55693,
+      "steam_id": "76561197996817129",
+      "original_alias": "BinhoBiceps",
+      "alias": "BinhoBiceps",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 337051,
+      "steam_id": "76561197981615184",
+      "original_alias": "Maiti",
+      "alias": "Maiti",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1022333,
+      "steam_id": "76561198264285149",
+      "original_alias": "gaules",
+      "alias": "gaules",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 32922,
+      "steam_id": "76561197986271242",
+      "original_alias": "Showtaro",
+      "alias": "Showtaro",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 153969,
+      "steam_id": "76561198005412401",
+      "original_alias": "Cunha",
+      "alias": "Cunha",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 557890,
+      "steam_id": "76561199538846112",
+      "original_alias": "gabe44arg",
+      "alias": "gabe44arg",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 26910,
+      "steam_id": "76561197963741792",
+      "original_alias": "nigo_BR ᵀᴹ",
+      "alias": "nigo_BR ᵀᴹ",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 6557,
+      "steam_id": "76561198135142137",
+      "original_alias": "Dragoness",
+      "alias": "Dragoness",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 1226910,
+      "steam_id": "76561198140782132",
+      "original_alias": "Lupus Alba",
+      "alias": "Lupus Alba",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 3895,
+      "steam_id": "76561198054318813",
+      "original_alias": "Liquid",
+      "alias": "Liquid",
+      "is_core_roster": true
+    }
+  ],
+  "monitor_only_custom_matches": true
 }
