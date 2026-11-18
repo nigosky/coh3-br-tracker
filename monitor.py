@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v6 — Ranking (Top 20 + 31 únicos com setas ▲/▼) e Partidas (SteamID + contas mescladas)."""
+"""Monitor automático CoH3 Brasil v7 — Ranking (Top 20 + 31 únicos ▲/▼), Partidas via SteamID e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -28,46 +28,34 @@ from relic_api import (
     fetch_custom_players_stats,
     format_bound_display_alias,
 )
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
+from security import (
+    SAFE_WEBHOOK_PLACEHOLDER,
+    atomic_write_text,
+    configure_secure_logging,
+    read_local_secret_webhook,
+    redact_secrets,
+    resolve_data_dir,
+    resolve_safe_db_path,
 )
+
+configure_secure_logging(level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("coh3_br.monitor")
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
-SECRET_FILE_NAME = ".env.secret"
-SAFE_WEBHOOK_PLACEHOLDER = "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_WEBHOOK_URL"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
 
 
-def _read_local_secret_webhook(base_dir: Path) -> str:
-    secret_path = base_dir / SECRET_FILE_NAME
-    if not secret_path.exists():
-        return ""
-    for line in secret_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith("DISCORD_WEBHOOK_URL="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
-
-
 def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
-    """
-    Garante que o elenco brasileiro fixo (incluindo arc, Alekel e a mesclagem gabe44arg -> É o Gabe)
-    esteja sempre sincronizado pelo código Steam (steam_id) em custom_players.
-    """
+    """Garante que o elenco brasileiro fixo esteja sincronizado pelo SteamID64 em custom_players."""
     changed = False
     if "monitor_only_custom_matches" not in cfg:
         cfg["monitor_only_custom_matches"] = True
         changed = True
 
     if int(cfg.get("leaderboard_refresh_minutes", 30)) >= 20:
-        if int(cfg.get("leaderboard_refresh_minutes", 30)) != 15:
-            cfg["leaderboard_refresh_minutes"] = 15
-            changed = True
+        cfg["leaderboard_refresh_minutes"] = 15
+        changed = True
 
     existing_custom: list[dict[str, Any]] = list(cfg.get("custom_players", []))
     by_sid: dict[str, dict[str, Any]] = {}
@@ -145,11 +133,12 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
     return changed
 
 
-def load_config(config_path: Path) -> dict[str, Any]:
+def load_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
+    """Carrega config.json e injeta segredos exclusivamente em memória (env ou .env.secret)."""
     cfg = json.loads(config_path.read_text(encoding="utf-8"))
     ensure_core_roster_in_config(cfg)
     env_webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    local_secret = _read_local_secret_webhook(config_path.parent)
+    local_secret = read_local_secret_webhook(config_path.parent)
     if env_webhook:
         cfg["discord_webhook_url"] = env_webhook
     elif local_secret:
@@ -161,45 +150,35 @@ def load_config(config_path: Path) -> dict[str, Any]:
 
 
 def save_config_file(config_path: Path, cfg_to_save: dict[str, Any]) -> None:
-    """Salva config.json garantindo que NENHUMA URL real de Webhook seja gravada em texto plano no Git."""
+    """Salva config.json garantindo que NUNCA nenhum valor real de Webhook seja gravado em disco."""
     sanitized_cfg = dict(cfg_to_save)
-    raw_wh = str(sanitized_cfg.get("discord_webhook_url", ""))
-    if "discord.com/api/" in raw_wh or "discordapp.com/api/" in raw_wh:
-        sanitized_cfg["discord_webhook_url"] = SAFE_WEBHOOK_PLACEHOLDER
+    sanitized_cfg["discord_webhook_url"] = SAFE_WEBHOOK_PLACEHOLDER
+
     env_db = os.environ.get("SQLITE_DB_PATH", "").strip()
     if env_db and sanitized_cfg.get("sqlite_db_path") == env_db:
-        sanitized_cfg["sqlite_db_path"] = "./coh3_br_matches.db"
+        try:
+            disk_db = json.loads(config_path.read_text(encoding="utf-8")).get("sqlite_db_path", "./coh3_br_matches.db")
+        except Exception:
+            disk_db = "./coh3_br_matches.db"
+        sanitized_cfg["sqlite_db_path"] = disk_db
 
     serialized = json.dumps(sanitized_cfg, ensure_ascii=False, indent=2) + "\n"
-    tmp_path = config_path.with_suffix(".json.tmp")
-    try:
-        tmp_path.write_text(serialized, encoding="utf-8")
-        tmp_path.replace(config_path)
-    except OSError:
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
-        config_path.write_text(serialized, encoding="utf-8")
+    atomic_write_text(config_path, serialized)
 
 
 def _merge_player_stat_records(primary: dict[str, Any], secondary: dict[str, Any]) -> None:
-    """
-    Mescla estatísticas de uma conta secundária (ex.: gabe44arg #557890) na conta principal
-    (ex.: É o Gabe #559962) para unificar vitórias, derrotas, última partida e melhor ELO por facção no Ranking.
-    """
+    """Mescla estatísticas de conta secundária (ex.: gabe44arg) na conta principal (ex.: É o Gabe)."""
     p_modes = primary.setdefault("modes", {})
     p_inact = primary.setdefault("inactive_modes", {})
     s_modes = secondary.get("modes", {})
     s_inact = secondary.get("inactive_modes", {})
 
-    all_keys = set(p_modes.keys()) | set(p_inact.keys()) | set(s_modes.keys()) | set(s_inact.keys())
+    all_keys = set(p_modes) | set(p_inact) | set(s_modes) | set(s_inact)
     for key in all_keys:
-        pm = p_modes.get(key)
-        pi = p_inact.get(key)
-        sm = s_modes.get(key)
-        si = s_inact.get(key)
+        pm, pi = p_modes.get(key), p_inact.get(key)
+        sm, si = s_modes.get(key), s_inact.get(key)
+        p_rec, s_rec = pm or pi, sm or si
 
-        p_rec = pm or pi
-        s_rec = sm or si
         if p_rec and not s_rec:
             continue
         if s_rec and not p_rec:
@@ -212,32 +191,19 @@ def _merge_player_stat_records(primary: dict[str, Any], secondary: dict[str, Any
         assert p_rec is not None and s_rec is not None
         comb_wins = int(p_rec.get("wins", 0)) + int(s_rec.get("wins", 0))
         comb_losses = int(p_rec.get("losses", 0)) + int(s_rec.get("losses", 0))
-        p_lmd = int(p_rec.get("lastmatchdate", 0))
-        s_lmd = int(s_rec.get("lastmatchdate", 0))
-        if s_lmd > p_lmd:
-            latest_lmd = s_lmd
-            latest_streak = int(s_rec.get("streak", 0))
-        else:
-            latest_lmd = p_lmd
-            latest_streak = int(p_rec.get("streak", 0))
+        p_lmd, s_lmd = int(p_rec.get("lastmatchdate", 0)), int(s_rec.get("lastmatchdate", 0))
+        latest_lmd = max(p_lmd, s_lmd)
+        latest_streak = int((s_rec if s_lmd > p_lmd else p_rec).get("streak", 0))
 
         active_candidates = [r for r in (pm, sm) if r is not None]
         if active_candidates:
-            best_active = max(active_candidates, key=lambda r: int(r.get("elo", 0)))
-            merged_slot = dict(best_active)
-            merged_slot["wins"] = comb_wins
-            merged_slot["losses"] = comb_losses
-            merged_slot["lastmatchdate"] = latest_lmd
-            merged_slot["streak"] = latest_streak
+            merged_slot = dict(max(active_candidates, key=lambda r: int(r.get("elo", 0))))
+            merged_slot.update(wins=comb_wins, losses=comb_losses, lastmatchdate=latest_lmd, streak=latest_streak)
             p_modes[key] = merged_slot
             p_inact.pop(key, None)
         else:
-            best_inact = max((p_rec, s_rec), key=lambda r: int(r.get("elo", 0)))
-            merged_slot = dict(best_inact)
-            merged_slot["wins"] = comb_wins
-            merged_slot["losses"] = comb_losses
-            merged_slot["lastmatchdate"] = latest_lmd
-            merged_slot["streak"] = latest_streak
+            merged_slot = dict(max((p_rec, s_rec), key=lambda r: int(r.get("elo", 0))))
+            merged_slot.update(wins=comb_wins, losses=comb_losses, lastmatchdate=latest_lmd, streak=latest_streak)
             p_inact[key] = merged_slot
 
     primary["total_wins"] = int(primary.get("total_wins", 0)) + int(secondary.get("total_wins", 0))
@@ -254,10 +220,7 @@ def merge_catalog_with_custom_players(
     custom_players: list[dict[str, Any]],
     relic: RelicAPIClient,
 ) -> list[dict[str, Any]]:
-    """
-    Consulta getPersonalStat por conta Steam (/steam/<steam_id>) para o elenco fixo + convidados,
-    aplica apelidos preferenciais (Alekel) e funde contas vinculadas do mesmo jogador (gabe44arg -> É o Gabe).
-    """
+    """Consulta getPersonalStat por SteamID64, aplica apelidos preferenciais e funde contas vinculadas."""
     by_pid: dict[int, dict[str, Any]] = {int(p["profile_id"]): dict(p) for p in base_players}
     effective_custom = custom_players if custom_players else list(CORE_BR_ROSTER)
     steam_map, pid_map = build_roster_lookup_maps(effective_custom)
@@ -294,7 +257,6 @@ def merge_catalog_with_custom_players(
         else:
             by_pid[pid] = cp_stat
 
-    # Funde contas secundárias (ex.: gabe44arg #557890) diretamente na conta principal (É o Gabe #559962)
     merged_away_pids: list[int] = []
     for pid, p_obj in list(by_pid.items()):
         sid = str(p_obj.get("steam_id") or "")
@@ -307,7 +269,6 @@ def merge_catalog_with_custom_players(
     for sec_pid in merged_away_pids:
         by_pid.pop(sec_pid, None)
 
-    # Sincroniza profile_id e alias formatado de volta na lista custom_players
     for cp in custom_players:
         sid = str(cp.get("steam_id") or "").replace("/steam/", "").strip()
         pid = int(cp.get("profile_id", 0) or 0)
@@ -317,7 +278,12 @@ def merge_catalog_with_custom_players(
             cp["profile_id"] = int(resolved["profile_id"])
             if resolved.get("steam_id"):
                 cp["steam_id"] = str(resolved["steam_id"])
-            orig = str(r_entry.get("original_alias") or cp.get("original_alias") or resolved.get("original_alias") or resolved["alias"])
+            orig = str(
+                r_entry.get("original_alias")
+                or cp.get("original_alias")
+                or resolved.get("original_alias")
+                or resolved["alias"]
+            )
             cp["original_alias"] = orig
             cp["alias"] = format_bound_display_alias(
                 str(resolved.get("current_alias") or resolved["alias"]),
@@ -330,9 +296,7 @@ def merge_catalog_with_custom_players(
 
 def _player_identity_key(entry: dict[str, Any]) -> str:
     sid = str(entry.get("steam_id") or "").replace("/steam/", "").strip()
-    if sid:
-        return f"steam:{sid}"
-    return f"pid:{int(entry.get('profile_id', 0))}"
+    return f"steam:{sid}" if sid else f"pid:{int(entry.get('profile_id', 0))}"
 
 
 def detect_and_apply_ranking_movements(
@@ -341,11 +305,7 @@ def detect_and_apply_ranking_movements(
     top_n: int = 20,
     custom_players: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], bool]:
-    """
-    Compara a posição atual de cada jogador do grupo (Top 20 + monitorados) com o último snapshot salvo.
-    - Retorna (movements_by_mode, has_new_movements) para disparo do Card de Movimentação no Discord.
-    - Aplica rank_delta (+N para subida ▲ verde, -N para queda ▼ vermelha) nas linhas do Ranking.
-    """
+    """Compara a posição atual com o último snapshot salvo e aplica rank_delta (+N ▲ / -N ▼)."""
     custom_ids = {int(cp["profile_id"]) for cp in (custom_players or []) if int(cp.get("profile_id", 0)) > 0}
     custom_sids = {str(cp.get("steam_id") or "") for cp in (custom_players or []) if cp.get("steam_id")}
 
@@ -436,72 +396,67 @@ def detect_and_apply_ranking_movements(
 
 
 def load_cached_rankings(base_dir: Path, top_n: int = 20) -> dict[str, list[dict[str, Any]]] | None:
-    rank_file = base_dir / f"top{top_n}_br_por_modo.json"
-    if not rank_file.exists():
-        return None
-    try:
-        doc = json.loads(rank_file.read_text(encoding="utf-8"))
-        return doc.get("rankings_by_mode")
-    except Exception:
-        return None
+    for candidate_dir in (resolve_data_dir(base_dir), base_dir):
+        rank_file = candidate_dir / f"top{top_n}_br_por_modo.json"
+        if rank_file.is_file():
+            try:
+                doc = json.loads(rank_file.read_text(encoding="utf-8"))
+                return doc.get("rankings_by_mode")
+            except Exception:
+                continue
+    return None
 
 
 def _compute_rankings_digest(rankings_by_mode: dict[str, list[dict[str, Any]]] | None) -> str:
-    """Gera hash determinístico dos dados visíveis do Ranking (ELO, vitórias, sequência, posição e nicks)."""
     if not rankings_by_mode:
         return ""
-    rows_sig: list[tuple[Any, ...]] = []
-    for mode in ("1v1", "2v2", "Team Games"):
-        for e in rankings_by_mode.get(mode, []):
-            rows_sig.append(
-                (
-                    mode,
-                    int(e.get("profile_id", 0)),
-                    int(e.get("br_rank", 0)),
-                    round(float(e.get("avg_elo", 0.0)), 1),
-                    int(e.get("wins", 0)),
-                    int(e.get("losses", 0)),
-                    int(e.get("streak", 0)),
-                    int(e.get("last_match_date", 0)),
-                    str(e.get("alias", "")),
-                    int(e.get("rank_delta", 0) or 0),
-                )
-            )
+    rows_sig = [
+        (
+            mode,
+            int(e.get("profile_id", 0)),
+            int(e.get("br_rank", 0)),
+            round(float(e.get("avg_elo", 0.0)), 1),
+            int(e.get("wins", 0)),
+            int(e.get("losses", 0)),
+            int(e.get("streak", 0)),
+            int(e.get("last_match_date", 0)),
+            str(e.get("alias", "")),
+            int(e.get("rank_delta", 0) or 0),
+        )
+        for mode in ("1v1", "2v2", "Team Games")
+        for e in rankings_by_mode.get(mode, [])
+    ]
     payload = json.dumps(rows_sig, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def maybe_refresh_top_rankings(
     config_path: Path,
+    cfg: dict[str, Any],
     db: MatchDatabase,
     relic: RelicAPIClient,
     discord: DiscordWebhookClient,
     force: bool = False,
     is_oneshot: bool = False,
-) -> bool:
-    """
-    Revarre as leaderboards da Relic para atualizar o Ranking (Top 20 + monitorados únicos),
-    detecta quem subiu (▲ verde) ou desceu (▼ vermelho), notifica movimentações no Discord e mantém
-    tracked_players focado nas contas monitoradas (incluindo contas mescladas).
-    """
-    raw_disk_cfg = json.loads(config_path.read_text(encoding="utf-8"))
-    cfg_upgraded = ensure_core_roster_in_config(raw_disk_cfg)
+) -> tuple[bool, dict[str, list[dict[str, Any]]] | None]:
+    """Revarre leaderboards da Relic, detecta movimentações e retorna (alterou, rankings_em_memoria)."""
+    cfg_upgraded = ensure_core_roster_in_config(cfg)
 
-    if not raw_disk_cfg.get("auto_follow_top_br", True) and not force and not cfg_upgraded:
-        return False
+    if not cfg.get("auto_follow_top_br", True) and not force and not cfg_upgraded:
+        return False, None
 
-    refresh_mins = max(5, int(raw_disk_cfg.get("leaderboard_refresh_minutes", 15)))
-    top_n = int(raw_disk_cfg.get("top_n_per_mode", 20))
-    only_custom = bool(raw_disk_cfg.get("monitor_only_custom_matches", True))
-    remove_dropped = bool(raw_disk_cfg.get("remove_if_drops_out_of_top", False))
-    custom_players: list[dict[str, Any]] = raw_disk_cfg.get("custom_players", [])
+    refresh_mins = max(5, int(cfg.get("leaderboard_refresh_minutes", 15)))
+    top_n = int(cfg.get("top_n_per_mode", 20))
+    only_custom = bool(cfg.get("monitor_only_custom_matches", True))
+    remove_dropped = bool(cfg.get("remove_if_drops_out_of_top", False))
+    custom_players: list[dict[str, Any]] = cfg.get("custom_players", [])
 
     now = int(time.time())
     last_scan_str = db.get_state("last_leaderboard_scan_ts")
     last_scan_ts = int(last_scan_str) if last_scan_str and last_scan_str.isdigit() else 0
 
     if not force and not is_oneshot and not cfg_upgraded and last_scan_ts > 0 and (now - last_scan_ts) < (refresh_mins * 60):
-        return False
+        return False, None
 
     unique_cnt = sum(1 for cp in custom_players if not cp.get("merged_into_profile_id"))
     logger.info(
@@ -510,9 +465,10 @@ def maybe_refresh_top_rankings(
         unique_cnt,
         len(custom_players),
     )
+
     players = relic.fetch_brazilian_players()
-    base_dir = config_path.parent
-    export_players_files(players, base_dir / "jogadores_br_steam.json", base_dir / "jogadores_br_steam.csv")
+    data_dir = resolve_data_dir(config_path.parent)
+    export_players_files(players, data_dir / "jogadores_br_steam.json", data_dir / "jogadores_br_steam.csv")
 
     merged_players = merge_catalog_with_custom_players(players, custom_players, relic)
     custom_ids = {int(cp["profile_id"]) for cp in custom_players if int(cp.get("profile_id", 0)) > 0}
@@ -531,15 +487,14 @@ def maybe_refresh_top_rankings(
         custom_players=custom_players,
     )
 
-    export_merged_top_rankings(
+    exported_rankings = export_merged_top_rankings(
         rankings,
         top_n=top_n,
-        json_path=base_dir / f"top{top_n}_br_por_modo.json",
-        csv_path=base_dir / f"top{top_n}_br_por_modo.csv",
+        json_path=data_dir / f"top{top_n}_br_por_modo.json",
+        csv_path=data_dir / f"top{top_n}_br_por_modo.csv",
         custom_players=custom_players,
     )
 
-    exported_rankings = load_cached_rankings(base_dir, top_n=top_n)
     new_digest = _compute_rankings_digest(exported_rankings)
     prev_digest = db.get_state("ranking_digest_v5") or ""
     table_stats_changed = bool(new_digest and new_digest != prev_digest)
@@ -552,63 +507,43 @@ def maybe_refresh_top_rankings(
         custom_players=custom_players,
         only_custom=only_custom,
     )
-    existing_list = raw_disk_cfg.get("tracked_players", [])
-    existing_by_id: dict[int, dict[str, Any]] = {int(p["profile_id"]): p for p in existing_list if "profile_id" in p}
+    existing_by_id: dict[int, dict[str, Any]] = {
+        int(p["profile_id"]): p for p in cfg.get("tracked_players", []) if "profile_id" in p
+    }
     was_already_populated = len(existing_by_id) > 0
-
     newly_entered: list[dict[str, Any]] = []
 
-    if only_custom or remove_dropped:
-        updated_by_id: dict[int, dict[str, Any]] = {}
-        for tp in current_tracked:
-            pid = int(tp["profile_id"])
-            if not only_custom and pid not in existing_by_id and not tp.get("is_custom"):
-                newly_entered.append(tp)
-            rec_tp: dict[str, Any] = {
-                "profile_id": pid,
-                "alias": tp["alias"],
-                "original_alias": str(tp.get("original_alias") or tp["alias"]),
-                "steam_id": str(tp.get("steam_id") or existing_by_id.get(pid, {}).get("steam_id") or ""),
-                "placements": tp["placements"],
-                "is_custom": bool(tp.get("is_custom")),
-            }
-            if tp.get("merged_into_profile_id"):
-                rec_tp["merged_into_profile_id"] = int(tp["merged_into_profile_id"])
-            updated_by_id[pid] = rec_tp
-    else:
-        updated_by_id = dict(existing_by_id)
-        for tp in current_tracked:
-            pid = int(tp["profile_id"])
-            if pid not in updated_by_id and not tp.get("is_custom"):
-                newly_entered.append(tp)
-            rec_tp = {
-                "profile_id": pid,
-                "alias": tp["alias"],
-                "original_alias": str(tp.get("original_alias") or tp["alias"]),
-                "steam_id": str(tp.get("steam_id") or updated_by_id.get(pid, {}).get("steam_id") or ""),
-                "placements": tp["placements"],
-                "is_custom": bool(tp.get("is_custom")) or (pid in custom_ids),
-            }
-            if tp.get("merged_into_profile_id"):
-                rec_tp["merged_into_profile_id"] = int(tp["merged_into_profile_id"])
-            updated_by_id[pid] = rec_tp
+    updated_by_id: dict[int, dict[str, Any]] = {} if (only_custom or remove_dropped) else dict(existing_by_id)
+    for tp in current_tracked:
+        pid = int(tp["profile_id"])
+        if not only_custom and pid not in existing_by_id and not tp.get("is_custom"):
+            newly_entered.append(tp)
+        rec_tp: dict[str, Any] = {
+            "profile_id": pid,
+            "alias": tp["alias"],
+            "original_alias": str(tp.get("original_alias") or tp["alias"]),
+            "steam_id": str(tp.get("steam_id") or existing_by_id.get(pid, {}).get("steam_id") or ""),
+            "placements": tp["placements"],
+            "is_custom": bool(tp.get("is_custom")) or (pid in custom_ids),
+        }
+        if tp.get("merged_into_profile_id"):
+            rec_tp["merged_into_profile_id"] = int(tp["merged_into_profile_id"])
+        updated_by_id[pid] = rec_tp
 
     db.set_state("last_leaderboard_scan_ts", str(now))
+    db.prune_expired_avatars()
     if has_new_movements or table_stats_changed or not had_prev_snap or force or cfg_upgraded:
         db.set_state("rankings_updated_flag", "1")
 
-    raw_disk_cfg["custom_players"] = custom_players
-    raw_disk_cfg["tracked_players"] = list(updated_by_id.values())
-    save_config_file(config_path, raw_disk_cfg)
+    cfg["custom_players"] = custom_players
+    cfg["tracked_players"] = list(updated_by_id.values())
+    save_config_file(config_path, cfg)
 
     if has_new_movements:
         for mode_k, mv_list in movements_by_mode.items():
             for mv in mv_list:
-                if mv.get("is_new_entry"):
-                    arrow = "NOVO"
-                else:
-                    d = int(mv.get("rank_delta", 0))
-                    arrow = f"▲ +{d}" if d > 0 else f"▼ {d}"
+                d = int(mv.get("rank_delta", 0))
+                arrow = "NOVO" if mv.get("is_new_entry") else (f"▲ +{d}" if d > 0 else f"▼ {d}")
                 logger.info(
                     "[MOVIMENTAÇÃO RANKING %s] %s: #%s -> #%d (%s)",
                     mode_k,
@@ -621,15 +556,16 @@ def maybe_refresh_top_rankings(
             try:
                 discord.send_ranking_movement_card(movements_by_mode)
             except Exception as exc:
-                logger.error("Erro ao enviar Card de Movimentação do Ranking ao Discord: %s", exc)
+                logger.error("Erro ao enviar Card de Movimentação do Ranking ao Discord: %s", redact_secrets(exc))
 
     if not only_custom and newly_entered and was_already_populated and discord.is_configured:
         try:
             discord.send_new_top_entrant_card(newly_entered, top_n=top_n)
         except Exception as exc:
-            logger.error("Erro ao notificar novo integrante Top %d no Discord: %s", top_n, exc)
+            logger.error("Erro ao notificar novo integrante Top %d no Discord: %s", top_n, redact_secrets(exc))
 
-    return has_new_movements or table_stats_changed or cfg_upgraded or (len(newly_entered) > 0)
+    changed = has_new_movements or table_stats_changed or cfg_upgraded or bool(newly_entered)
+    return changed, exported_rankings
 
 
 def run_cycle(
@@ -638,185 +574,179 @@ def run_cycle(
     force_rank_scan: bool = False,
     is_oneshot: bool = False,
 ) -> tuple[int, int]:
-    """
-    Executa um ciclo completo v6:
-    1) Atualiza Ranking (Top 20 + 31 brasileiros únicos) e publica movimentações com setas verdes ▲ / vermelhas ▼
-    2) Monitora partidas finalizadas EXCLUSIVAMENTE das contas brasileiras monitoradas (incluindo contas mescladas)
-    3) Atualiza automaticamente o Painel em PT-BR no Discord
-    """
+    """Executa um ciclo completo de monitoramento de Ranking + Partidas."""
     cfg = load_config(config_path)
-    db_path = Path(cfg.get("sqlite_db_path", "./coh3_br_matches.db"))
-    if not db_path.is_absolute():
-        db_path = (config_path.parent / db_path).resolve()
+    db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
+    data_dir = resolve_data_dir(config_path.parent)
+    catalog_path = data_dir / "jogadores_br_steam.json"
+    if not catalog_path.is_file():
+        catalog_path = config_path.parent / "jogadores_br_steam.json"
 
-    db = MatchDatabase(db_path)
-    discord = DiscordWebhookClient(
-        webhook_url=str(cfg.get("discord_webhook_url", "")),
-        bot_username=str(cfg.get("bot_username", "CoH3 Brasil Monitor")),
-        db=db,
-        catalog_json_path=config_path.parent / "jogadores_br_steam.json",
-    )
-
-    layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
-
-    try:
-        rank_changed = maybe_refresh_top_rankings(
-            config_path,
-            db,
-            relic,
-            discord,
-            force=(force_rank_scan or layout_needs_upgrade),
-            is_oneshot=is_oneshot,
+    with MatchDatabase(db_path) as db:
+        discord = DiscordWebhookClient(
+            webhook_url=str(cfg.get("discord_webhook_url", "")),
+            bot_username=str(cfg.get("bot_username", "CoH3 Brasil Monitor")),
+            db=db,
+            catalog_json_path=catalog_path,
         )
-        if rank_changed or layout_needs_upgrade or force_rank_scan:
-            cfg = load_config(config_path)
-    except Exception as exc:
-        logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", exc)
 
-    custom_players = cfg.get("custom_players", [])
-    roster_maps = build_roster_lookup_maps(custom_players)
+        layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
+        fresh_rankings: dict[str, list[dict[str, Any]]] | None = None
 
-    db.sync_tracked_players(cfg.get("tracked_players", []))
-    active_players = db.get_active_players()
-
-    only_automatch = bool(cfg.get("only_automatch", False))
-    seed_limit = int(cfg.get("initial_seed_per_player", 3))
-    summary_size = int(cfg.get("summary_list_size", 15))
-    top_n = int(cfg.get("top_n_per_mode", 20))
-
-    if not active_players:
-        logger.warning("Nenhum jogador brasileiro selecionado em %s.", config_path.name)
-        return 0, 0
-
-    newly_finished: list[dict[str, Any]] = []
-    seeded_count = 0
-    players_changed = False
-    now_ts = int(time.time())
-
-    def _fetch_one_player(pl: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]] | None, Exception | None]:
-        p_id = int(pl["profile_id"])
-        p_orig = str(pl.get("original_alias") or pl["alias"])
         try:
-            res = relic.fetch_player_recent_matches(
-                profile_id=p_id,
-                fallback_alias=p_orig,
-                only_automatch=only_automatch,
-                roster_maps=roster_maps,
+            _, fresh_rankings = maybe_refresh_top_rankings(
+                config_path=config_path,
+                cfg=cfg,
+                db=db,
+                relic=relic,
+                discord=discord,
+                force=(force_rank_scan or layout_needs_upgrade),
+                is_oneshot=is_oneshot,
             )
-            return pl, res, None
-        except Exception as err:
-            return pl, None, err
+        except Exception as exc:
+            logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", redact_secrets(exc))
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-        fetched_results = list(pool.map(_fetch_one_player, active_players))
+        custom_players = cfg.get("custom_players", [])
+        roster_maps = build_roster_lookup_maps(custom_players)
 
-    for player, recent_matches, fetch_err in fetched_results:
-        pid = int(player["profile_id"])
-        alias = str(player["alias"])
-        is_baseline_done = bool(player["baseline_synced"])
+        db.sync_tracked_players(cfg.get("tracked_players", []))
+        active_players = db.get_active_players()
 
-        if fetch_err is not None or recent_matches is None:
-            logger.error("Erro ao buscar partidas de %s (#%d): %s", alias, pid, fetch_err)
-            continue
+        only_automatch = bool(cfg.get("only_automatch", False))
+        seed_limit = int(cfg.get("initial_seed_per_player", 3))
+        summary_size = int(cfg.get("summary_list_size", 15))
+        top_n = int(cfg.get("top_n_per_mode", 20))
 
-        resolved_alias = recent_matches[0]["tracked_alias"] if recent_matches else alias
-        resolved_steam_id = (
-            recent_matches[0].get("tracked_steam_id", "")
-            if recent_matches
-            else str(player.get("steam_id") or "")
-        )
+        if not active_players:
+            logger.warning("Nenhum jogador brasileiro selecionado em %s.", config_path.name)
+            return 0, 0
 
-        if not is_baseline_done:
-            for idx_m, m in enumerate(recent_matches):
-                is_very_recent = (now_ts - int(m.get("completion_time", 0))) <= 2700
-                if db.insert_match(m):
-                    if is_very_recent:
-                        newly_finished.append(m)
-                    elif idx_m < seed_limit:
-                        seeded_count += 1
-            db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
-            players_changed = True
-            logger.info(
-                "Jogador %s (#%d | Steam %s) sincronizado inicialmente (%d partidas recentes catalogadas).",
-                resolved_alias,
-                pid,
-                resolved_steam_id or "N/D",
-                min(len(recent_matches), 10),
+        newly_finished: list[dict[str, Any]] = []
+        seeded_count = 0
+        players_changed = False
+        now_ts = int(time.time())
+
+        def _fetch_one_player(pl: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]] | None, Exception | None]:
+            try:
+                res = relic.fetch_player_recent_matches(
+                    profile_id=int(pl["profile_id"]),
+                    fallback_alias=str(pl.get("original_alias") or pl["alias"]),
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                )
+                return pl, res, None
+            except Exception as err:
+                return pl, None, err
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(active_players))) as pool:
+            fetched_results = list(pool.map(_fetch_one_player, active_players))
+
+        for player, recent_matches, fetch_err in fetched_results:
+            pid = int(player["profile_id"])
+            alias = str(player["alias"])
+            is_baseline_done = bool(player["baseline_synced"])
+
+            if fetch_err is not None or recent_matches is None:
+                logger.error("Erro ao buscar partidas de %s (#%d): %s", alias, pid, redact_secrets(fetch_err))
+                continue
+
+            resolved_alias = recent_matches[0]["tracked_alias"] if recent_matches else alias
+            resolved_steam_id = (
+                recent_matches[0].get("tracked_steam_id", "")
+                if recent_matches
+                else str(player.get("steam_id") or "")
             )
-        else:
-            player_new = [m for m in recent_matches if not db.match_exists(m["match_id"], pid)]
-            player_new.sort(key=lambda x: x["completion_time"])
-            for m in player_new:
-                if db.insert_match(m):
-                    newly_finished.append(m)
-                    res_str = "VITÓRIA" if m["win"] else "DERROTA"
-                    logger.info(
-                        "[NOVA PARTIDA] %s (%s) -> %s em %s (%s) [#%d]",
-                        m["tracked_alias"],
-                        m["tracked_faction_short"],
-                        res_str,
-                        m["map_clean"],
-                        m["mode"],
-                        m["match_id"],
-                    )
-            if resolved_alias != alias or (resolved_steam_id and not player.get("steam_id")):
+
+            if not is_baseline_done:
+                for idx_m, m in enumerate(recent_matches):
+                    is_very_recent = (now_ts - int(m.get("completion_time", 0))) <= 2700
+                    if db.insert_match(m):
+                        if is_very_recent:
+                            newly_finished.append(m)
+                        elif idx_m < seed_limit:
+                            seeded_count += 1
                 db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
                 players_changed = True
-
-    newly_finished.sort(key=lambda x: x["completion_time"])
-    grouped_new_matches = group_matches_by_id(newly_finished)
-
-    if discord.is_configured:
-        for grp in grouped_new_matches:
-            try:
-                msg_id = discord.send_match_card(grp)
-                if msg_id:
-                    for rec in grp["records"]:
-                        db.update_match_discord_id(rec["match_id"], rec["tracked_profile_id"], msg_id)
-                time.sleep(0.5)
-            except Exception as exc:
-                logger.error("Falha ao enviar Card da partida #%d ao Discord: %s", grp["match_id"], exc)
-
-        summary_msg_id = db.get_state("summary_message_id")
-        layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
-        rankings_updated = db.get_state("rankings_updated_flag") == "1"
-
-        if grouped_new_matches or players_changed or not summary_msg_id or layout_needs_upgrade or rankings_updated:
-            try:
-                latest_catalog = db.get_recent_recorded_matches(
-                    limit=max(40, summary_size * 3),
-                    only_active_players=True,
+                logger.info(
+                    "Jogador %s (#%d | Steam %s) sincronizado inicialmente (%d partidas catalogadas).",
+                    resolved_alias,
+                    pid,
+                    resolved_steam_id or "N/D",
+                    min(len(recent_matches), 10),
                 )
-                updated_players = db.get_active_players()
-                cached_rankings = load_cached_rankings(config_path.parent, top_n=top_n)
-                new_summary_id = discord.upsert_summary_message(
-                    matches=latest_catalog,
-                    tracked_players=updated_players,
-                    existing_message_id=summary_msg_id,
-                    rankings_by_mode=cached_rankings,
-                    custom_players=custom_players,
-                    top_n=top_n,
-                    recreate_message=layout_needs_upgrade,
-                )
-                if new_summary_id:
-                    if new_summary_id != summary_msg_id:
-                        db.set_state("summary_message_id", new_summary_id)
-                        logger.info("Painel Resumo publicado no Discord (ID %s).", new_summary_id)
-                    else:
-                        logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
-                    db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
-                    db.set_state("rankings_updated_flag", "0")
-            except Exception as exc:
-                logger.error("Falha ao atualizar Mensagem Fixada no Discord: %s", exc)
-    else:
-        if grouped_new_matches or players_changed:
+            else:
+                if recent_matches:
+                    existing_mids = db.get_player_match_ids(pid, [int(m["match_id"]) for m in recent_matches])
+                    player_new = [m for m in recent_matches if int(m["match_id"]) not in existing_mids]
+                    player_new.sort(key=lambda x: x["completion_time"])
+                    for m in player_new:
+                        if db.insert_match(m):
+                            newly_finished.append(m)
+                            logger.info(
+                                "[NOVA PARTIDA] %s (%s) -> %s em %s (%s) [#%d]",
+                                m["tracked_alias"],
+                                m["tracked_faction_short"],
+                                "VITÓRIA" if m["win"] else "DERROTA",
+                                m["map_clean"],
+                                m["mode"],
+                                m["match_id"],
+                            )
+                if resolved_alias != alias or (resolved_steam_id and not player.get("steam_id")):
+                    db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
+                    players_changed = True
+
+        newly_finished.sort(key=lambda x: x["completion_time"])
+        grouped_new_matches = group_matches_by_id(newly_finished)
+
+        if discord.is_configured:
+            for grp in grouped_new_matches:
+                try:
+                    msg_id = discord.send_match_card(grp)
+                    if msg_id:
+                        db.update_matches_discord_id_batch(grp["records"], msg_id)
+                    time.sleep(0.4)
+                except Exception as exc:
+                    logger.error("Falha ao enviar Card da partida #%d ao Discord: %s", grp["match_id"], redact_secrets(exc))
+
+            summary_msg_id = db.get_state("summary_message_id")
+            layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
+            rankings_updated = db.get_state("rankings_updated_flag") == "1"
+
+            if grouped_new_matches or players_changed or not summary_msg_id or layout_needs_upgrade or rankings_updated:
+                try:
+                    latest_catalog = db.get_recent_recorded_matches(
+                        limit=max(40, summary_size * 3),
+                        only_active_players=True,
+                    )
+                    updated_players = db.get_active_players()
+                    rankings_for_panel = fresh_rankings or load_cached_rankings(config_path.parent, top_n=top_n)
+                    new_summary_id = discord.upsert_summary_message(
+                        matches=latest_catalog,
+                        tracked_players=updated_players,
+                        existing_message_id=summary_msg_id,
+                        rankings_by_mode=rankings_for_panel,
+                        custom_players=custom_players,
+                        top_n=top_n,
+                        recreate_message=layout_needs_upgrade,
+                    )
+                    if new_summary_id:
+                        if new_summary_id != summary_msg_id:
+                            db.set_state("summary_message_id", new_summary_id)
+                            logger.info("Painel Resumo publicado no Discord (ID %s).", new_summary_id)
+                        else:
+                            logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
+                        db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
+                        db.set_state("rankings_updated_flag", "0")
+                except Exception as exc:
+                    logger.error("Falha ao atualizar Mensagem Fixada no Discord: %s", redact_secrets(exc))
+        elif grouped_new_matches or players_changed:
             logger.info("Partidas salvas em %s.", db_path.name)
 
     return len(grouped_new_matches), seeded_count
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v6 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -826,7 +756,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.config.exists():
+    if not args.config.is_file():
         logger.error("Arquivo de configuração não encontrado: %s", args.config)
         return 1
 
@@ -841,7 +771,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v6 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -856,7 +786,9 @@ def main() -> int:
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)
         except Exception as exc:
-            logger.exception("Erro inesperado no ciclo de monitoramento: %s", exc)
+            logger.exception("Erro inesperado no ciclo de monitoramento: %s", redact_secrets(exc))
+            if args.once:
+                return 1
 
         if args.once or stop_requested:
             break
@@ -866,8 +798,7 @@ def main() -> int:
         except Exception:
             poll_sec = 60
 
-        elapsed = time.monotonic() - start_t
-        sleep_for = max(1.0, poll_sec - elapsed)
+        sleep_for = max(1.0, poll_sec - (time.monotonic() - start_t))
         slept = 0.0
         while slept < sleep_for and not stop_requested:
             step = min(1.0, sleep_for - slept)

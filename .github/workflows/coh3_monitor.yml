@@ -2,7 +2,7 @@ name: CoH3 Brasil Monitor (Hardened)
 
 on:
   schedule:
-    # Horario ativo no Brasil (11:00 as 02:00 BRT = 14:00-23:59 e 00:00-04:59 UTC): roda a cada 15 minutos fora de pico!
+    # Horario ativo no Brasil (11:00 as 02:00 BRT = 14:00-23:59 e 00:00-04:59 UTC): roda a cada 15 minutos fora de pico
     - cron: "4,19,34,49 0-4,14-23 * * *"
     # Madrugada/manha (02:00 as 11:00 BRT): roda a cada 2h, mantendo < 2.000 min/mes gratis em Repositorio Privado
     - cron: "34 5-13/2 * * *"
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       add_custom_player:
-        description: "➕ Adicionar jogador extra além dos 31 (cole SteamID64 ou link do coh3stats.com)"
+        description: "➕ Adicionar jogador extra além dos fixos (cole SteamID64 ou link do coh3stats.com)"
         required: false
         default: ""
         type: string
@@ -57,21 +57,24 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Preparar renderizador grafico leve (Pillow + fontes PT-BR)
+      - name: Preparar renderizador grafico seguro (apt oficial assinado GPG, zero pip)
         run: |
           set -euo pipefail
+          NEED_PKGS=()
           if ! python3 -c "from PIL import Image, ImageDraw, ImageFont" >/dev/null 2>&1; then
-            python3 -m pip install --quiet --disable-pip-version-check Pillow || {
-              sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends python3-pil
-            }
+            NEED_PKGS+=("python3-pil")
           fi
           if [ ! -d "/usr/share/fonts/truetype/dejavu" ]; then
-            sudo apt-get update -qq || true
-            sudo apt-get install -y --no-install-recommends fonts-dejavu-core fonts-roboto 2>/dev/null || true
+            NEED_PKGS+=("fonts-dejavu-core" "fonts-liberation")
+          fi
+          if [ "${#NEED_PKGS[@]}" -gt 0 ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends "${NEED_PKGS[@]}"
           fi
 
       - name: Executar ciclo automatico CoH3 -> Discord
         env:
+          PYTHONDONTWRITEBYTECODE: "1"
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_ADD_PLAYER: ${{ inputs.add_custom_player }}
@@ -95,7 +98,7 @@ jobs:
             exit 1
           fi
 
-          # Valores repassados com seguranca via argv para validacao numerica estrita no Python (zero shell eval)
+          # Valores repassados exclusivamente via argv (zero shell eval / zero injecao de comando)
           if [ -n "${INPUT_ADD_PLAYER:-}" ]; then
             python3 manage.py add-player -- "${INPUT_ADD_PLAYER}"
           fi
@@ -127,7 +130,8 @@ jobs:
             fi
           fi
 
-          if grep -RInE "discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+" config.json *.csv *.json 2>/dev/null; then
+          # Bloqueia qualquer URL de Webhook (incluindo ptb/canary e caixa alta/baixa) em arquivos rastreados
+          if grep -RInEi "(ptb\.|canary\.)?discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+" config.json *.csv *.json *.py 2>/dev/null; then
             echo "::error::Bloqueio de seguranca acionado: padrao de URL de Webhook detectado em arquivo rastreado!"
             exit 1
           fi
@@ -135,9 +139,15 @@ jobs:
           STATE_FILES=(coh3_br_matches.db config.json top20_br_por_modo.csv top20_br_por_modo.json jogadores_br_steam.csv jogadores_br_steam.json)
           for state_file in "${STATE_FILES[@]}"; do
             if [ -f "${state_file}" ]; then
-              git add "${state_file}"
+              git add -- "${state_file}"
             fi
           done
+
+          if git diff --cached --name-only | grep -Ei "(^\.env|\.secret$)" >/dev/null 2>&1; then
+            echo "::error::Bloqueio critico: tentativa de indexar arquivo de segredo detectada!"
+            git reset --quiet
+            exit 1
+          fi
 
           if git diff --cached --quiet; then
             echo "Nenhuma alteracao de estado neste ciclo; nenhum commit necessario."
@@ -153,7 +163,7 @@ jobs:
             if ! git pull --rebase -X theirs origin "${BRANCH_NAME}"; then
               for sf in "${STATE_FILES[@]}"; do
                 [ -f "${sf}" ] && git checkout --theirs -- "${sf}" 2>/dev/null || true
-                [ -f "${sf}" ] && git add "${sf}" 2>/dev/null || true
+                [ -f "${sf}" ] && git add -- "${sf}" 2>/dev/null || true
               done
               GIT_EDITOR=true git rebase --continue || git rebase --abort || true
             fi
