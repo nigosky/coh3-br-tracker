@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import concurrent.futures
 import csv
 import io
@@ -13,6 +14,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,7 @@ from security import (
     atomic_write_text,
     build_no_redirect_https_opener,
     read_bounded_http_body,
-     redact_secrets,
+    redact_secrets,
     sanitize_csv_cell,
     validate_https_endpoint,
 )
@@ -32,11 +34,15 @@ ALLOWED_RELIC_HOSTS: frozenset[str] = frozenset({"coh3-api.reliclink.com"})
 TITLE_STEAM = "coh3"
 SOUTH_AMERICA_REGION_ID = 2074438
 MAX_RELIC_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB limite rígido (fio e pós-descompressão Gzip)
+MAX_RELIC_DIRECT_HISTORY_BYTES = 20 * 1024 * 1024  # 20 MB limite seguro para histórico estendido getRecentMatchHistory
 
-COH3STATS_API_BASE_URL = "https://cache.coh3stats.com/sharedAPIGen2Http"
-ALLOWED_COH3STATS_HOSTS: frozenset[str] = frozenset({"cache.coh3stats.com"})
-COH3STATS_PLAYER_MATCHES_PATH_RE = re.compile(r"^/sharedAPIGen2Http/players/\d{1,12}/matches$")
-MAX_COH3STATS_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB limite rígido (fio e pós-descompressão Gzip)
+# Open Data público e oficial do site coh3stats.com (https://coh3stats.com/other/open-data)
+COH3STATS_OPEN_DATA_BASE_URL = "https://storage.coh3stats.com/matches"
+ALLOWED_COH3STATS_HOSTS: frozenset[str] = frozenset({"storage.coh3stats.com"})
+COH3STATS_OPEN_DATA_PATH_RE = re.compile(r"^/matches/matches-\d{9,11}\.json$")
+MAX_COH3STATS_WIRE_BYTES = 64 * 1024 * 1024  # 64 MB teto rígido no fio
+MAX_COH3STATS_STREAM_BYTES = 300 * 1024 * 1024  # 300 MB teto rígido no fluxo descomprimido
+MAX_COH3STATS_OBJECT_BUFFER_CHARS = 4 * 1024 * 1024  # 4 MB teto de buffer por partida individual
 
 # IDs oficiais das leaderboards Steam usadas pelo coh3stats.com
 STEAM_LEADERBOARDS: dict[str, dict[str, int]] = {
@@ -253,7 +259,12 @@ class RelicAPIClient:
         if wait > 0:
             time.sleep(wait)
 
-    def _get_json(self, url: str, retries: int = 3) -> dict[str, Any]:
+    def _get_json(
+        self,
+        url: str,
+        retries: int = 3,
+        max_bytes: int = MAX_RELIC_RESPONSE_BYTES,
+    ) -> dict[str, Any]:
         validate_https_endpoint(
             url,
             ALLOWED_RELIC_HOSTS,
@@ -272,7 +283,7 @@ class RelicAPIClient:
             try:
                 req = urllib.request.Request(url, headers=headers)
                 with opener.open(req, timeout=self.timeout_sec) as resp:
-                    raw_bytes = read_bounded_http_body(resp, MAX_RELIC_RESPONSE_BYTES)
+                    raw_bytes = read_bounded_http_body(resp, max_bytes)
                 payload = json.loads(raw_bytes.decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise ValueError("Formato JSON inesperado retornado pela API da Relic.")
@@ -590,11 +601,12 @@ class RelicAPIClient:
         players: list[dict[str, Any]],
         only_automatch: bool = False,
         roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
-        batch_size: int = 10,
+        batch_size: int = 1,
+        max_workers: int = 4,
     ) -> tuple[dict[int, list[dict[str, Any]]], int]:
         """
-        Consulta direta em lote ao endpoint Relic `getRecentMatchHistory` (por SteamID64 / profile_names,
-        com fallback seguro por profile_ids) para auditoria independente de partidas recentes.
+        Consulta direta independente ao endpoint Relic `getRecentMatchHistory` (por SteamID64 / profile_names,
+        com fallback seguro por profile_ids) para auditoria de partidas recentes com histórico estendido.
         """
         self.ensure_metadata()
         active_roster_maps = roster_maps or build_roster_lookup_maps()
@@ -617,10 +629,14 @@ class RelicAPIClient:
             else:
                 pid_only_players.append({"profile_id": pid})
 
+        if not tracked_pids:
+            return {}, 0
+
         matches_by_pid: dict[int, dict[int, dict[str, Any]]] = {pid: {} for pid in tracked_pids}
         failed_batches = 0
 
-        def _ingest_batch_payload(data: dict[str, Any], target_pids: set[int]) -> None:
+        def _parse_batch_payload(data: dict[str, Any], target_pids: set[int]) -> list[tuple[int, int, dict[str, Any]]]:
+            parsed_rows: list[tuple[int, int, dict[str, Any]]] = []
             profiles_by_id: dict[int, dict[str, Any]] = {
                 int(pr["profile_id"]): pr
                 for pr in data.get("profiles", [])
@@ -647,40 +663,60 @@ class RelicAPIClient:
                         active_roster_maps=active_roster_maps,
                     )
                     if parsed is not None:
-                        matches_by_pid[pid][int(parsed["match_id"])] = parsed
+                        parsed_rows.append((pid, int(parsed["match_id"]), parsed))
+            return parsed_rows
 
-        for idx in range(0, len(steam_players), safe_batch):
-            chunk = steam_players[idx : idx + safe_batch]
+        def _fetch_steam_chunk(chunk: list[dict[str, Any]]) -> tuple[list[tuple[int, int, dict[str, Any]]], list[int]]:
             chunk_pids = {int(c["profile_id"]) for c in chunk}
             names_json = json.dumps([f"/steam/{c['steam_id']}" for c in chunk], separators=(",", ":"))
             encoded_names = urllib.parse.quote(names_json)
             url = f"{BASE_URL}/getRecentMatchHistory?title={TITLE_STEAM}&profile_names={encoded_names}"
             try:
-                data = self._get_json(url, retries=2)
-                _ingest_batch_payload(data, chunk_pids)
+                data = self._get_json(url, retries=2, max_bytes=MAX_RELIC_DIRECT_HISTORY_BYTES)
+                return _parse_batch_payload(data, chunk_pids), []
             except Exception as exc:
                 logger.warning(
-                    "[3ª CHECAGEM] Lote Relic Direto por SteamID falhou (%d contas); tentando fallback profile_ids: %s",
+                    "[3ª CHECAGEM] Consulta Relic Direta por SteamID falhou (%d conta(s)); tentando fallback profile_ids: %s",
                     len(chunk),
                     redact_secrets(exc),
                 )
-                pid_only_players.extend({"profile_id": p} for p in sorted(chunk_pids))
+                return [], sorted(chunk_pids)
 
-        for idx in range(0, len(pid_only_players), safe_batch):
-            chunk = pid_only_players[idx : idx + safe_batch]
+        def _fetch_pid_chunk(chunk: list[dict[str, Any]]) -> tuple[list[tuple[int, int, dict[str, Any]]], bool]:
             chunk_pids = {int(c["profile_id"]) for c in chunk}
             encoded_ids = urllib.parse.quote("[" + ",".join(str(p) for p in sorted(chunk_pids)) + "]")
             url = f"{BASE_URL}/getRecentMatchHistory?title={TITLE_STEAM}&profile_ids={encoded_ids}"
             try:
-                data = self._get_json(url, retries=2)
-                _ingest_batch_payload(data, chunk_pids)
+                data = self._get_json(url, retries=2, max_bytes=MAX_RELIC_DIRECT_HISTORY_BYTES)
+                return _parse_batch_payload(data, chunk_pids), False
             except Exception as exc:
-                failed_batches += 1
                 logger.warning(
-                    "[3ª CHECAGEM] Lote Relic Direto por profile_ids falhou (%d contas): %s",
+                    "[3ª CHECAGEM] Consulta Relic Direta por profile_ids falhou (%d conta(s)): %s",
                     len(chunk),
                     redact_secrets(exc),
                 )
+                return [], True
+
+        steam_chunks = [steam_players[i : i + safe_batch] for i in range(0, len(steam_players), safe_batch)]
+        if steam_chunks:
+            workers = max(1, min(int(max_workers), len(steam_chunks)))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                for rows, fallback_pids in pool.map(_fetch_steam_chunk, steam_chunks):
+                    for pid, mid, parsed in rows:
+                        matches_by_pid[pid][mid] = parsed
+                    for fpid in fallback_pids:
+                        pid_only_players.append({"profile_id": fpid})
+
+        pid_chunks = [pid_only_players[i : i + safe_batch] for i in range(0, len(pid_only_players), safe_batch)]
+        if pid_chunks:
+            workers = max(1, min(int(max_workers), len(pid_chunks)))
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                for rows, failed in pool.map(_fetch_pid_chunk, pid_chunks):
+                    if failed:
+                        failed_batches += 1
+                    else:
+                        for pid, mid, parsed in rows:
+                            matches_by_pid[pid][mid] = parsed
 
         result: dict[int, list[dict[str, Any]]] = {}
         for pid, by_mid in matches_by_pid.items():
@@ -690,17 +726,24 @@ class RelicAPIClient:
 
 
 class Coh3StatsAPIClient:
-    """Cliente HTTPS endurecido para cruzamento de partidas recentes no site oficial coh3stats.com."""
+    """
+    Cliente HTTPS endurecido (streaming de baixa memória) para o Open Data público e oficial do site coh3stats.com.
+    Fonte documentada: https://coh3stats.com/other/open-data (storage.coh3stats.com/matches/matches-{unixTimeStamp}.json).
+    """
 
     def __init__(
         self,
-        min_interval_sec: float = 0.12,
-        timeout_sec: float = 10.0,
-        circuit_breaker_threshold: int = 4,
+        min_interval_sec: float = 0.25,
+        timeout_sec: float = 30.0,
+        circuit_breaker_threshold: int = 3,
+        max_wire_bytes: int = MAX_COH3STATS_WIRE_BYTES,
+        max_stream_bytes: int = MAX_COH3STATS_STREAM_BYTES,
     ) -> None:
         self.min_interval_sec = max(0.05, float(min_interval_sec))
-        self.timeout_sec = max(2.0, float(timeout_sec))
+        self.timeout_sec = max(3.0, float(timeout_sec))
         self.circuit_breaker_threshold = max(1, int(circuit_breaker_threshold))
+        self.max_wire_bytes = max(1024, int(max_wire_bytes))
+        self.max_stream_bytes = max(1024, int(max_stream_bytes))
         self._next_req_ts = 0.0
         self._rate_lock = threading.Lock()
         self._cb_lock = threading.Lock()
@@ -737,13 +780,285 @@ class Coh3StatsAPIClient:
         if wait > 0:
             time.sleep(wait)
 
-    def _get_json(self, url: str, retries: int = 2) -> Any:
+    @staticmethod
+    def _parse_match_for_player(
+        match: dict[str, Any],
+        pid_clean: int,
+        fallback_alias: str,
+        only_automatch: bool,
+        active_roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+        race_map: dict[int, str],
+        mt_map: dict[int, str],
+    ) -> dict[str, Any] | None:
+        match_id = int(match.get("id", 0) or 0)
+        if match_id <= 0:
+            return None
+        mt_id = int(match.get("matchtype_id", 0) or 0)
+        mode_label = normalize_mode_name(mt_id, mt_map.get(mt_id))
+        if only_automatch and mode_label not in AUTOMATCH_MODES:
+            return None
+
+        reports = match.get("matchhistoryreportresults", [])
+        if not isinstance(reports, list):
+            return None
+        my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
+        if not my_rep:
+            return None
+
+        top_profiles: dict[int, dict[str, Any]] = {
+            int(pr["profile_id"]): pr
+            for pr in (match.get("profiles") or [])
+            if isinstance(pr, dict) and "profile_id" in pr
+        }
+        top_members: dict[int, dict[str, Any]] = {
+            int(mem["profile_id"]): mem
+            for mem in (match.get("matchhistorymember") or [])
+            if isinstance(mem, dict) and "profile_id" in mem
+        }
+
+        my_prof = my_rep.get("profile") if isinstance(my_rep.get("profile"), dict) else top_profiles.get(pid_clean, {})
+        my_mem = my_rep.get("matchhistorymember") if isinstance(my_rep.get("matchhistorymember"), dict) else top_members.get(pid_clean, {})
+        tracked_alias = str(my_prof.get("alias") or fallback_alias or f"Player {pid_clean}")
+        tracked_steam_id = _extract_steam_id(my_prof.get("name"))
+
+        my_team = my_rep.get("teamid", 0)
+        allies: list[dict[str, Any]] = []
+        opponents: list[dict[str, Any]] = []
+
+        for rep in reports:
+            if not isinstance(rep, dict):
+                continue
+            rpid = int(rep.get("profile_id", 0) or 0)
+            prof = rep.get("profile") if isinstance(rep.get("profile"), dict) else top_profiles.get(rpid, {})
+            mem = rep.get("matchhistorymember") if isinstance(rep.get("matchhistorymember"), dict) else top_members.get(rpid, {})
+            race_name = race_map.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
+            raw_old = int(mem.get("oldrating", 0) or 0)
+            raw_new = int(mem.get("newrating", 0) or 0)
+            p_old_elo = raw_old if raw_old > 0 else None
+            p_new_elo = raw_new if raw_new > 0 else None
+            p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
+
+            participant = {
+                "profile_id": rpid,
+                "alias": prof.get("alias") or f"ID {rpid}",
+                "steam_id": _extract_steam_id(prof.get("name")),
+                "country": str(prof.get("country") or "un").lower(),
+                "faction": race_name,
+                "faction_short": FACTION_SHORT.get(race_name, race_name),
+                "old_elo": p_old_elo,
+                "new_elo": p_new_elo,
+                "elo_delta": p_delta,
+                "elo": p_new_elo,
+            }
+            if rep.get("teamid") == my_team:
+                if rpid != pid_clean:
+                    allies.append(participant)
+            else:
+                opponents.append(participant)
+
+        my_old_raw = int(my_mem.get("oldrating", 0) or 0)
+        my_new_raw = int(my_mem.get("newrating", 0) or 0)
+        old_elo = my_old_raw if my_old_raw > 0 else None
+        new_elo = my_new_raw if my_new_raw > 0 else None
+
+        start_ts = int(match.get("startgametime", 0) or 0)
+        end_ts = int(match.get("completiontime", 0) or 0)
+        raw_map = str(match.get("mapname") or "unknown_map")
+        my_faction = race_map.get(int(my_rep.get("race_id", -1)), "Unknown")
+        result_type = int(my_rep.get("resulttype", 0) or 0)
+
+        m_obj = {
+            "match_id": match_id,
+            "tracked_profile_id": pid_clean,
+            "tracked_alias": tracked_alias,
+            "tracked_steam_id": tracked_steam_id,
+            "tracked_faction": my_faction,
+            "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
+            "win": result_type == 1,
+            "resulttype": result_type,
+            "mode": mode_label,
+            "matchtype_id": mt_id,
+            "map_raw": raw_map,
+            "map_clean": clean_map_name(raw_map),
+            "start_time": start_ts,
+            "completion_time": end_ts,
+            "duration_sec": max(0, end_ts - start_ts),
+            "old_elo": old_elo,
+            "new_elo": new_elo,
+            "allies": allies,
+            "opponents": opponents,
+            "counters": {},
+            "has_replay": bool(match.get("matchurls")),
+            "coh3stats_url": f"https://coh3stats.com/players/{pid_clean}/matches/{match_id}",
+        }
+        return enrich_match_with_roster(m_obj, active_roster_maps)
+
+    def _stream_open_data_matches(
+        self,
+        resp: Any,
+        tracked_pids: set[int],
+    ) -> tuple[list[tuple[dict[str, Any], set[int]]], int]:
+        """
+        Lê o dump Open Data (`{"matches":[...]}`) em streaming com memória controlada (< 4 MB),
+        descompressão Gzip limitada contra Gzip-bombs e decodificador JSON nativo em C.
+        """
+        headers = getattr(resp, "headers", None)
+        encoding = str(headers.get("Content-Encoding", "") if headers else "").lower()
+        is_gzip = "gzip" in encoding
+        decomp = zlib.decompressobj(16 + zlib.MAX_WBITS) if is_gzip else None
+        utf8_dec = codecs.getincrementaldecoder("utf-8")("replace")
+        decoder = json.JSONDecoder()
+        ws_re = re.compile(r"[ \t\r\n,]*")
+
+        matched_records: list[tuple[dict[str, Any], set[int]]] = []
+        total_scanned = 0
+        wire_total = 0
+        decomp_total = 0
+        buf = ""
+        pos = 0
+        started = False
+        done = False
+
+        def _drain_buffer(is_eof: bool) -> None:
+            nonlocal buf, pos, started, done, total_scanned
+            if done:
+                return
+            if not started:
+                stripped_pos = 0
+                while stripped_pos < len(buf) and buf[stripped_pos] in " \t\r\n\ufeff":
+                    stripped_pos += 1
+                if stripped_pos < len(buf) and buf[stripped_pos] == "[":
+                    pos = stripped_pos + 1
+                    started = True
+                else:
+                    idx = buf.find('"matches"')
+                    if idx == -1:
+                        pos = max(0, len(buf) - 32)
+                        return
+                    lb = buf.find("[", idx)
+                    if lb == -1:
+                        pos = idx
+                        return
+                    pos = lb + 1
+                    started = True
+
+            while True:
+                m_ws = ws_re.match(buf, pos)
+                pos = m_ws.end() if m_ws else pos
+                if pos >= len(buf):
+                    break
+                if buf[pos] == "]":
+                    done = True
+                    pos += 1
+                    break
+                try:
+                    obj, end_pos = decoder.raw_decode(buf, pos)
+                except json.JSONDecodeError:
+                    if not is_eof and (len(buf) - pos) > MAX_COH3STATS_OBJECT_BUFFER_CHARS:
+                        raise RuntimeError("Objeto JSON individual no Open Data excedeu o limite seguro.")
+                    break
+                pos = end_pos
+                if isinstance(obj, dict):
+                    total_scanned += 1
+                    raw_pids = obj.get("profile_ids")
+                    if isinstance(raw_pids, list):
+                        hit_pids = {int(p) for p in raw_pids if isinstance(p, int) or (isinstance(p, str) and p.isdigit())} & tracked_pids
+                    else:
+                        reports = obj.get("matchhistoryreportresults") or []
+                        hit_pids = (
+                            {int(r.get("profile_id", 0) or 0) for r in reports if isinstance(r, dict)} & tracked_pids
+                        )
+                    if hit_pids:
+                        matched_records.append((obj, hit_pids))
+
+        while not done:
+            wire_chunk = resp.read(65536)
+            if not wire_chunk:
+                if decomp is not None:
+                    remaining = self.max_stream_bytes - decomp_total
+                    flushed = decomp.flush(max(1, remaining + 1))
+                    decomp_total += len(flushed)
+                    if decomp_total > self.max_stream_bytes:
+                        raise RuntimeError(f"Fluxo Gzip Open Data excedeu o limite seguro ({self.max_stream_bytes} bytes).")
+                    if flushed:
+                        buf = buf[pos:] + utf8_dec.decode(flushed, final=False)
+                        pos = 0
+                tail_text = utf8_dec.decode(b"", final=True)
+                if tail_text:
+                    buf = buf[pos:] + tail_text
+                    pos = 0
+                _drain_buffer(is_eof=True)
+                break
+
+            wire_total += len(wire_chunk)
+            if wire_total > self.max_wire_bytes:
+                raise RuntimeError(f"Resposta Open Data coh3stats excedeu o limite seguro no fio ({self.max_wire_bytes} bytes).")
+
+            text_parts: list[str] = []
+            if decomp is not None:
+                pending = wire_chunk
+                while pending:
+                    remaining = self.max_stream_bytes - decomp_total
+                    out = decomp.decompress(pending, max(1, remaining + 1))
+                    decomp_total += len(out)
+                    if decomp_total > self.max_stream_bytes:
+                        raise RuntimeError(f"Fluxo Gzip Open Data excedeu o limite seguro ({self.max_stream_bytes} bytes).")
+                    if out:
+                        text_parts.append(utf8_dec.decode(out, final=False))
+                    pending = decomp.unconsumed_tail
+            else:
+                decomp_total += len(wire_chunk)
+                if decomp_total > self.max_stream_bytes:
+                    raise RuntimeError(f"Resposta Open Data coh3stats excedeu o limite seguro ({self.max_stream_bytes} bytes).")
+                text_parts.append(utf8_dec.decode(wire_chunk, final=False))
+
+            if text_parts:
+                buf = buf[pos:] + "".join(text_parts)
+                pos = 0
+                _drain_buffer(is_eof=False)
+
+        return matched_records, total_scanned
+
+    def fetch_open_data_day_matches(
+        self,
+        day_utc_midnight_ts: int,
+        players: list[dict[str, Any]],
+        only_automatch: bool = False,
+        roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+        races: dict[int, str] | None = None,
+        match_types: dict[int, str] | None = None,
+        retries: int = 2,
+    ) -> tuple[dict[int, list[dict[str, Any]]], str, int]:
+        """
+        Consulta o arquivo diário oficial do Open Data do coh3stats.com (`matches-{day_ts}.json`) em streaming,
+        extraindo todas as partidas dos jogadores monitorados sem carregar o arquivo inteiro em RAM.
+        Retorna `(matches_by_pid, status, total_scanned)` onde status é `'ok'` ou `'not_published'` (404).
+        """
+        day_clean = int(day_utc_midnight_ts)
+        if day_clean <= 0:
+            raise ValueError(f"day_utc_midnight_ts inválido: {day_utc_midnight_ts}")
+
+        url = f"{COH3STATS_OPEN_DATA_BASE_URL}/matches-{day_clean}.json"
         validate_https_endpoint(
             url,
             ALLOWED_COH3STATS_HOSTS,
-            path_prefix="/sharedAPIGen2Http/players/",
-            path_regex=COH3STATS_PLAYER_MATCHES_PATH_RE,
+            path_prefix="/matches/",
+            path_regex=COH3STATS_OPEN_DATA_PATH_RE,
         )
+
+        alias_by_pid: dict[int, str] = {}
+        tracked_pids: set[int] = set()
+        for pl in players or []:
+            pid = int(pl.get("profile_id", 0) or 0)
+            if pid > 0 and pid not in tracked_pids:
+                tracked_pids.add(pid)
+                alias_by_pid[pid] = str(pl.get("original_alias") or pl.get("alias") or f"Player {pid}")
+        if not tracked_pids:
+            return {}, "ok", 0
+
+        active_roster_maps = roster_maps or build_roster_lookup_maps()
+        race_map = races or FALLBACK_RACES
+        mt_map = match_types or {}
         opener = _get_thread_opener()
         headers = {
             "User-Agent": "CoH3-BR-Discord-Tracker/7.6",
@@ -757,217 +1072,111 @@ class Coh3StatsAPIClient:
             try:
                 req = urllib.request.Request(url, headers=headers)
                 with opener.open(req, timeout=self.timeout_sec) as resp:
-                    raw_bytes = read_bounded_http_body(resp, MAX_COH3STATS_RESPONSE_BYTES)
-                return json.loads(raw_bytes.decode("utf-8"))
+                    matched_raw, total_scanned = self._stream_open_data_matches(resp, tracked_pids)
+
+                by_pid: dict[int, dict[int, dict[str, Any]]] = {pid: {} for pid in tracked_pids}
+                for match_obj, hit_pids in matched_raw:
+                    for pid in hit_pids:
+                        parsed = self._parse_match_for_player(
+                            match=match_obj,
+                            pid_clean=pid,
+                            fallback_alias=alias_by_pid.get(pid, f"Player {pid}"),
+                            only_automatch=only_automatch,
+                            active_roster_maps=active_roster_maps,
+                            race_map=race_map,
+                            mt_map=mt_map,
+                        )
+                        if parsed is not None:
+                            by_pid[pid][int(parsed["match_id"])] = parsed
+
+                result = {
+                    pid: sorted(mid_map.values(), key=lambda m: int(m.get("completion_time", 0)), reverse=True)
+                    for pid, mid_map in by_pid.items()
+                    if mid_map
+                }
+                return result, "ok", total_scanned
             except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    return {}, "not_published", 0
                 last_err = exc
-                if exc.code in (400, 401, 403, 404):
+                if exc.code in (400, 401, 403):
                     break
                 if attempt + 1 < retries:
-                    time.sleep((2**attempt) * 0.6)
-            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+                    time.sleep((2**attempt) * 0.8)
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last_err = exc
                 if "403" in str(exc):
                     break
                 if attempt + 1 < retries:
-                    time.sleep((2**attempt) * 0.6)
+                    time.sleep((2**attempt) * 0.8)
 
-        raise RuntimeError(f"Erro ao consultar coh3stats ({url}): {redact_secrets(last_err)}")
+        raise RuntimeError(f"Erro ao consultar Open Data coh3stats ({url}): {redact_secrets(last_err)}")
 
-    def fetch_player_recent_matches(
+    def fetch_open_data_days_matches(
         self,
-        profile_id: int,
-        fallback_alias: str = "",
-        only_automatch: bool = False,
-        roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
-        races: dict[int, str] | None = None,
-        match_types: dict[int, str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Consulta as partidas recentes de um jogador no backend público do coh3stats.com."""
-        pid_clean = int(profile_id)
-        if pid_clean <= 0:
-            raise ValueError(f"profile_id inválido: {profile_id}")
-
-        url = f"{COH3STATS_API_BASE_URL}/players/{pid_clean}/matches"
-        data = self._get_json(url)
-        raw_matches = data.get("playerMatches", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
-        if not isinstance(raw_matches, list):
-            return []
-
-        active_roster_maps = roster_maps or build_roster_lookup_maps()
-        race_map = races or FALLBACK_RACES
-        mt_map = match_types or {}
-
-        parsed_matches: list[dict[str, Any]] = []
-        for match in raw_matches:
-            if not isinstance(match, dict):
-                continue
-            match_id = int(match.get("id", 0) or 0)
-            if match_id <= 0:
-                continue
-            mt_id = int(match.get("matchtype_id", 0) or 0)
-            mode_label = normalize_mode_name(mt_id, mt_map.get(mt_id))
-            if only_automatch and mode_label not in AUTOMATCH_MODES:
-                continue
-
-            reports = match.get("matchhistoryreportresults", [])
-            if not isinstance(reports, list):
-                continue
-            my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
-            if not my_rep:
-                continue
-
-            top_profiles: dict[int, dict[str, Any]] = {
-                int(pr["profile_id"]): pr
-                for pr in (match.get("profiles") or [])
-                if isinstance(pr, dict) and "profile_id" in pr
-            }
-            top_members: dict[int, dict[str, Any]] = {
-                int(mem["profile_id"]): mem
-                for mem in (match.get("matchhistorymember") or [])
-                if isinstance(mem, dict) and "profile_id" in mem
-            }
-
-            my_prof = my_rep.get("profile") if isinstance(my_rep.get("profile"), dict) else top_profiles.get(pid_clean, {})
-            my_mem = my_rep.get("matchhistorymember") if isinstance(my_rep.get("matchhistorymember"), dict) else top_members.get(pid_clean, {})
-            tracked_alias = str(my_prof.get("alias") or fallback_alias or f"Player {pid_clean}")
-            tracked_steam_id = _extract_steam_id(my_prof.get("name"))
-
-            my_team = my_rep.get("teamid", 0)
-            allies: list[dict[str, Any]] = []
-            opponents: list[dict[str, Any]] = []
-
-            for rep in reports:
-                if not isinstance(rep, dict):
-                    continue
-                rpid = int(rep.get("profile_id", 0) or 0)
-                prof = rep.get("profile") if isinstance(rep.get("profile"), dict) else top_profiles.get(rpid, {})
-                mem = rep.get("matchhistorymember") if isinstance(rep.get("matchhistorymember"), dict) else top_members.get(rpid, {})
-                race_name = race_map.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
-                raw_old = int(mem.get("oldrating", 0) or 0)
-                raw_new = int(mem.get("newrating", 0) or 0)
-                p_old_elo = raw_old if raw_old > 0 else None
-                p_new_elo = raw_new if raw_new > 0 else None
-                p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
-
-                participant = {
-                    "profile_id": rpid,
-                    "alias": prof.get("alias") or f"ID {rpid}",
-                    "steam_id": _extract_steam_id(prof.get("name")),
-                    "country": str(prof.get("country") or "un").lower(),
-                    "faction": race_name,
-                    "faction_short": FACTION_SHORT.get(race_name, race_name),
-                    "old_elo": p_old_elo,
-                    "new_elo": p_new_elo,
-                    "elo_delta": p_delta,
-                    "elo": p_new_elo,
-                }
-                if rep.get("teamid") == my_team:
-                    if rpid != pid_clean:
-                        allies.append(participant)
-                else:
-                    opponents.append(participant)
-
-            my_old_raw = int(my_mem.get("oldrating", 0) or 0)
-            my_new_raw = int(my_mem.get("newrating", 0) or 0)
-            old_elo = my_old_raw if my_old_raw > 0 else None
-            new_elo = my_new_raw if my_new_raw > 0 else None
-
-            start_ts = int(match.get("startgametime", 0) or 0)
-            end_ts = int(match.get("completiontime", 0) or 0)
-            raw_map = str(match.get("mapname") or "unknown_map")
-            my_faction = race_map.get(int(my_rep.get("race_id", -1)), "Unknown")
-            result_type = int(my_rep.get("resulttype", 0) or 0)
-
-            m_obj = {
-                "match_id": match_id,
-                "tracked_profile_id": pid_clean,
-                "tracked_alias": tracked_alias,
-                "tracked_steam_id": tracked_steam_id,
-                "tracked_faction": my_faction,
-                "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
-                "win": result_type == 1,
-                "resulttype": result_type,
-                "mode": mode_label,
-                "matchtype_id": mt_id,
-                "map_raw": raw_map,
-                "map_clean": clean_map_name(raw_map),
-                "start_time": start_ts,
-                "completion_time": end_ts,
-                "duration_sec": max(0, end_ts - start_ts),
-                "old_elo": old_elo,
-                "new_elo": new_elo,
-                "allies": allies,
-                "opponents": opponents,
-                "counters": {},
-                "has_replay": bool(match.get("matchurls")),
-                "coh3stats_url": f"https://coh3stats.com/players/{pid_clean}/matches/{match_id}",
-            }
-            parsed_matches.append(enrich_match_with_roster(m_obj, active_roster_maps))
-
-        parsed_matches.sort(key=lambda m: int(m.get("completion_time", 0)), reverse=True)
-        return parsed_matches
-
-    def fetch_players_recent_matches_batch(
-        self,
+        day_timestamps: list[int],
         players: list[dict[str, Any]],
         only_automatch: bool = False,
         roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
         races: dict[int, str] | None = None,
         match_types: dict[int, str] | None = None,
-        max_workers: int = 4,
-    ) -> tuple[dict[int, list[dict[str, Any]]], int, int]:
-        """Consulta em paralelo controlado todos os jogadores no coh3stats.com com circuit breaker seguro."""
+    ) -> tuple[dict[int, list[dict[str, Any]]], list[int], int, int]:
+        """
+        Audita os dias solicitados do Open Data oficial do coh3stats.com com circuit breaker seguro.
+        Retorna `(matches_by_pid, audited_ok_days, total_scanned, fail_count)`.
+        """
         self.reset_circuit_breaker()
-        unique_players: list[dict[str, Any]] = []
-        seen_pids: set[int] = set()
-        for pl in players or []:
-            pid = int(pl.get("profile_id", 0) or 0)
-            if pid > 0 and pid not in seen_pids:
-                seen_pids.add(pid)
-                unique_players.append(pl)
+        clean_days = sorted({int(d) for d in (day_timestamps or []) if int(d) > 0})
+        if not clean_days or not players:
+            return {}, [], 0, 0
 
-        if not unique_players:
-            return {}, 0, 0
+        combined_by_pid: dict[int, dict[int, dict[str, Any]]] = {}
+        ok_days: list[int] = []
+        total_scanned = 0
+        fail_count = 0
 
-        def _fetch_one(pl: dict[str, Any]) -> tuple[int, list[dict[str, Any]] | None, Exception | None]:
-            pid = int(pl["profile_id"])
+        for day_ts in clean_days:
             if self.is_circuit_open:
-                return pid, None, RuntimeError("circuit_open")
+                fail_count += 1
+                continue
             try:
-                rows = self.fetch_player_recent_matches(
-                    profile_id=pid,
-                    fallback_alias=str(pl.get("original_alias") or pl.get("alias") or ""),
+                day_matches, status, scanned = self.fetch_open_data_day_matches(
+                    day_utc_midnight_ts=day_ts,
+                    players=players,
                     only_automatch=only_automatch,
                     roster_maps=roster_maps,
                     races=races,
                     match_types=match_types,
                 )
                 self._record_success()
-                return pid, rows, None
-            except Exception as err:
+                if status == "ok":
+                    ok_days.append(day_ts)
+                    total_scanned += scanned
+                    for pid, rows in day_matches.items():
+                        slot = combined_by_pid.setdefault(pid, {})
+                        for m in rows:
+                            slot[int(m["match_id"])] = m
+            except Exception as exc:
+                fail_count += 1
                 tripped = self._record_failure()
                 if tripped:
                     logger.warning(
-                        "[3ª CHECAGEM] Circuit breaker acionado para coh3stats.com após %d falhas consecutivas: %s",
+                        "[3ª CHECAGEM] Circuit breaker acionado para Open Data coh3stats.com após %d falhas: %s",
                         self.circuit_breaker_threshold,
-                        redact_secrets(err),
+                        redact_secrets(exc),
                     )
-                return pid, None, err
-
-        matches_by_pid: dict[int, list[dict[str, Any]]] = {}
-        ok_count = 0
-        fail_count = 0
-        workers = max(1, min(int(max_workers), len(unique_players)))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            for pid, rows, err in pool.map(_fetch_one, unique_players):
-                if err is None and rows is not None:
-                    matches_by_pid[pid] = rows
-                    ok_count += 1
                 else:
-                    fail_count += 1
+                    logger.warning(
+                        "[3ª CHECAGEM] Falha ao consultar Open Data coh3stats.com (dia %d): %s",
+                        day_ts,
+                        redact_secrets(exc),
+                    )
 
-        return matches_by_pid, ok_count, fail_count
+        final_by_pid = {
+            pid: sorted(mid_map.values(), key=lambda m: int(m.get("completion_time", 0)), reverse=True)
+            for pid, mid_map in combined_by_pid.items()
+        }
+        return final_by_pid, ok_days, total_scanned, fail_count
 
 
 def format_bound_display_alias(
