@@ -61,6 +61,7 @@ ALLOWED_STEAM_AVATAR_HOSTS: frozenset[str] = frozenset(
         "avatars.steamstatic.com",
         "avatars.akamai.steamstatic.com",
         "avatars.cloudflare.steamstatic.com",
+        "avatars.fastly.steamstatic.com",
         "steamcdn-a.akamaihd.net",
         "cdn.akamai.steamstatic.com",
     }

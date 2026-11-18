@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from database import MatchDatabase
+from database import MatchDatabase, PENDING_DISCORD_MARKER, SEEDED_DISCORD_MARKER
 from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
     CORE_BR_ROSTER,
@@ -455,7 +455,8 @@ def maybe_refresh_top_rankings(
     last_scan_str = db.get_state("last_leaderboard_scan_ts")
     last_scan_ts = int(last_scan_str) if last_scan_str and last_scan_str.isdigit() else 0
 
-    if not force and not is_oneshot and not cfg_upgraded and last_scan_ts > 0 and (now - last_scan_ts) < (refresh_mins * 60):
+    effective_refresh_mins = max(refresh_mins, 30) if is_oneshot else refresh_mins
+    if not force and not cfg_upgraded and last_scan_ts > 0 and (now - last_scan_ts) < (effective_refresh_mins * 60):
         return False, None
 
     unique_cnt = sum(1 for cp in custom_players if not cp.get("merged_into_profile_id"))
@@ -573,8 +574,9 @@ def run_cycle(
     relic: RelicAPIClient,
     force_rank_scan: bool = False,
     is_oneshot: bool = False,
+    verify_discord: bool = False,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo de monitoramento de Ranking + Partidas."""
+    """Executa um ciclo completo com dupla checagem de API Relic, fila PENDING e entrega confirmada no Discord."""
     cfg = load_config(config_path)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -590,21 +592,38 @@ def run_cycle(
             catalog_json_path=catalog_path,
         )
 
+        if verify_discord:
+            wh_info = discord.verify_webhook()
+            logger.info(
+                "[DUPLA CHECAGEM] Webhook Discord verificado e ativo: '%s' (canal #%s).",
+                wh_info.get("name") or "Webhook",
+                wh_info.get("channel_id") or "N/D",
+            )
+
+        cfg_upgraded = ensure_core_roster_in_config(cfg)
+        if cfg_upgraded:
+            save_config_file(config_path, cfg)
+
         layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
         fresh_rankings: dict[str, list[dict[str, Any]]] | None = None
+        rankings_changed = False
+        already_scanned_rankings = False
 
-        try:
-            _, fresh_rankings = maybe_refresh_top_rankings(
-                config_path=config_path,
-                cfg=cfg,
-                db=db,
-                relic=relic,
-                discord=discord,
-                force=(force_rank_scan or layout_needs_upgrade),
-                is_oneshot=is_oneshot,
-            )
-        except Exception as exc:
-            logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", redact_secrets(exc))
+        # Em instalação inicial sem tracked_players ainda, varre o ranking antes para popular o elenco
+        if not cfg.get("tracked_players"):
+            try:
+                rankings_changed, fresh_rankings = maybe_refresh_top_rankings(
+                    config_path=config_path,
+                    cfg=cfg,
+                    db=db,
+                    relic=relic,
+                    discord=discord,
+                    force=True,
+                    is_oneshot=is_oneshot,
+                )
+                already_scanned_rankings = True
+            except Exception as exc:
+                logger.error("Falha ao popular lista inicial de jogadores Top BR: %s", redact_secrets(exc))
 
         custom_players = cfg.get("custom_players", [])
         roster_maps = build_roster_lookup_maps(custom_players)
@@ -641,13 +660,36 @@ def run_cycle(
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(active_players))) as pool:
             fetched_results = list(pool.map(_fetch_one_player, active_players))
 
+        # Dupla checagem Relic API: retenta jogadores que sofreram falha transitória na 1ª passada
+        failed_players = [pl for pl, res, err in fetched_results if err is not None or res is None]
+        if failed_players:
+            logger.warning(
+                "[DUPLA CHECAGEM] %d jogador(es) falharam na 1ª consulta à Relic API; retentando em 2s...",
+                len(failed_players),
+            )
+            time.sleep(2.0)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(failed_players))) as retry_pool:
+                retried_map = {
+                    int(pl["profile_id"]): (pl, res, err)
+                    for pl, res, err in retry_pool.map(_fetch_one_player, failed_players)
+                }
+            fetched_results = [
+                retried_map.get(int(pl["profile_id"]), (pl, res, err))
+                for pl, res, err in fetched_results
+            ]
+
+        fetch_failures_final = 0
+        live_marker = PENDING_DISCORD_MARKER if discord.is_configured else None
+        seed_marker = SEEDED_DISCORD_MARKER if discord.is_configured else None
+
         for player, recent_matches, fetch_err in fetched_results:
             pid = int(player["profile_id"])
             alias = str(player["alias"])
             is_baseline_done = bool(player["baseline_synced"])
 
             if fetch_err is not None or recent_matches is None:
-                logger.error("Erro ao buscar partidas de %s (#%d): %s", alias, pid, redact_secrets(fetch_err))
+                fetch_failures_final += 1
+                logger.error("Erro ao buscar partidas de %s (#%d) após dupla checagem: %s", alias, pid, redact_secrets(fetch_err))
                 continue
 
             resolved_alias = recent_matches[0]["tracked_alias"] if recent_matches else alias
@@ -660,7 +702,8 @@ def run_cycle(
             if not is_baseline_done:
                 for idx_m, m in enumerate(recent_matches):
                     is_very_recent = (now_ts - int(m.get("completion_time", 0))) <= 2700
-                    if db.insert_match(m):
+                    marker = live_marker if is_very_recent else seed_marker
+                    if db.insert_match(m, discord_message_id=marker):
                         if is_very_recent:
                             newly_finished.append(m)
                         elif idx_m < seed_limit:
@@ -680,7 +723,7 @@ def run_cycle(
                     player_new = [m for m in recent_matches if int(m["match_id"]) not in existing_mids]
                     player_new.sort(key=lambda x: x["completion_time"])
                     for m in player_new:
-                        if db.insert_match(m):
+                        if db.insert_match(m, discord_message_id=live_marker):
                             newly_finished.append(m)
                             logger.info(
                                 "[NOVA PARTIDA] %s (%s) -> %s em %s (%s) [#%d]",
@@ -697,48 +740,146 @@ def run_cycle(
 
         newly_finished.sort(key=lambda x: x["completion_time"])
         grouped_new_matches = group_matches_by_id(newly_finished)
+        cards_confirmed = 0
 
         if discord.is_configured:
-            for grp in grouped_new_matches:
+            # Recupera novas partidas + eventuais pendentes de falhas transitórias anteriores (sem duplicar)
+            pending_records = db.get_pending_matches(max_age_sec=21600, limit=60)
+            grouped_to_send = group_matches_by_id(pending_records)
+            new_match_ids = {int(g["match_id"]) for g in grouped_new_matches}
+            retried_from_prev = sum(1 for g in grouped_to_send if int(g["match_id"]) not in new_match_ids)
+            if retried_from_prev:
+                logger.info(
+                    "[DUPLA CHECAGEM] %d partida(s) pendente(s) de ciclo anterior recuperada(s) para reenvio.",
+                    retried_from_prev,
+                )
+
+            retry_groups: list[dict[str, Any]] = []
+            for grp in grouped_to_send:
                 try:
                     msg_id = discord.send_match_card(grp)
                     if msg_id:
                         db.update_matches_discord_id_batch(grp["records"], msg_id)
+                        cards_confirmed += 1
+                    else:
+                        retry_groups.append(grp)
                     time.sleep(0.4)
                 except Exception as exc:
-                    logger.error("Falha ao enviar Card da partida #%d ao Discord: %s", grp["match_id"], redact_secrets(exc))
+                    logger.warning(
+                        "1ª tentativa falhou ao enviar Card da partida #%d ao Discord: %s",
+                        grp["match_id"],
+                        redact_secrets(exc),
+                    )
+                    retry_groups.append(grp)
+
+            # 2ª passada de confirmação para cards que falharam na 1ª tentativa
+            if retry_groups:
+                logger.warning(
+                    "[DUPLA CHECAGEM] Retentando %d Card(s) de partida no Discord após 3s...",
+                    len(retry_groups),
+                )
+                time.sleep(3.0)
+                for grp in retry_groups:
+                    try:
+                        msg_id = discord.send_match_card(grp)
+                        if msg_id:
+                            db.update_matches_discord_id_batch(grp["records"], msg_id)
+                            cards_confirmed += 1
+                            logger.info("[DUPLA CHECAGEM] Card #%d confirmado na 2ª tentativa (ID %s).", grp["match_id"], msg_id)
+                        else:
+                            logger.error("Card #%d sem Snowflake na 2ª tentativa; mantido como PENDING.", grp["match_id"])
+                        time.sleep(0.5)
+                    except Exception as exc:
+                        logger.error(
+                            "Falha na 2ª tentativa do Card #%d (mantido como PENDING para próximo ciclo): %s",
+                            grp["match_id"],
+                            redact_secrets(exc),
+                        )
+
+        # Atualiza Ranking Top BR imediatamente após novas partidas, ou periodicamente nos ciclos ociosos
+        if not already_scanned_rankings:
+            should_force_rank = force_rank_scan or layout_needs_upgrade or cfg_upgraded or bool(newly_finished)
+            try:
+                rankings_changed, fresh_rankings = maybe_refresh_top_rankings(
+                    config_path=config_path,
+                    cfg=cfg,
+                    db=db,
+                    relic=relic,
+                    discord=discord,
+                    force=should_force_rank,
+                    is_oneshot=is_oneshot,
+                )
+                if fresh_rankings is not None:
+                    custom_players = cfg.get("custom_players", [])
+                    db.sync_tracked_players(cfg.get("tracked_players", []))
+            except Exception as exc:
+                logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", redact_secrets(exc))
+
+        if discord.is_configured:
+            if cards_confirmed > 0 or newly_finished or players_changed or rankings_changed:
+                db.set_state("summary_needs_refresh", "1")
 
             summary_msg_id = db.get_state("summary_message_id")
             layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
             rankings_updated = db.get_state("rankings_updated_flag") == "1"
+            summary_needs_refresh = db.get_state("summary_needs_refresh") == "1"
+            panel_status = "inalterado"
 
-            if grouped_new_matches or players_changed or not summary_msg_id or layout_needs_upgrade or rankings_updated:
-                try:
-                    latest_catalog = db.get_recent_recorded_matches(
-                        limit=max(40, summary_size * 3),
-                        only_active_players=True,
-                    )
-                    updated_players = db.get_active_players()
-                    rankings_for_panel = fresh_rankings or load_cached_rankings(config_path.parent, top_n=top_n)
-                    new_summary_id = discord.upsert_summary_message(
-                        matches=latest_catalog,
-                        tracked_players=updated_players,
-                        existing_message_id=summary_msg_id,
-                        rankings_by_mode=rankings_for_panel,
-                        custom_players=custom_players,
-                        top_n=top_n,
-                        recreate_message=layout_needs_upgrade,
-                    )
-                    if new_summary_id:
-                        if new_summary_id != summary_msg_id:
-                            db.set_state("summary_message_id", new_summary_id)
-                            logger.info("Painel Resumo publicado no Discord (ID %s).", new_summary_id)
-                        else:
-                            logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
-                        db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
-                        db.set_state("rankings_updated_flag", "0")
-                except Exception as exc:
-                    logger.error("Falha ao atualizar Mensagem Fixada no Discord: %s", redact_secrets(exc))
+            if summary_needs_refresh or rankings_updated or not summary_msg_id or layout_needs_upgrade:
+                latest_catalog = db.get_recent_recorded_matches(
+                    limit=max(40, summary_size * 3),
+                    only_active_players=True,
+                )
+                updated_players = db.get_active_players()
+                rankings_for_panel = fresh_rankings or load_cached_rankings(config_path.parent, top_n=top_n)
+                panel_ok = False
+
+                for attempt in (1, 2):
+                    try:
+                        new_summary_id = discord.upsert_summary_message(
+                            matches=latest_catalog,
+                            tracked_players=updated_players,
+                            existing_message_id=summary_msg_id,
+                            rankings_by_mode=rankings_for_panel,
+                            custom_players=custom_players,
+                            top_n=top_n,
+                            recreate_message=layout_needs_upgrade,
+                        )
+                        if new_summary_id:
+                            if new_summary_id != summary_msg_id:
+                                db.set_state("summary_message_id", new_summary_id)
+                                logger.info("Painel Resumo publicado no Discord (ID %s).", new_summary_id)
+                            else:
+                                logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
+                            db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
+                            db.set_state("rankings_updated_flag", "0")
+                            db.set_state("summary_needs_refresh", "0")
+                            panel_ok = True
+                            panel_status = f"atualizado (ID {new_summary_id})"
+                            break
+                        logger.warning("Tentativa %d/2 do Painel Fixado retornou sem Snowflake ID.", attempt)
+                    except Exception as exc:
+                        logger.warning(
+                            "Tentativa %d/2 falhou ao atualizar Mensagem Fixada no Discord: %s",
+                            attempt,
+                            redact_secrets(exc),
+                        )
+                    if attempt == 1:
+                        time.sleep(3.0)
+
+                if not panel_ok:
+                    panel_status = "pendente (retentará no próximo ciclo)"
+                    logger.error("Falha ao atualizar Mensagem Fixada após dupla checagem; marcada para retentativa.")
+
+            remaining_pending = db.count_pending_matches(max_age_sec=21600)
+            logger.info(
+                "[DUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | Cards confirmados: %d | Pendentes restantes: %d | Painel Fixado: %s",
+                len(active_players) - fetch_failures_final,
+                len(active_players),
+                cards_confirmed,
+                remaining_pending,
+                panel_status,
+            )
         elif grouped_new_matches or players_changed:
             logger.info("Partidas salvas em %s.", db_path.name)
 
@@ -746,13 +887,18 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.1 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
         "--force-rank-scan",
         action="store_true",
         help="Força revarredura imediata do Ranking (Top 20 + monitorados) neste ciclo",
+    )
+    parser.add_argument(
+        "--verify-discord",
+        action="store_true",
+        help="Valida ativamente o Webhook do Discord antes de iniciar o ciclo (dupla checagem de conectividade)",
     )
     args = parser.parse_args()
 
@@ -771,7 +917,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.1 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -782,6 +928,7 @@ def main() -> int:
                 relic,
                 force_rank_scan=(args.force_rank_scan and first_iter),
                 is_oneshot=bool(args.once),
+                verify_discord=(bool(args.verify_discord) and first_iter),
             )
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)

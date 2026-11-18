@@ -2,10 +2,14 @@ name: CoH3 Brasil Monitor (Hardened)
 
 on:
   schedule:
-    # Horario ativo no Brasil (11:00 as 02:00 BRT = 14:00-23:59 e 00:00-04:59 UTC): roda a cada 15 minutos fora de pico
-    - cron: "4,19,34,49 0-4,14-23 * * *"
-    # Madrugada/manha (02:00 as 11:00 BRT): roda a cada 2h, mantendo < 2.000 min/mes gratis em Repositorio Privado
-    - cron: "34 5-13/2 * * *"
+    # Horario ativo no Brasil (12:00-20:59 BRT = 15:00-23:59 UTC): a cada 15 min fora de pico (:07, :22, :37, :52)
+    - cron: "7,22,37,52 15-23 * * *"
+    # Noite/virada no Brasil (21:00-01:59 BRT = 00:00-04:59 UTC): a cada 15 min fora de pico (:07, :22, :37, :52)
+    - cron: "7,22,37,52 0-4 * * *"
+    # Madrugada/manha (02:00-11:59 BRT = 05:00-14:59 UTC): 4 checagens/dia (total 60/dia = <= 1.860 min/mes gratis)
+    - cron: "37 6,9,12,14 * * *"
+  repository_dispatch:
+    types: [sync-coh3]
   push:
     branches:
       - main
@@ -72,7 +76,7 @@ jobs:
             sudo apt-get install -y --no-install-recommends "${NEED_PKGS[@]}"
           fi
 
-      - name: Executar ciclo automatico CoH3 -> Discord
+      - name: Executar ciclo automatico CoH3 -> Discord (com dupla checagem)
         env:
           PYTHONDONTWRITEBYTECODE: "1"
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -108,9 +112,9 @@ jobs:
           fi
 
           if [ "${INPUT_FORCE_RANK:-false}" = "true" ] || [ "${EVENT_NAME:-}" = "push" ]; then
-            python3 monitor.py --once --force-rank-scan
+            python3 monitor.py --once --verify-discord --force-rank-scan
           else
-            python3 monitor.py --once
+            python3 monitor.py --once --verify-discord
           fi
 
           if [ "${INPUT_SEND_TEST:-false}" = "true" ]; then
@@ -120,6 +124,7 @@ jobs:
       - name: Auditoria anti-vazamento e persistencia automatica de estado
         env:
           TARGET_BRANCH: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
 
@@ -149,30 +154,48 @@ jobs:
             exit 1
           fi
 
+          UTC_NOW="$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          BRT_NOW="$(TZ='America/Sao_Paulo' date '+%Y-%m-%d %H:%M:%S BRT')"
+          STATE_STATUS="Sem alteracoes novas neste ciclo"
+
           if git diff --cached --quiet; then
             echo "Nenhuma alteracao de estado neste ciclo; nenhum commit necessario."
-            exit 0
+          else
+            BRANCH_NAME="${TARGET_BRANCH:-main}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore(state): atualizar catalogo e ranking CoH3 BR [skip ci]"
+
+            PUSHED=false
+            for attempt in 1 2 3; do
+              if ! git pull --rebase -X theirs origin "${BRANCH_NAME}"; then
+                for sf in "${STATE_FILES[@]}"; do
+                  [ -f "${sf}" ] && git checkout --theirs -- "${sf}" 2>/dev/null || true
+                  [ -f "${sf}" ] && git add -- "${sf}" 2>/dev/null || true
+                done
+                GIT_EDITOR=true git rebase --continue || git rebase --abort || true
+              fi
+              if git push origin "HEAD:${BRANCH_NAME}"; then
+                echo "Estado persistido com sucesso na branch ${BRANCH_NAME}."
+                STATE_STATUS="Estado atualizado e salvo em \`${BRANCH_NAME}\`"
+                PUSHED=true
+                break
+              fi
+              sleep 2
+            done
+
+            if [ "${PUSHED}" != "true" ]; then
+              echo "::error::Falha ao enviar estado atualizado para origin/${BRANCH_NAME} apos 3 tentativas."
+              exit 1
+            fi
           fi
 
-          BRANCH_NAME="${TARGET_BRANCH:-main}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(state): atualizar catalogo e ranking CoH3 BR [skip ci]"
-
-          for attempt in 1 2 3; do
-            if ! git pull --rebase -X theirs origin "${BRANCH_NAME}"; then
-              for sf in "${STATE_FILES[@]}"; do
-                [ -f "${sf}" ] && git checkout --theirs -- "${sf}" 2>/dev/null || true
-                [ -f "${sf}" ] && git add -- "${sf}" 2>/dev/null || true
-              done
-              GIT_EDITOR=true git rebase --continue || git rebase --abort || true
-            fi
-            if git push origin "HEAD:${BRANCH_NAME}"; then
-              echo "Estado persistido com sucesso na branch ${BRANCH_NAME}."
-              exit 0
-            fi
-            sleep 2
-          done
-
-          echo "::error::Falha ao enviar estado atualizado para origin/${BRANCH_NAME} apos 3 tentativas."
-          exit 1
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "### CoH3 Brasil Monitor — Resumo da Execução"
+              echo "- **Gatilho:** \`${EVENT_NAME:-unknown}\`"
+              echo "- **Horário (BRT):** ${BRT_NOW} (${UTC_NOW})"
+              echo "- **Webhook Discord:** Verificado e ativo (dupla checagem OK)"
+              echo "- **Persistência:** ${STATE_STATUS}"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi

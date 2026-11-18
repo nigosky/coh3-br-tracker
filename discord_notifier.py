@@ -486,8 +486,9 @@ class DiscordWebhookClient:
         if not validate_discord_webhook_url(url, allow_message_subpath=True):
             raise ValueError("URL de destino bloqueada pela política estrita do DiscordWebhookClient.")
 
-        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.0", "Accept-Encoding": "gzip"}
-        if method.upper() == "DELETE":
+        method_upper = method.upper()
+        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.1", "Accept-Encoding": "gzip"}
+        if method_upper in ("GET", "DELETE"):
             body = None
         elif files:
             body, content_type = _encode_multipart_formdata(payload or {}, files)
@@ -497,7 +498,7 @@ class DiscordWebhookClient:
             headers["Content-Type"] = "application/json"
 
         for attempt in range(3):
-            req = urllib.request.Request(url, data=body, method=method, headers=headers)
+            req = urllib.request.Request(url, data=body, method=method_upper, headers=headers)
             try:
                 with _SECURE_OPENER.open(req, timeout=25) as resp:
                     raw_bytes = read_bounded_http_body(resp, MAX_DISCORD_RESPONSE_BYTES)
@@ -517,7 +518,7 @@ class DiscordWebhookClient:
                 if exc.code in (500, 502, 503, 504) and attempt < 2:
                     time.sleep(1.0 * (attempt + 1))
                     continue
-                if exc.code == 404:
+                if exc.code == 404 and method_upper in ("PATCH", "DELETE"):
                     return 404, None
                 err_body = redact_secrets(exc.read(1024).decode("utf-8", errors="replace"))
                 raise RuntimeError(f"Erro HTTP {exc.code} no Discord Webhook: {err_body}") from None
@@ -529,6 +530,19 @@ class DiscordWebhookClient:
                 raise RuntimeError(f"Falha de rede ao contatar Discord Webhook: {reason}") from None
 
         raise RuntimeError("Falha no envio ao Discord Webhook após múltiplas tentativas.")
+
+    def verify_webhook(self) -> dict[str, str]:
+        """Valida silenciosamente (GET sem postar mensagem) que o Webhook está ativo e acessível no Discord."""
+        if not self.is_configured:
+            raise RuntimeError("Webhook do Discord ausente ou inválido na configuração.")
+        status, data = self._request("GET", self._webhook_url)
+        if status != 200 or not isinstance(data, dict) or not data.get("id"):
+            raise RuntimeError(f"Verificação do Discord Webhook falhou (HTTP {status}).")
+        return {
+            "id": str(data.get("id", "")),
+            "channel_id": str(data.get("channel_id", "")),
+            "name": strip_unsafe_chars(data.get("name", ""))[:60],
+        }
 
     @staticmethod
     def _append_wait_param(base_url: str) -> str:

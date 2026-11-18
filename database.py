@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+PENDING_DISCORD_MARKER = "PENDING"
+SEEDED_DISCORD_MARKER = "SEEDED"
+
 
 class MatchDatabase:
     """Gerencia o catálogo local SQLite com conexões reutilizáveis thread-local e transações atômicas."""
@@ -286,6 +289,21 @@ class MatchDatabase:
                 [(str(message_id), int(r["match_id"]), int(r["tracked_profile_id"])) for r in records],
             )
 
+    @staticmethod
+    def _row_to_match_dict(row: sqlite3.Row) -> dict[str, Any]:
+        d = dict(row)
+        d["tracked_steam_id"] = d.pop("resolved_steam_id", "") or d.get("tracked_steam_id", "")
+        disp_alias = d.pop("resolved_display_alias", "")
+        if disp_alias:
+            d["tracked_alias"] = disp_alias
+        d["win"] = bool(d["win"])
+        d["has_replay"] = bool(d["has_replay"])
+        d["allies"] = json.loads(d.pop("allies_json") or "[]")
+        d["opponents"] = json.loads(d.pop("opponents_json") or "[]")
+        d.pop("counters_json", None)
+        d["counters"] = {}
+        return d
+
     def get_recent_recorded_matches(
         self,
         limit: int = 15,
@@ -309,22 +327,76 @@ class MatchDatabase:
             """,
             (safe_limit,),
         ).fetchall()
+        return [self._row_to_match_dict(r) for r in rows]
 
-        results: list[dict[str, Any]] = []
-        for r in rows:
-            d = dict(r)
-            d["tracked_steam_id"] = d.pop("resolved_steam_id", "") or d.get("tracked_steam_id", "")
-            disp_alias = d.pop("resolved_display_alias", "")
-            if disp_alias:
-                d["tracked_alias"] = disp_alias
-            d["win"] = bool(d["win"])
-            d["has_replay"] = bool(d["has_replay"])
-            d["allies"] = json.loads(d.pop("allies_json") or "[]")
-            d["opponents"] = json.loads(d.pop("opponents_json") or "[]")
-            d.pop("counters_json", None)
-            d["counters"] = {}
-            results.append(d)
-        return results
+    def get_pending_matches(
+        self,
+        max_age_sec: int = 21600,
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Recupera partidas recentes marcadas como PENDING (falha transitória no Discord), evitando duplicatas."""
+        safe_limit = max(1, min(int(limit), 200))
+        cutoff = int(time.time()) - max(60, int(max_age_sec))
+        conn = self._connect()
+
+        # Autocorrija registros PENDING cujo match_id já recebeu Snowflake válido via outro jogador monitorado
+        with conn:
+            conn.execute(
+                """
+                UPDATE recorded_matches
+                SET discord_message_id = (
+                    SELECT s.discord_message_id
+                    FROM recorded_matches s
+                    WHERE s.match_id = recorded_matches.match_id
+                      AND s.discord_message_id IS NOT NULL
+                      AND length(s.discord_message_id) >= 15
+                      AND s.discord_message_id NOT GLOB '*[^0-9]*'
+                    LIMIT 1
+                )
+                WHERE discord_message_id = ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM recorded_matches s
+                    WHERE s.match_id = recorded_matches.match_id
+                      AND s.discord_message_id IS NOT NULL
+                      AND length(s.discord_message_id) >= 15
+                      AND s.discord_message_id NOT GLOB '*[^0-9]*'
+                  )
+                """,
+                (PENDING_DISCORD_MARKER,),
+            )
+
+        rows = conn.execute(
+            """
+            SELECT rm.*,
+                   COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
+                   COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.discord_message_id = ?
+              AND rm.recorded_at >= ?
+            ORDER BY rm.completion_time ASC
+            LIMIT ?
+            """,
+            (PENDING_DISCORD_MARKER, cutoff, safe_limit),
+        ).fetchall()
+        return [self._row_to_match_dict(r) for r in rows]
+
+    def count_pending_matches(self, max_age_sec: int = 21600) -> int:
+        cutoff = int(time.time()) - max(60, int(max_age_sec))
+        row = self._connect().execute(
+            """
+            SELECT COUNT(DISTINCT rm.match_id) AS cnt
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.discord_message_id = ?
+              AND rm.recorded_at >= ?
+            """,
+            (PENDING_DISCORD_MARKER, cutoff),
+        ).fetchone()
+        return int(row["cnt"]) if row else 0
 
     def get_cached_avatar(
         self,
