@@ -43,6 +43,7 @@ logger = logging.getLogger("coh3_br.renderer")
 
 BASE_DIR = Path(__file__).resolve().parent
 FACTIONS_DIR = BASE_DIR / "assets" / "factions"
+VETERANOS_BADGE_PATH = BASE_DIR / "assets" / "discord_veteranos_patente.png"
 BRT_TZ = timezone(timedelta(hours=-3))
 
 STEAM_XML_AVATAR_MEDIUM_RE = re.compile(
@@ -718,6 +719,47 @@ def get_tactical_map_thumb(map_raw: str, size: int = 52) -> Image.Image:
     return out
 
 
+_VETERANOS_BADGE_CACHE: dict[int, Image.Image] = {}
+
+
+def get_veteranos_badge_icon(size: int = 20) -> Image.Image:
+    """Carrega com segurança o ícone oficial da patente Discord Veteranos (com fallback vetorial)."""
+    sz = max(12, min(int(size), 128))
+    cached = _VETERANOS_BADGE_CACHE.get(sz)
+    if cached is not None:
+        return cached
+
+    loaded: Image.Image | None = None
+    try:
+        if (
+            VETERANOS_BADGE_PATH.is_file()
+            and not VETERANOS_BADGE_PATH.is_symlink()
+            and VETERANOS_BADGE_PATH.stat().st_size <= 262_144
+        ):
+            with Image.open(VETERANOS_BADGE_PATH, formats=["PNG"]) as raw_im:
+                raw_im.load()
+                loaded = raw_im.convert("RGBA").resize((sz, sz), Image.Resampling.LANCZOS)
+    except Exception as exc:
+        logger.warning("Fallback vetorial ativado para ícone Discord Veteranos: %s", redact_secrets(exc))
+
+    if loaded is None:
+        ss = sz * 4
+        fb = Image.new("RGBA", (ss, ss), (0, 0, 0, 0))
+        d = ImageDraw.Draw(fb)
+        gold = (242, 193, 68, 255)
+        cx = ss // 2
+        # 2 chevrons superiores + losango inferior (patente Discord Veteranos)
+        d.polygon([(cx, int(ss * 0.08)), (int(ss * 0.88), int(ss * 0.42)), (int(ss * 0.88), int(ss * 0.56)), (cx, int(ss * 0.24)), (int(ss * 0.12), int(ss * 0.56)), (int(ss * 0.12), int(ss * 0.42))], fill=gold)
+        d.polygon([(cx, int(ss * 0.34)), (int(ss * 0.88), int(ss * 0.68)), (int(ss * 0.88), int(ss * 0.82)), (cx, int(ss * 0.50)), (int(ss * 0.12), int(ss * 0.82)), (int(ss * 0.12), int(ss * 0.68))], fill=gold)
+        d.polygon([(cx, int(ss * 0.62)), (int(ss * 0.68), int(ss * 0.78)), (cx, int(ss * 0.94)), (int(ss * 0.32), int(ss * 0.78))], fill=gold)
+        loaded = fb.resize((sz, sz), Image.Resampling.LANCZOS)
+
+    if len(_VETERANOS_BADGE_CACHE) >= 32:
+        _VETERANOS_BADGE_CACHE.clear()
+    _VETERANOS_BADGE_CACHE[sz] = loaded
+    return loaded
+
+
 # ---------------------------------------------------------------------------
 # Utilitários de formatação de tempo, modo e equipes (Axis vs Allies)
 # ---------------------------------------------------------------------------
@@ -1011,15 +1053,22 @@ def _draw_two_team_columns(
                 name_x += 46
 
             is_tracked = bool(pl.get("is_tracked"))
+            is_veterano = is_tracked or bool(pl.get("is_br_roster"))
+            badge_sz = 22
+            badge_reserve = (badge_sz + 8) if is_veterano else 0
             disp_alias, a_fnt = truncate_to_px(
                 draw,
                 str(pl.get("alias") or ""),
-                max_px=max(60, col_limit_x - name_x),
+                max_px=max(56, col_limit_x - name_x - badge_reserve),
                 size=20,
                 bold=True,
             )
             alias_color = (56, 189, 248, 255) if is_tracked else (130, 186, 254, 255)
             draw.text((name_x, py + 10), disp_alias, font=a_fnt, fill=alias_color)
+            if is_veterano:
+                vet_ic = get_veteranos_badge_icon(size=badge_sz)
+                bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 6)
+                img.paste(vet_ic, (bx, py + 9), vet_ic)
 
 
 # ---------------------------------------------------------------------------
@@ -1225,15 +1274,22 @@ def render_matches_table_png(
                     name_x += 32
 
                 is_tracked = bool(pl.get("is_tracked"))
+                is_veterano = is_tracked or bool(pl.get("is_br_roster"))
+                badge_sz = 17
+                badge_reserve = (badge_sz + 6) if is_veterano else 0
                 disp_alias, a_fnt = truncate_to_px(
                     draw,
                     str(pl.get("alias") or ""),
-                    max_px=max(48, (col_x + 306) - name_x),
+                    max_px=max(44, (col_x + 306) - name_x - badge_reserve),
                     size=15,
                     bold=True,
                 )
                 alias_color = (56, 189, 248, 255) if is_tracked else (112, 172, 250, 255)
                 draw.text((name_x, py + 5), disp_alias, font=a_fnt, fill=alias_color)
+                if is_veterano:
+                    vet_ic = get_veteranos_badge_icon(size=badge_sz)
+                    bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 5)
+                    img.paste(vet_ic, (bx, py + 5), vet_ic)
 
         map_cx = 954
         m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=52)
@@ -1288,12 +1344,15 @@ def render_ranking_table_png(
     mode_pt = format_mode_title_pt(mode_title)
     title_txt = f"COH3 BRASIL  •  RANKING DIÁRIO {mode_pt} (MÉDIA ELO)"
     t_fnt = pick_font(title_txt, size=16, bold=True, condensed=True)
-    max_title_w = width - 44 - sw
+    header_badge = get_veteranos_badge_icon(size=22)
+    img.paste(header_badge, (16, 7), header_badge)
+    title_x = 44
+    max_title_w = width - title_x - 24 - sw
     if text_width(draw, title_txt, t_fnt) > max_title_w:
         title_txt = f"COH3 BRASIL • RANKING DIÁRIO {mode_pt}"
         title_txt, t_fnt = truncate_to_px(draw, title_txt, int(max_title_w), size=15, bold=True)
 
-    draw.text((20, 9), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
+    draw.text((title_x, 9), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
     draw.text((width - 20 - sw, 10), sub_txt, font=s_fnt, fill=(190, 184, 172, 255))
     draw.line([(0, banner_h), (width, banner_h)], fill=(48, 44, 36, 255), width=1)
 
@@ -1325,9 +1384,7 @@ def render_ranking_table_png(
 
     y = banner_h + col_hdr_h
     num_fnt = pick_font("1566", size=17, bold=True, condensed=True)
-    badge_lbl = "★ FIXO"
-    bfnt = pick_font(badge_lbl, size=11, bold=True)
-    bw = int(text_width(draw, badge_lbl, bfnt)) + 10
+    row_vet_badge = get_veteranos_badge_icon(size=19)
     white = (243, 244, 246, 255)
 
     for idx, entry in enumerate(rows):
@@ -1378,21 +1435,19 @@ def render_ranking_table_png(
         flag_im = get_country_flag(country, w=21, h=15)
         img.paste(flag_im, (202, y + 11), flag_im)
 
-        show_mon_badge = is_custom and rank_val > 20
         disp_alias, a_fnt = truncate_to_px(
             draw,
             alias_raw,
-            max_px=174 if show_mon_badge else 224,
+            max_px=196 if is_custom else 224,
             size=17,
             bold=True,
         )
         name_col = (253, 230, 138, 255) if is_custom else white
         draw.text((230, y + 8), disp_alias, font=a_fnt, fill=name_col)
 
-        if show_mon_badge:
-            bx = int(230 + text_width(draw, disp_alias, a_fnt) + 6)
-            draw.rounded_rectangle((bx, y + 9, bx + bw, y + 27), radius=4, fill=(66, 50, 16, 255), outline=(234, 179, 8, 210))
-            draw.text((bx + 5, y + 11), badge_lbl, font=bfnt, fill=(250, 204, 21, 255))
+        if is_custom:
+            bx = int(230 + text_width(draw, disp_alias, a_fnt) + 7)
+            img.paste(row_vet_badge, (bx, y + 8), row_vet_badge)
 
         if streak > 0:
             st_str, st_col = f"+{streak}", (74, 222, 128, 255)
@@ -1412,6 +1467,153 @@ def render_ranking_table_png(
         ):
             vw = text_width(draw, val_str, num_fnt)
             draw.text((right_x - vw, y + 8), val_str, font=num_fnt, fill=white)
+
+        y += row_h
+
+    return _encode_rgb_png(img)
+
+
+def _format_ptbr_int(val: int) -> str:
+    return f"{int(val):,}".replace(",", ".")
+
+
+# ---------------------------------------------------------------------------
+# RENDERIZADOR 2B: Total de Jogos dos Jogadores Selecionados (Discord Veteranos)
+# ---------------------------------------------------------------------------
+def render_selected_games_table_png(
+    entries: list[dict[str, Any]],
+    avatar_provider: SteamAvatarProvider,
+    subtitle_override: str | None = None,
+    total_games_sum: int | None = None,
+    start_rank: int = 1,
+) -> bytes:
+    """Renderiza tabela diária com o total de jogos de cada jogador selecionado do Discord Veteranos."""
+    width = 980
+    banner_h = 38
+    col_hdr_h = 34
+    row_h = 34
+
+    rows = list(entries)
+    total_h = banner_h + col_hdr_h + max(1, len(rows)) * row_h + 4
+    img = Image.new("RGBA", (width, total_h), (15, 17, 21, 255))
+    draw = ImageDraw.Draw(img)
+
+    draw.rectangle((0, 0, width, banner_h + col_hdr_h), fill=(22, 20, 17, 255))
+    rng = random.Random(int.from_bytes(hashlib.sha256(b"discord_veteranos_total_games").digest()[:8], "big"))
+    for _ in range(10):
+        x0, y0 = rng.randint(0, width), rng.randint(0, banner_h + col_hdr_h)
+        x1, y1 = x0 + rng.randint(-160, 160), y0 + rng.randint(-30, 30)
+        draw.line([(x0, y0), (x1, y1)], fill=(46, 41, 33, 95), width=1)
+
+    grand_total = (
+        int(total_games_sum)
+        if total_games_sum is not None
+        else sum(int(e.get("total_games", 0)) for e in rows)
+    )
+    sub_txt = subtitle_override or f"{len(rows)} Veteranos • {_format_ptbr_int(grand_total)} Jogos"
+    s_fnt = pick_font(sub_txt, size=14, bold=True)
+    sw = text_width(draw, sub_txt, s_fnt)
+
+    hdr_badge = get_veteranos_badge_icon(size=24)
+    img.paste(hdr_badge, (16, 7), hdr_badge)
+
+    title_txt = "DISCORD VETERANOS  •  TOTAL DE JOGOS (RANKING DIÁRIO)"
+    t_fnt = pick_font(title_txt, size=16, bold=True, condensed=True)
+    max_title_w = width - 48 - 24 - sw
+    if text_width(draw, title_txt, t_fnt) > max_title_w:
+        title_txt, t_fnt = truncate_to_px(draw, title_txt, int(max_title_w), size=15, bold=True)
+
+    draw.text((46, 10), title_txt, font=t_fnt, fill=(245, 184, 46, 255))
+    draw.text((width - 20 - sw, 11), sub_txt, font=s_fnt, fill=(190, 184, 172, 255))
+    draw.line([(0, banner_h), (width, banner_h)], fill=(48, 44, 36, 255), width=1)
+
+    gold_col = (245, 184, 46, 255)
+    ch_y = banner_h + 7
+    hdr_fnt = pick_font("VITÓRIAS", size=15, bold=True, condensed=True)
+
+    for lbl, cx, align in (
+        ("POS.", 42, "center"),
+        ("JOGADOR (DISCORD VETERANOS)", 86, "left"),
+        ("1V1", 518, "right"),
+        ("2V2", 594, "right"),
+        ("EQUIPE", 686, "right"),
+        ("VITÓRIAS", 778, "right"),
+        ("TAXA", 846, "right"),
+        ("TOTAL ▾", 962, "right"),
+    ):
+        lw = text_width(draw, lbl, hdr_fnt)
+        tx = (cx - lw / 2) if align == "center" else ((cx - lw) if align == "right" else cx)
+        draw.text((tx, ch_y), lbl, font=hdr_fnt, fill=gold_col)
+
+    rule_y = banner_h + col_hdr_h - 1
+    draw.line([(10, rule_y), (width - 10, rule_y)], fill=(234, 179, 8, 255), width=2)
+
+    if not rows:
+        efnt = pick_font("Nenhum jogador selecionado encontrado.", size=16, bold=False)
+        draw.text((320, rule_y + 9), "Nenhum jogador selecionado encontrado.", font=efnt, fill=(156, 163, 175, 255))
+
+    y = banner_h + col_hdr_h
+    num_fnt = pick_font("11.388", size=16, bold=True, condensed=True)
+    row_vet_badge = get_veteranos_badge_icon(size=19)
+    white = (243, 244, 246, 255)
+    muted = (165, 173, 186, 255)
+
+    for idx, entry in enumerate(rows):
+        rank_val = int(entry.get("games_rank", start_rank + idx))
+        r_bg = (17, 19, 24, 255) if idx % 2 == 0 else (24, 27, 34, 255)
+        draw.rectangle((0, y, width, y + row_h), fill=r_bg)
+        draw.line([(10, y + row_h - 1), (width - 10, y + row_h - 1)], fill=(34, 38, 46, 255), width=1)
+
+        rank_color = (250, 204, 21, 255) if rank_val <= 3 else white
+        r_str = str(rank_val)
+        rw = text_width(draw, r_str, num_fnt)
+        draw.text((42 - rw / 2, y + 7), r_str, font=num_fnt, fill=rank_color)
+
+        pid = int(entry.get("profile_id", 0))
+        sid = str(entry.get("steam_id") or "")
+        alias_raw = str(entry.get("alias") or f"Jogador {pid}")
+        country = str(entry.get("country") or "br").lower()
+
+        av_im = avatar_provider.get_circular_avatar(
+            size=28,
+            profile_id=pid,
+            steam_id=sid,
+            alias=alias_raw,
+            ring_color=(245, 184, 46, 245),
+        )
+        img.paste(av_im, (86, y + 3), av_im)
+
+        flag_im = get_country_flag(country, w=21, h=15)
+        img.paste(flag_im, (120, y + 10), flag_im)
+
+        disp_alias, a_fnt = truncate_to_px(
+            draw,
+            alias_raw,
+            max_px=274,
+            size=16,
+            bold=True,
+        )
+        draw.text((148, y + 7), disp_alias, font=a_fnt, fill=(253, 230, 138, 255))
+        bx = int(148 + text_width(draw, disp_alias, a_fnt) + 7)
+        img.paste(row_vet_badge, (bx, y + 7), row_vet_badge)
+
+        g1 = int(entry.get("games_1v1", 0))
+        g2 = int(entry.get("games_2v2", 0))
+        gt = int(entry.get("games_team", 0))
+        wins = int(entry.get("wins", 0))
+        total = int(entry.get("total_games", 0))
+        ratio = int(entry.get("ratio", round((wins * 100.0) / total) if total > 0 else 0))
+
+        for val_str, right_x, col in (
+            (_format_ptbr_int(g1), 518, white if g1 > 0 else muted),
+            (_format_ptbr_int(g2), 594, white if g2 > 0 else muted),
+            (_format_ptbr_int(gt), 686, white if gt > 0 else muted),
+            (_format_ptbr_int(wins), 778, white),
+            (f"{ratio}%" if total > 0 else "—", 846, (74, 222, 128, 255) if ratio >= 55 else white),
+            (_format_ptbr_int(total), 962, (250, 204, 21, 255) if rank_val <= 3 else white),
+        ):
+            vw = text_width(draw, val_str, num_fnt)
+            draw.text((right_x - vw, y + 7), val_str, font=num_fnt, fill=col)
 
         y += row_h
 
