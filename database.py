@@ -421,6 +421,96 @@ class MatchDatabase:
         ).fetchone()
         return int(row["cnt"]) if row else 0
 
+    def get_match_delivery_map(self, match_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """
+        Retorna mapa de entrega no Discord por match_id para auditoria cruzada:
+        - snowflake: Snowflake válido caso QUALQUER linha da partida já tenha sido confirmada no Discord
+        - handled_non_live: True se QUALQUER linha foi marcada como PRUNED ou SEEDED
+        - rows: {tracked_profile_id: (discord_message_id, recorded_at)}
+        """
+        clean_ids = sorted({int(mid) for mid in (match_ids or []) if int(mid) > 0})
+        if not clean_ids:
+            return {}
+
+        result: dict[int, dict[str, Any]] = {}
+        conn = self._connect()
+        for idx in range(0, len(clean_ids), 400):
+            chunk = clean_ids[idx : idx + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            rows = conn.execute(
+                f"""
+                SELECT match_id, tracked_profile_id, discord_message_id, recorded_at
+                FROM recorded_matches
+                WHERE match_id IN ({placeholders})
+                """,
+                chunk,
+            ).fetchall()
+            for row in rows:
+                mid = int(row["match_id"])
+                pid = int(row["tracked_profile_id"])
+                msg_id = str(row["discord_message_id"] or "").strip()
+                rec_at = int(row["recorded_at"] or 0)
+                entry = result.setdefault(
+                    mid,
+                    {"snowflake": None, "handled_non_live": False, "rows": {}},
+                )
+                entry["rows"][pid] = (msg_id, rec_at)
+                if len(msg_id) >= 15 and msg_id.isdigit():
+                    if not entry["snowflake"]:
+                        entry["snowflake"] = msg_id
+                elif msg_id in (PRUNED_DISCORD_MARKER, SEEDED_DISCORD_MARKER):
+                    entry["handled_non_live"] = True
+        return result
+
+    def requeue_undelivered_match(self, match_id: int, tracked_profile_id: int | None = None) -> bool:
+        """
+        Promove partida(s) já registrada(s) sem entrega confirmada no Discord (NULL, vazia ou PENDING expirada)
+        para a fila PENDING ativa, garantindo que nunca reenvie partidas já confirmadas, PRUNED ou SEEDED.
+        """
+        mid = int(match_id)
+        if mid <= 0:
+            return False
+
+        now = int(time.time())
+        conn = self._connect()
+        where_pid = ""
+        params: list[Any] = [PENDING_DISCORD_MARKER, now, mid]
+        if tracked_profile_id is not None:
+            pid = int(tracked_profile_id)
+            if pid <= 0:
+                return False
+            where_pid = "AND tracked_profile_id = ?"
+            params.append(pid)
+        params.extend([PENDING_DISCORD_MARKER, PRUNED_DISCORD_MARKER, SEEDED_DISCORD_MARKER])
+
+        with conn:
+            cur = conn.execute(
+                f"""
+                UPDATE recorded_matches
+                SET discord_message_id = ?, recorded_at = ?
+                WHERE match_id = ?
+                  {where_pid}
+                  AND (
+                    discord_message_id IS NULL
+                    OR discord_message_id = ''
+                    OR discord_message_id = ?
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM recorded_matches s
+                    WHERE s.match_id = recorded_matches.match_id
+                      AND (
+                        (s.discord_message_id IS NOT NULL
+                         AND length(s.discord_message_id) >= 15
+                         AND s.discord_message_id NOT GLOB '*[^0-9]*')
+                        OR s.discord_message_id IN (?, ?)
+                      )
+                  )
+                """,
+                params,
+            )
+        return cur.rowcount > 0
+
     def record_ephemeral_message(
         self,
         message_id: str,

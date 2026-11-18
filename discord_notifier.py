@@ -463,7 +463,7 @@ class DiscordWebhookClient:
             raise ValueError("URL de destino bloqueada pela política estrita do DiscordWebhookClient.")
 
         method_upper = method.upper()
-        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.5", "Accept-Encoding": "gzip"}
+        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.6", "Accept-Encoding": "gzip"}
         if method_upper in ("GET", "DELETE"):
             body = None
         elif files:
