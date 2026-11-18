@@ -1,0 +1,321 @@
+{
+  "discord_webhook_url": "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_WEBHOOK_URL",
+  "bot_username": "CoH3 Brasil Monitor",
+  "poll_interval_seconds": 60,
+  "summary_list_size": 15,
+  "only_automatch": false,
+  "initial_seed_per_player": 3,
+  "sqlite_db_path": "./coh3_br_matches.db",
+  "tracked_players": [
+    {
+      "profile_id": 17169,
+      "alias": "Guh",
+      "placements": [
+        "#1 Team Games (média 1789.5)"
+      ]
+    },
+    {
+      "profile_id": 462597,
+      "alias": "General Winter",
+      "placements": [
+        "#2 Team Games (média 1691.2)"
+      ]
+    },
+    {
+      "profile_id": 1318162,
+      "alias": "General Winter",
+      "placements": [
+        "#3 Team Games (média 1634.2)"
+      ]
+    },
+    {
+      "profile_id": 71299,
+      "alias": "Bruno.s",
+      "placements": [
+        "#4 Team Games (média 1583.0)"
+      ]
+    },
+    {
+      "profile_id": 639157,
+      "alias": "Itaperuna",
+      "placements": [
+        "#2 1v1 (média 1500.0)",
+        "#1 2v2 (média 1576.3)"
+      ]
+    },
+    {
+      "profile_id": 1390350,
+      "alias": "TearsInTheRain",
+      "placements": [
+        "#1 1v1 (média 1535.0)"
+      ]
+    },
+    {
+      "profile_id": 1333418,
+      "alias": "Charles Bronson",
+      "placements": [
+        "#4 1v1 (média 1451.0)",
+        "#2 2v2 (média 1525.0)"
+      ]
+    },
+    {
+      "profile_id": 79327,
+      "alias": "Chacineiro",
+      "placements": [
+        "#3 1v1 (média 1478.0)",
+        "#3 2v2 (média 1524.8)",
+        "#7 Team Games (média 1496.3)"
+      ]
+    },
+    {
+      "profile_id": 509690,
+      "alias": "Minhoca de ferro!",
+      "placements": [
+        "#5 Team Games (média 1524.5)"
+      ]
+    },
+    {
+      "profile_id": 1005730,
+      "alias": "arc",
+      "placements": [
+        "#4 2v2 (média 1497.0)",
+        "#6 Team Games (média 1501.5)"
+      ]
+    },
+    {
+      "profile_id": 1297821,
+      "alias": "General Winter",
+      "placements": [
+        "#8 Team Games (média 1486.0)"
+      ]
+    },
+    {
+      "profile_id": 31145,
+      "alias": "vonMises",
+      "placements": [
+        "#19 1v1 (média 1187.5)",
+        "#7 2v2 (média 1431.7)",
+        "#9 Team Games (média 1480.0)"
+      ]
+    },
+    {
+      "profile_id": 357310,
+      "alias": "Sleeping Sheep",
+      "placements": [
+        "#7 1v1 (média 1345.0)",
+        "#5 2v2 (média 1477.2)",
+        "#13 Team Games (média 1387.4)"
+      ]
+    },
+    {
+      "profile_id": 2583,
+      "alias": "Manupktd",
+      "placements": [
+        "#18 2v2 (média 1287.5)",
+        "#10 Team Games (média 1459.0)"
+      ]
+    },
+    {
+      "profile_id": 975900,
+      "alias": "[COHBR/RJ]Roney",
+      "placements": [
+        "#11 Team Games (média 1445.0)"
+      ]
+    },
+    {
+      "profile_id": 16867,
+      "alias": "COHBRAMACHINE",
+      "placements": [
+        "#6 2v2 (média 1438.0)",
+        "#20 Team Games (média 1311.3)"
+      ]
+    },
+    {
+      "profile_id": 40833,
+      "alias": "Tokai Teio",
+      "placements": [
+        "#5 1v1 (média 1426.0)",
+        "#12 2v2 (média 1315.7)"
+      ]
+    },
+    {
+      "profile_id": 845669,
+      "alias": "PH0BB05",
+      "placements": [
+        "#12 Team Games (média 1418.0)"
+      ]
+    },
+    {
+      "profile_id": 16507,
+      "alias": "Honest Copper Dealer",
+      "placements": [
+        "#8 2v2 (média 1409.2)"
+      ]
+    },
+    {
+      "profile_id": 649535,
+      "alias": "pensss",
+      "placements": [
+        "#6 1v1 (média 1348.7)",
+        "#9 2v2 (média 1407.0)"
+      ]
+    },
+    {
+      "profile_id": 1178218,
+      "alias": "joauleonardo",
+      "placements": [
+        "#14 Team Games (média 1369.9)"
+      ]
+    },
+    {
+      "profile_id": 21206,
+      "alias": "Hjax",
+      "placements": [
+        "#15 Team Games (média 1369.0)"
+      ]
+    },
+    {
+      "profile_id": 1114404,
+      "alias": "Vikitor",
+      "placements": [
+        "#12 1v1 (média 1248.0)",
+        "#16 Team Games (média 1364.0)"
+      ]
+    },
+    {
+      "profile_id": 153969,
+      "alias": "Cunha",
+      "placements": [
+        "#17 Team Games (média 1350.5)"
+      ]
+    },
+    {
+      "profile_id": 991764,
+      "alias": "SaNgar [BR]",
+      "placements": [
+        "#8 1v1 (média 1306.3)",
+        "#10 2v2 (média 1338.0)"
+      ]
+    },
+    {
+      "profile_id": 55693,
+      "alias": "BinhoBiceps",
+      "placements": [
+        "#19 2v2 (média 1284.7)",
+        "#18 Team Games (média 1335.2)"
+      ]
+    },
+    {
+      "profile_id": 1159891,
+      "alias": "GDI",
+      "placements": [
+        "#19 Team Games (média 1333.0)"
+      ]
+    },
+    {
+      "profile_id": 691,
+      "alias": "Vítor",
+      "placements": [
+        "#11 2v2 (média 1330.0)"
+      ]
+    },
+    {
+      "profile_id": 32922,
+      "alias": "Showtaro",
+      "placements": [
+        "#13 2v2 (média 1311.0)"
+      ]
+    },
+    {
+      "profile_id": 1423426,
+      "alias": "geladeira velha",
+      "placements": [
+        "#14 2v2 (média 1308.0)"
+      ]
+    },
+    {
+      "profile_id": 7375,
+      "alias": "pigote",
+      "placements": [
+        "#10 1v1 (média 1290.0)",
+        "#15 2v2 (média 1306.7)"
+      ]
+    },
+    {
+      "profile_id": 900358,
+      "alias": "Margheriti",
+      "placements": [
+        "#14 1v1 (média 1216.0)",
+        "#16 2v2 (média 1299.0)"
+      ]
+    },
+    {
+      "profile_id": 1356223,
+      "alias": "Manu-chan",
+      "placements": [
+        "#9 1v1 (média 1292.3)"
+      ]
+    },
+    {
+      "profile_id": 207342,
+      "alias": "AkvaBr",
+      "placements": [
+        "#11 1v1 (média 1263.0)",
+        "#17 2v2 (média 1292.0)"
+      ]
+    },
+    {
+      "profile_id": 81751,
+      "alias": "Razi",
+      "placements": [
+        "#20 2v2 (média 1275.7)"
+      ]
+    },
+    {
+      "profile_id": 1297870,
+      "alias": "AVESTRUZ TE SEDUZ",
+      "placements": [
+        "#13 1v1 (média 1239.0)"
+      ]
+    },
+    {
+      "profile_id": 217935,
+      "alias": "sakul",
+      "placements": [
+        "#15 1v1 (média 1214.0)"
+      ]
+    },
+    {
+      "profile_id": 1707,
+      "alias": "Anhangá",
+      "placements": [
+        "#16 1v1 (média 1199.5)"
+      ]
+    },
+    {
+      "profile_id": 1088455,
+      "alias": "luiz_fmh",
+      "placements": [
+        "#17 1v1 (média 1196.8)"
+      ]
+    },
+    {
+      "profile_id": 12522,
+      "alias": "Caramez",
+      "placements": [
+        "#18 1v1 (média 1189.5)"
+      ]
+    },
+    {
+      "profile_id": 87314,
+      "alias": "Pedro Jedi",
+      "placements": [
+        "#20 1v1 (média 1175.0)"
+      ]
+    }
+  ],
+  "auto_follow_top_br": true,
+  "top_n_per_mode": 20,
+  "leaderboard_refresh_minutes": 30,
+  "remove_if_drops_out_of_top": false
+}
