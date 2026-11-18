@@ -1,5 +1,5 @@
 mode,br_rank,is_custom,profile_id,alias,avg_elo,active_rankings,elo_usf,elo_ukf,elo_dak,elo_wehr,mode_wins,mode_losses,coh3stats_url
-1v1,1,nao,1390350,TearsInTheRain,1535.0,1/4,1535,,,,35,17,https://coh3stats.com/players/1390350
+1v1,1,nao,1390350,TearsInTheRain,1549.0,1/4,1549,,,,36,17,https://coh3stats.com/players/1390350
 1v1,2,nao,639157,Itaperuna,1500.0,1/4,,,1500,,676,504,https://coh3stats.com/players/639157
 1v1,3,nao,79327,Chacineiro,1477.0,3/4,1566,,1391,1474,147,81,https://coh3stats.com/players/79327
 1v1,4,nao,1333418,Charles Bronson,1451.0,2/4,1469,,,1433,31,4,https://coh3stats.com/players/1333418
@@ -31,9 +31,9 @@ mode,br_rank,is_custom,profile_id,alias,avg_elo,active_rankings,elo_usf,elo_ukf,
 2v2,10,nao,991764,SaNgar [BR],1338.0,3/4,1478,1371,1165,,331,268,https://coh3stats.com/players/991764
 2v2,11,nao,691,Vítor,1330.0,1/4,,1330,,,48,31,https://coh3stats.com/players/691
 2v2,12,nao,40833,Tokai Teio,1315.7,3/4,1279,1242,,1426,84,43,https://coh3stats.com/players/40833
-2v2,13,nao,32922,Showtaro,1311.0,3/4,1273,1372,,1288,213,166,https://coh3stats.com/players/32922
-2v2,14,nao,1423426,geladeira velha,1308.0,1/4,,1308,,,9,1,https://coh3stats.com/players/1423426
-2v2,15,nao,7375,pigote,1306.7,3/4,1408,1318,1194,,249,205,https://coh3stats.com/players/7375
+2v2,13,nao,7375,pigote,1311.3,3/4,1408,1332,1194,,250,205,https://coh3stats.com/players/7375
+2v2,14,nao,32922,Showtaro,1311.0,3/4,1273,1372,,1288,213,166,https://coh3stats.com/players/32922
+2v2,15,nao,1423426,geladeira velha,1308.0,1/4,,1308,,,9,1,https://coh3stats.com/players/1423426
 2v2,16,nao,900358,Margheriti,1299.0,2/4,,1190,,1408,276,245,https://coh3stats.com/players/900358
 2v2,17,nao,207342,AkvaBr,1292.0,1/4,,,1292,,245,219,https://coh3stats.com/players/207342
 2v2,18,nao,2583,Manupktd,1287.5,2/4,1373,,1202,,137,113,https://coh3stats.com/players/2583
