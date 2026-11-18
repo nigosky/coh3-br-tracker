@@ -1,0 +1,81 @@
+name: CoH3 Brasil Monitor (Hardened)
+on:
+  schedule:
+    - cron: "*/25 * * * *"
+  workflow_dispatch:
+    inputs:
+      send_initial_test:
+        description: "Enviar Lista Resumo inicial + 1 Card de teste agora?"
+        required: false
+        default: false
+        type: boolean
+      force_rank_scan:
+        description: "Forcar revarredura imediata do Top 20 BR nas leaderboards?"
+        required: false
+        default: false
+        type: boolean
+permissions: {}
+concurrency:
+  group: coh3-br-monitor-state
+  cancel-in-progress: false
+jobs:
+  sync-matches:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout seguro (SHA imutavel)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 1
+      - name: Executar ciclo seguro de monitoramento CoH3 -> Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          INPUT_SEND_TEST: ${{ inputs.send_initial_test }}
+          INPUT_FORCE_RANK: ${{ inputs.force_rank_scan }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "monitor.py" ]; then
+            FOUND_FILE="$(find . -maxdepth 2 -name monitor.py -print -quit)"
+            if [ -z "${FOUND_FILE}" ]; then
+              echo "::error::Arquivos do projeto (monitor.py) nao encontrados no repositorio."
+              exit 1
+            fi
+            cd "$(dirname "${FOUND_FILE}")"
+          fi
+          if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
+            echo "::error::O Secret DISCORD_WEBHOOK_URL ainda nao foi configurado em Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          if [ "${INPUT_SEND_TEST:-false}" = "true" ]; then
+            python3 manage.py test-discord
+          fi
+          if [ "${INPUT_FORCE_RANK:-false}" = "true" ]; then
+            python3 monitor.py --once --force-rank-scan
+          else
+            python3 monitor.py --once
+          fi
+      - name: Auditoria anti-vazamento e persistencia de estado
+        run: |
+          set -euo pipefail
+          if [ ! -f "monitor.py" ]; then
+            FOUND_FILE="$(find . -maxdepth 2 -name monitor.py -print -quit)"
+            if [ -n "${FOUND_FILE}" ]; then
+              cd "$(dirname "${FOUND_FILE}")"
+            fi
+          fi
+          if grep -RInE "discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+" config.json *.csv *.json 2>/dev/null; then
+            echo "::error::Bloqueio de seguranca acionado: padrao de URL de Webhook detectado em arquivo rastreado!"
+            exit 1
+          fi
+          git add coh3_br_matches.db config.json top20_br_por_modo.csv top20_br_por_modo.json jogadores_br_steam.csv jogadores_br_steam.json
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteracao de estado neste ciclo; nenhum commit necessario."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(state): atualizar catalogo de partidas CoH3 BR [skip ci]"
+          git pull --rebase origin HEAD
+          git push origin HEAD
