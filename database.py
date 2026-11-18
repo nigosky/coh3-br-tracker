@@ -319,13 +319,22 @@ class MatchDatabase:
         self,
         limit: int = 15,
         only_active_players: bool = True,
+        min_recorded_at: int = 0,
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 500))
-        join_clause = (
-            "JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id WHERE tp.active = 1"
-            if only_active_players
-            else "LEFT JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id"
-        )
+        min_ts = max(0, int(min_recorded_at or 0))
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if only_active_players:
+            join_clause = "JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id"
+            where_parts.append("tp.active = 1")
+        else:
+            join_clause = "LEFT JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id"
+        if min_ts > 0:
+            where_parts.append("rm.recorded_at >= ?")
+            params.append(min_ts)
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        params.append(safe_limit)
         rows = self._connect().execute(
             f"""
             SELECT rm.*,
@@ -333,10 +342,11 @@ class MatchDatabase:
                    COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
             FROM recorded_matches rm
             {join_clause}
+            {where_clause}
             ORDER BY rm.completion_time DESC
             LIMIT ?
             """,
-            (safe_limit,),
+            params,
         ).fetchall()
         return [self._row_to_match_dict(r) for r in rows]
 
@@ -500,6 +510,83 @@ class MatchDatabase:
             conn.execute(
                 "UPDATE discord_ephemeral_messages SET pruned_at = ? WHERE message_id = ?",
                 (now, clean_id),
+            )
+
+    def get_all_active_discord_message_ids(self, include_summary: bool = True) -> list[tuple[str, str]]:
+        """Retorna todas as mensagens ativas do bot/webhook no Discord para limpeza total do canal."""
+        conn = self._connect()
+        result: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        match_rows = conn.execute(
+            """
+            SELECT discord_message_id, MAX(recorded_at) AS latest_ts
+            FROM recorded_matches
+            WHERE discord_message_id IS NOT NULL
+              AND length(discord_message_id) >= 15
+              AND discord_message_id NOT GLOB '*[^0-9]*'
+            GROUP BY discord_message_id
+            ORDER BY latest_ts ASC
+            """
+        ).fetchall()
+        for r in match_rows:
+            mid = str(r["discord_message_id"])
+            if mid not in seen:
+                seen.add(mid)
+                result.append((mid, "match"))
+
+        eph_rows = conn.execute(
+            """
+            SELECT message_id, kind
+            FROM discord_ephemeral_messages
+            WHERE pruned_at IS NULL
+            ORDER BY sent_at ASC
+            """
+        ).fetchall()
+        for r in eph_rows:
+            mid = str(r["message_id"])
+            if mid not in seen:
+                seen.add(mid)
+                result.append((mid, str(r["kind"])))
+
+        if include_summary:
+            summary_id = (self.get_state("summary_message_id") or "").strip()
+            if summary_id and len(summary_id) >= 15 and summary_id.isdigit() and summary_id not in seen:
+                seen.add(summary_id)
+                result.append((summary_id, "summary_panel"))
+
+        return result
+
+    def reset_discord_channel_state(self, now_ts: int | None = None) -> None:
+        """Reinicia o estado visual do canal Discord do zero sem apagar o histórico deduplicado em SQLite."""
+        now = int(now_ts) if now_ts is not None else int(time.time())
+        conn = self._connect()
+        with conn:
+            conn.execute(
+                """
+                UPDATE recorded_matches
+                SET discord_message_id = ?
+                WHERE discord_message_id IS NOT NULL
+                  AND (
+                      discord_message_id = ?
+                      OR (length(discord_message_id) >= 15 AND discord_message_id NOT GLOB '*[^0-9]*')
+                  )
+                """,
+                (PRUNED_DISCORD_MARKER, PENDING_DISCORD_MARKER),
+            )
+            conn.execute(
+                "UPDATE discord_ephemeral_messages SET pruned_at = ? WHERE pruned_at IS NULL",
+                (now,),
+            )
+            conn.execute(
+                "DELETE FROM bot_state WHERE key IN ('summary_message_id', 'ranking_snapshot_v5', 'ranking_last_deltas_v5')"
+            )
+            conn.execute(
+                "INSERT INTO bot_state (key, value) VALUES ('display_since_ts', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (str(now),),
+            )
+            conn.execute(
+                "INSERT INTO bot_state (key, value) VALUES ('summary_needs_refresh', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"
             )
 
     def get_cached_avatar(

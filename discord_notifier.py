@@ -19,6 +19,7 @@ from card_renderer import (
     render_matches_table_png,
     render_ranking_movement_card_png,
     render_ranking_table_png,
+    render_selected_games_table_png,
 )
 from security import (
     ALLOWED_DISCORD_HOSTS,
@@ -64,6 +65,7 @@ __all__ = [
     "build_match_embed_payload",
     "build_ranking_movement_payload",
     "build_safe_coh3stats_match_url",
+    "build_selected_players_total_games",
     "build_summary_list_payload",
     "compact_mode",
     "format_duration",
@@ -319,6 +321,23 @@ def build_summary_list_payload(
                     }
                 )
 
+        if att_set is None or "ranking_veteranos_jogos.png" in att_set:
+            embeds_list.append(
+                {
+                    "title": "🎖️ DISCORD VETERANOS — TOTAL DE JOGOS DOS SELECIONADOS",
+                    "color": COLOR_RANKING,
+                    "image": {"url": "attachment://ranking_veteranos_jogos.png"},
+                }
+            )
+            if att_set is not None and "ranking_veteranos_jogos_p2.png" in att_set:
+                embeds_list.append(
+                    {
+                        "title": "🎖️ DISCORD VETERANOS — TOTAL DE JOGOS (Continuação)",
+                        "color": COLOR_RANKING,
+                        "image": {"url": "attachment://ranking_veteranos_jogos_p2.png"},
+                    }
+                )
+
     quick_links: list[str] = []
     for row_idx, grp in enumerate(grouped, start=1):
         primary = grp["primary"]
@@ -356,11 +375,93 @@ def build_summary_list_payload(
     }
 
 
+def build_selected_players_total_games(
+    rankings_by_mode: dict[str, list[dict[str, Any]]] | None,
+    custom_players: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Consolida o total de jogos (1v1 + 2v2 + Equipe) de cada jogador selecionado do Discord Veteranos."""
+    by_pid: dict[int, dict[str, Any]] = {}
+
+    for cp in custom_players or []:
+        if not isinstance(cp, dict) or cp.get("merged_into_profile_id"):
+            continue
+        pid = int(cp.get("profile_id", 0) or 0)
+        if pid <= 0:
+            continue
+        by_pid[pid] = {
+            "profile_id": pid,
+            "alias": str(cp.get("alias") or cp.get("original_alias") or f"Jogador {pid}"),
+            "steam_id": str(cp.get("steam_id") or ""),
+            "country": str(cp.get("country") or "br").lower(),
+            "games_1v1": 0,
+            "games_2v2": 0,
+            "games_team": 0,
+            "wins": 0,
+            "losses": 0,
+            "total_games": 0,
+            "ratio": 0,
+            "last_match_date": 0,
+        }
+
+    mode_field = {"1v1": "games_1v1", "2v2": "games_2v2", "Team Games": "games_team"}
+    for m_key, field_name in mode_field.items():
+        for entry in (rankings_by_mode or {}).get(m_key, []):
+            if not entry.get("is_custom"):
+                continue
+            pid = int(entry.get("profile_id", 0) or 0)
+            if pid <= 0:
+                continue
+            rec = by_pid.get(pid)
+            if rec is None:
+                rec = {
+                    "profile_id": pid,
+                    "alias": str(entry.get("alias") or f"Jogador {pid}"),
+                    "steam_id": str(entry.get("steam_id") or ""),
+                    "country": str(entry.get("country") or "br").lower(),
+                    "games_1v1": 0,
+                    "games_2v2": 0,
+                    "games_team": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "total_games": 0,
+                    "ratio": 0,
+                    "last_match_date": 0,
+                }
+                by_pid[pid] = rec
+            else:
+                if entry.get("alias"):
+                    rec["alias"] = str(entry["alias"])
+                if entry.get("steam_id") and not rec["steam_id"]:
+                    rec["steam_id"] = str(entry["steam_id"])
+                if entry.get("country"):
+                    rec["country"] = str(entry["country"]).lower()
+
+            w_cnt = int(entry.get("wins", 0))
+            l_cnt = int(entry.get("losses", 0))
+            t_cnt = int(entry.get("total", w_cnt + l_cnt))
+            rec[field_name] = t_cnt
+            rec["wins"] += w_cnt
+            rec["losses"] += l_cnt
+            rec["total_games"] += t_cnt
+            rec["last_match_date"] = max(rec["last_match_date"], int(entry.get("last_match_date", 0)))
+
+    rows = list(by_pid.values())
+    for rec in rows:
+        tot = int(rec["total_games"])
+        rec["ratio"] = int(round((int(rec["wins"]) * 100.0) / tot)) if tot > 0 else 0
+
+    rows.sort(key=lambda r: (-int(r["total_games"]), -int(r["wins"]), str(r["alias"]).lower()))
+    for idx, rec in enumerate(rows, start=1):
+        rec["games_rank"] = idx
+    return rows
+
+
 def render_summary_attachments(
     matches: list[dict[str, Any]],
     rankings_by_mode: dict[str, list[dict[str, Any]]] | None,
     avatar_provider: SteamAvatarProvider,
     top_n: int = 20,
+    custom_players: list[dict[str, Any]] | None = None,
 ) -> list[tuple[str, bytes, str]]:
     """Gera os PNGs da Mensagem Fixada paginados para preservar largura total no Discord."""
     files: list[tuple[str, bytes, str]] = []
@@ -415,9 +516,57 @@ def render_summary_attachments(
                     )
                 )
 
+        selected_games = build_selected_players_total_games(rankings_by_mode, custom_players=custom_players)
+        if selected_games:
+            grand_total = sum(int(e["total_games"]) for e in selected_games)
+            grand_str = f"{grand_total:,}".replace(",", ".")
+            if len(selected_games) <= 32 or len(files) >= 8:
+                files.append(
+                    (
+                        "ranking_veteranos_jogos.png",
+                        render_selected_games_table_png(
+                            entries=selected_games,
+                            avatar_provider=avatar_provider,
+                            subtitle_override=f"{len(selected_games)} Veteranos • {grand_str} Jogos",
+                            total_games_sum=grand_total,
+                            start_rank=1,
+                        ),
+                        "image/png",
+                    )
+                )
+            else:
+                half = (len(selected_games) + 1) // 2
+                p1, p2 = selected_games[:half], selected_games[half:]
+                files.append(
+                    (
+                        "ranking_veteranos_jogos.png",
+                        render_selected_games_table_png(
+                            entries=p1,
+                            avatar_provider=avatar_provider,
+                            subtitle_override=f"Parte 1/2 • {len(selected_games)} Veteranos • {grand_str} Jogos",
+                            total_games_sum=grand_total,
+                            start_rank=1,
+                        ),
+                        "image/png",
+                    )
+                )
+                files.append(
+                    (
+                        "ranking_veteranos_jogos_p2.png",
+                        render_selected_games_table_png(
+                            entries=p2,
+                            avatar_provider=avatar_provider,
+                            subtitle_override=f"Parte 2/2 • {len(selected_games)} Veteranos",
+                            total_games_sum=grand_total,
+                            start_rank=half + 1,
+                        ),
+                        "image/png",
+                    )
+                )
+
     grouped = group_matches_by_id(matches)[:5]
     files.append(("recent_matches.png", render_matches_table_png(grouped, avatar_provider=avatar_provider, live_single=False), "image/png"))
-    return files
+    return files[:10]
 
 
 class DiscordWebhookClient:
@@ -463,7 +612,7 @@ class DiscordWebhookClient:
             raise ValueError("URL de destino bloqueada pela política estrita do DiscordWebhookClient.")
 
         method_upper = method.upper()
-        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.3", "Accept-Encoding": "gzip"}
+        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.4", "Accept-Encoding": "gzip"}
         if method_upper in ("GET", "DELETE"):
             body = None
         elif files:
@@ -584,6 +733,7 @@ class DiscordWebhookClient:
             rankings_by_mode=rankings_by_mode,
             avatar_provider=self.get_avatar_provider(),
             top_n=top_n,
+            custom_players=custom_players,
         )
         att_names = [f[0] for f in files]
         payload = build_summary_list_payload(

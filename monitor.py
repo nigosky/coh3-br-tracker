@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v7.3 — Ranking Diário (pós-00:01 BRT), Limpeza 72h, Partidas via SteamID e Segurança Endurecida."""
+"""Monitor automático CoH3 Brasil v7.4 — Ranking Diário + Total de Jogos Veteranos, Limpeza 72h e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_3_daily_ranking_clean"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_4_veteranos_badge_total_games"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
@@ -497,6 +497,38 @@ def prune_old_discord_messages(
     return pruned_count
 
 
+def reset_and_clean_discord_channel(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+) -> int:
+    """Apaga todas as mensagens conhecidas do bot no canal Discord e reinicia o painel do zero."""
+    if not discord.is_configured:
+        return 0
+
+    targets = db.get_all_active_discord_message_ids(include_summary=True)
+    deleted = 0
+    for msg_id, kind in targets:
+        try:
+            if discord.delete_message(msg_id, protected_message_id=None):
+                deleted += 1
+            time.sleep(0.35)
+        except Exception as exc:
+            logger.warning(
+                "Falha ao apagar mensagem (%s | %s) durante reset do canal Discord: %s",
+                msg_id,
+                kind,
+                redact_secrets(exc),
+            )
+
+    db.reset_discord_channel_state()
+    logger.info(
+        "[RESET CANAL DISCORD] %d/%d mensagem(ns) removida(s) do canal; histórico preservado em SQLite e painel reiniciado do zero.",
+        deleted,
+        len(targets),
+    )
+    return deleted
+
+
 def maybe_refresh_top_rankings(
     config_path: Path,
     cfg: dict[str, Any],
@@ -665,6 +697,7 @@ def run_cycle(
     force_rank_scan: bool = False,
     is_oneshot: bool = False,
     verify_discord: bool = False,
+    reset_discord_channel: bool = False,
 ) -> tuple[int, int]:
     """Executa um ciclo completo com dupla checagem de API Relic, fila PENDING e entrega confirmada no Discord."""
     cfg = load_config(config_path)
@@ -689,6 +722,9 @@ def run_cycle(
                 wh_info.get("name") or "Webhook",
                 wh_info.get("channel_id") or "N/D",
             )
+
+        if reset_discord_channel and discord.is_configured:
+            reset_and_clean_discord_channel(db, discord)
 
         cfg_upgraded = ensure_core_roster_in_config(cfg)
         if cfg_upgraded:
@@ -920,9 +956,12 @@ def run_cycle(
             panel_status = "inalterado"
 
             if summary_needs_refresh or rankings_updated or not summary_msg_id or layout_needs_upgrade or content_needs_refresh:
+                display_since_raw = db.get_state("display_since_ts") or "0"
+                display_since_ts = int(display_since_raw) if display_since_raw.isdigit() else 0
                 latest_catalog = db.get_recent_recorded_matches(
                     limit=max(40, summary_size * 3),
                     only_active_players=True,
+                    min_recorded_at=display_since_ts,
                 )
                 updated_players = db.get_active_players()
                 rankings_for_panel = fresh_rankings or load_cached_rankings(config_path.parent, top_n=top_n)
@@ -984,7 +1023,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.3 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.4 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -996,6 +1035,11 @@ def main() -> int:
         "--verify-discord",
         action="store_true",
         help="Valida ativamente o Webhook do Discord antes de iniciar o ciclo (dupla checagem de conectividade)",
+    )
+    parser.add_argument(
+        "--reset-discord-channel",
+        action="store_true",
+        help="Remove todas as mensagens conhecidas do bot no canal Discord e reinicia o painel do zero",
     )
     args = parser.parse_args()
 
@@ -1014,7 +1058,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.3 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.4 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -1026,6 +1070,7 @@ def main() -> int:
                 force_rank_scan=(args.force_rank_scan and first_iter),
                 is_oneshot=bool(args.once),
                 verify_discord=(bool(args.verify_discord) and first_iter),
+                reset_discord_channel=(bool(args.reset_discord_channel) and first_iter),
             )
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)

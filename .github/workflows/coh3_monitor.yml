@@ -16,6 +16,7 @@ on:
       - master
     paths:
       - "**.py"
+      - "assets/**"
       - "config.json"
       - ".github/workflows/**"
   workflow_dispatch:
@@ -37,6 +38,11 @@ on:
         type: boolean
       force_rank_scan:
         description: "Forcar revarredura imediata do Ranking (Top 20 + monitorados) nas leaderboards?"
+        required: false
+        default: false
+        type: boolean
+      reset_discord_channel:
+        description: "Limpar mensagens antigas do bot no canal Discord e recomecar do zero?"
         required: false
         default: false
         type: boolean
@@ -85,6 +91,7 @@ jobs:
           INPUT_REMOVE_PLAYER: ${{ inputs.remove_custom_player }}
           INPUT_SEND_TEST: ${{ inputs.send_initial_test }}
           INPUT_FORCE_RANK: ${{ inputs.force_rank_scan }}
+          INPUT_RESET_DISCORD: ${{ inputs.reset_discord_channel }}
         run: |
           set -euo pipefail
 
@@ -111,11 +118,14 @@ jobs:
             python3 manage.py remove-player -- "${INPUT_REMOVE_PLAYER}"
           fi
 
+          MONITOR_ARGS=(--once --verify-discord)
           if [ "${INPUT_FORCE_RANK:-false}" = "true" ]; then
-            python3 monitor.py --once --verify-discord --force-rank-scan
-          else
-            python3 monitor.py --once --verify-discord
+            MONITOR_ARGS+=(--force-rank-scan)
           fi
+          if [ "${INPUT_RESET_DISCORD:-false}" = "true" ]; then
+            MONITOR_ARGS+=(--reset-discord-channel)
+          fi
+          python3 monitor.py "${MONITOR_ARGS[@]}"
 
           if [ "${INPUT_SEND_TEST:-false}" = "true" ]; then
             python3 manage.py test-discord
