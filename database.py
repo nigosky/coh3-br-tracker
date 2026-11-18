@@ -69,8 +69,23 @@ class MatchDatabase:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS player_avatars (
+                    steam_id TEXT PRIMARY KEY,
+                    profile_id INTEGER NOT NULL DEFAULT 0,
+                    avatar_url TEXT NOT NULL,
+                    png_blob BLOB NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_avatars_pid
+                    ON player_avatars (profile_id);
                 """
             )
+            try:
+                conn.execute("ALTER TABLE recorded_matches ADD COLUMN tracked_steam_id TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
 
     def sync_tracked_players(self, players_cfg: list[dict[str, Any]]) -> None:
         """Sincroniza a lista de jogadores escolhidos do config.json com a tabela tracked_players."""
@@ -109,9 +124,14 @@ class MatchDatabase:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_baseline_synced(self, profile_id: int, alias: str | None = None) -> None:
+    def mark_baseline_synced(self, profile_id: int, alias: str | None = None, steam_id: str | None = None) -> None:
         with self._connect() as conn:
-            if alias:
+            if alias and steam_id:
+                conn.execute(
+                    "UPDATE tracked_players SET baseline_synced = 1, alias = ?, steam_id = ? WHERE profile_id = ?",
+                    (alias, steam_id, profile_id),
+                )
+            elif alias:
                 conn.execute(
                     "UPDATE tracked_players SET baseline_synced = 1, alias = ? WHERE profile_id = ?",
                     (alias, profile_id),
@@ -140,17 +160,18 @@ class MatchDatabase:
             conn.execute(
                 """
                 INSERT INTO recorded_matches (
-                    match_id, tracked_profile_id, tracked_alias, tracked_faction,
+                    match_id, tracked_profile_id, tracked_alias, tracked_steam_id, tracked_faction,
                     tracked_faction_short, win, resulttype, mode, matchtype_id,
                     map_raw, map_clean, start_time, completion_time, duration_sec,
                     old_elo, new_elo, allies_json, opponents_json, counters_json,
                     has_replay, coh3stats_url, discord_message_id, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     match["match_id"],
                     match["tracked_profile_id"],
                     match["tracked_alias"],
+                    str(match.get("tracked_steam_id") or ""),
                     match["tracked_faction"],
                     match["tracked_faction_short"],
                     1 if match["win"] else 0,
@@ -191,7 +212,7 @@ class MatchDatabase:
             if only_active_players:
                 rows = conn.execute(
                     """
-                    SELECT rm.*
+                    SELECT rm.*, COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id
                     FROM recorded_matches rm
                     JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
                     WHERE tp.active = 1
@@ -202,13 +223,20 @@ class MatchDatabase:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM recorded_matches ORDER BY completion_time DESC LIMIT ?",
+                    """
+                    SELECT rm.*, COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id
+                    FROM recorded_matches rm
+                    LEFT JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+                    ORDER BY rm.completion_time DESC
+                    LIMIT ?
+                    """,
                     (limit,),
                 ).fetchall()
 
         results: list[dict[str, Any]] = []
         for r in rows:
             d = dict(r)
+            d["tracked_steam_id"] = d.pop("resolved_steam_id", "") or d.get("tracked_steam_id", "")
             d["win"] = bool(d["win"])
             d["has_replay"] = bool(d["has_replay"])
             d["allies"] = json.loads(d.pop("allies_json"))
@@ -216,6 +244,51 @@ class MatchDatabase:
             d["counters"] = json.loads(d.pop("counters_json"))
             results.append(d)
         return results
+
+    def get_cached_avatar(self, steam_id: str = "", profile_id: int = 0, max_age_sec: int = 7 * 86400) -> bytes | None:
+        now = int(time.time())
+        with self._connect() as conn:
+            row = None
+            if steam_id:
+                row = conn.execute(
+                    "SELECT png_blob, updated_at FROM player_avatars WHERE steam_id = ?",
+                    (steam_id,),
+                ).fetchone()
+            if row is None and profile_id > 0:
+                row = conn.execute(
+                    "SELECT png_blob, updated_at FROM player_avatars WHERE profile_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    (int(profile_id),),
+                ).fetchone()
+        if not row:
+            return None
+        if (now - int(row["updated_at"])) > max_age_sec:
+            return None
+        return bytes(row["png_blob"])
+
+    def save_cached_avatar(self, steam_id: str, avatar_url: str, png_blob: bytes, profile_id: int = 0) -> None:
+        if not steam_id or not png_blob:
+            return
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO player_avatars (steam_id, profile_id, avatar_url, png_blob, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(steam_id) DO UPDATE SET
+                    profile_id = CASE WHEN excluded.profile_id > 0 THEN excluded.profile_id ELSE player_avatars.profile_id END,
+                    avatar_url = excluded.avatar_url,
+                    png_blob = excluded.png_blob,
+                    updated_at = excluded.updated_at
+                """,
+                (steam_id, int(profile_id), avatar_url, sqlite3.Binary(png_blob), now),
+            )
+
+    def get_steam_id_map(self) -> dict[int, str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT profile_id, steam_id FROM tracked_players WHERE steam_id != ''"
+            ).fetchall()
+        return {int(r["profile_id"]): str(r["steam_id"]) for r in rows}
 
     def get_state(self, key: str) -> str | None:
         with self._connect() as conn:

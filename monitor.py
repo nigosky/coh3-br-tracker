@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor em tempo real das partidas e da entrada de novos brasileiros no Top 20 (1v1, 2v2 e Team Games)."""
+"""Monitor em tempo real das partidas, Ranking Top 20 + Convidados (1v1, 2v2 e Team Games)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Any
 
 from database import MatchDatabase
-from discord_notifier import DiscordWebhookClient
+from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
     RelicAPIClient,
     build_top_tracked_players,
     compute_merged_mode_rankings,
     export_merged_top_rankings,
     export_players_files,
+    fetch_custom_players_stats,
 )
 
 logging.basicConfig(
@@ -32,10 +33,9 @@ logger = logging.getLogger("coh3_br.monitor")
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
-
-
 SECRET_FILE_NAME = ".env.secret"
 SAFE_WEBHOOK_PLACEHOLDER = "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_WEBHOOK_URL"
+CURRENT_SUMMARY_LAYOUT_VERSION = "v3_graphical_steam_avatars"
 
 
 def _read_local_secret_webhook(base_dir: Path) -> str:
@@ -81,6 +81,42 @@ def save_config_file(config_path: Path, cfg_to_save: dict[str, Any]) -> None:
         config_path.write_text(serialized, encoding="utf-8")
 
 
+def merge_catalog_with_custom_players(
+    base_players: list[dict[str, Any]],
+    custom_players: list[dict[str, Any]],
+    relic: RelicAPIClient,
+) -> list[dict[str, Any]]:
+    """Injeta estatísticas pessoais (getPersonalStat) dos jogadores convidados fora ou dentro do Top 20."""
+    by_pid: dict[int, dict[str, Any]] = {int(p["profile_id"]): dict(p) for p in base_players}
+    custom_ids = [int(cp["profile_id"]) for cp in custom_players if int(cp.get("profile_id", 0)) > 0]
+    if not custom_ids:
+        return list(by_pid.values())
+
+    fetched_custom = fetch_custom_players_stats(relic, custom_ids)
+    for cp_stat in fetched_custom:
+        pid = int(cp_stat["profile_id"])
+        if pid in by_pid:
+            by_pid[pid]["is_custom"] = True
+            by_pid[pid].setdefault("inactive_modes", cp_stat.get("inactive_modes", {}))
+            for k, v in cp_stat.get("modes", {}).items():
+                by_pid[pid].setdefault("modes", {}).setdefault(k, v)
+        else:
+            by_pid[pid] = cp_stat
+
+    return list(by_pid.values())
+
+
+def load_cached_rankings(base_dir: Path, top_n: int = 20) -> dict[str, list[dict[str, Any]]] | None:
+    rank_file = base_dir / f"top{top_n}_br_por_modo.json"
+    if not rank_file.exists():
+        return None
+    try:
+        doc = json.loads(rank_file.read_text(encoding="utf-8"))
+        return doc.get("rankings_by_mode")
+    except Exception:
+        return None
+
+
 def maybe_refresh_top_rankings(
     config_path: Path,
     db: MatchDatabase,
@@ -89,9 +125,8 @@ def maybe_refresh_top_rankings(
     force: bool = False,
 ) -> bool:
     """
-    Revarre periodicamente as leaderboards da Relic para detectar se algum brasileiro novo
-    entrou entre os Top N colocados de '1v1', '2v2' ou 'Team Games' (3v3 + 4v4).
-    Qualquer novo colocado passa automaticamente a ser seguido!
+    Revarre periodicamente as leaderboards da Relic para atualizar os Top 20 ('1v1', '2v2', 'Team Games')
+    + recalcular o ELO dos jogadores convidados extras ('custom_players').
     """
     raw_disk_cfg = json.loads(config_path.read_text(encoding="utf-8"))
     if not raw_disk_cfg.get("auto_follow_top_br", True) and not force:
@@ -100,6 +135,8 @@ def maybe_refresh_top_rankings(
     refresh_mins = max(5, int(raw_disk_cfg.get("leaderboard_refresh_minutes", 30)))
     top_n = int(raw_disk_cfg.get("top_n_per_mode", 20))
     remove_dropped = bool(raw_disk_cfg.get("remove_if_drops_out_of_top", False))
+    custom_players: list[dict[str, Any]] = raw_disk_cfg.get("custom_players", [])
+    custom_ids = {int(cp["profile_id"]) for cp in custom_players if "profile_id" in cp}
 
     now = int(time.time())
     last_scan_str = db.get_state("last_leaderboard_scan_ts")
@@ -109,22 +146,25 @@ def maybe_refresh_top_rankings(
         return False
 
     logger.info(
-        "Atualizando leaderboards Steam na API da Relic para verificar novos brasileiros no Top %d (1v1, 2v2, Team Games)...",
+        "Atualizando leaderboards Steam + %d convidado(s) na API da Relic (Top %d: 1v1, 2v2, Team Games)...",
+        len(custom_ids),
         top_n,
     )
     players = relic.fetch_brazilian_players()
     base_dir = config_path.parent
     export_players_files(players, base_dir / "jogadores_br_steam.json", base_dir / "jogadores_br_steam.csv")
 
-    rankings = compute_merged_mode_rankings(players)
+    merged_players = merge_catalog_with_custom_players(players, custom_players, relic)
+    rankings = compute_merged_mode_rankings(merged_players, custom_ids=custom_ids)
     export_merged_top_rankings(
         rankings,
         top_n=top_n,
         json_path=base_dir / f"top{top_n}_br_por_modo.json",
         csv_path=base_dir / f"top{top_n}_br_por_modo.csv",
+        custom_players=custom_players,
     )
 
-    current_top_players = build_top_tracked_players(rankings, top_n=top_n)
+    current_top_players = build_top_tracked_players(rankings, top_n=top_n, custom_players=custom_players)
     existing_list = raw_disk_cfg.get("tracked_players", [])
     existing_by_id: dict[int, dict[str, Any]] = {int(p["profile_id"]): p for p in existing_list}
     was_already_populated = len(existing_by_id) > 0
@@ -135,31 +175,35 @@ def maybe_refresh_top_rankings(
         updated_by_id: dict[int, dict[str, Any]] = {}
         for tp in current_top_players:
             pid = tp["profile_id"]
-            if pid not in existing_by_id:
+            if pid not in existing_by_id and not tp.get("is_custom"):
                 newly_entered.append(tp)
             updated_by_id[pid] = {
                 "profile_id": pid,
                 "alias": tp["alias"],
+                "steam_id": str(tp.get("steam_id") or existing_by_id.get(pid, {}).get("steam_id") or ""),
                 "placements": tp["placements"],
+                "is_custom": bool(tp.get("is_custom")),
             }
     else:
-        # Modo cumulativo (padrão): mantém todos já seguidos e adiciona qualquer brasileiro novo que entrar no Top N
         updated_by_id = dict(existing_by_id)
         for tp in current_top_players:
             pid = tp["profile_id"]
-            if pid not in updated_by_id:
+            if pid not in updated_by_id and not tp.get("is_custom"):
                 newly_entered.append(tp)
             updated_by_id[pid] = {
                 "profile_id": pid,
                 "alias": tp["alias"],
+                "steam_id": str(tp.get("steam_id") or updated_by_id.get(pid, {}).get("steam_id") or ""),
                 "placements": tp["placements"],
+                "is_custom": bool(tp.get("is_custom")) or (pid in custom_ids),
             }
 
     db.set_state("last_leaderboard_scan_ts", str(now))
+    # Forca atualizacao visual do quadro de Ranking na mensagem fixada do Discord
+    db.set_state("rankings_updated_flag", "1")
 
-    if newly_entered or len(updated_by_id) != len(existing_by_id):
-        raw_disk_cfg["tracked_players"] = list(updated_by_id.values())
-        save_config_file(config_path, raw_disk_cfg)
+    raw_disk_cfg["tracked_players"] = list(updated_by_id.values())
+    save_config_file(config_path, raw_disk_cfg)
 
     for np in newly_entered:
         logger.info(
@@ -181,12 +225,11 @@ def maybe_refresh_top_rankings(
 
 def run_cycle(config_path: Path, relic: RelicAPIClient, force_rank_scan: bool = False) -> tuple[int, int]:
     """
-    Executa um ciclo de varredura:
-    - Revarre periodicamente as leaderboards para auto-seguir novos brasileiros no Top 20
-    - Recarrega config.json (hot-reload)
-    - Consulta histórico recente de cada jogador brasileiro seguido
-    - Grava novas partidas no SQLite
-    - Envia Card Webhook individual + atualiza a Lista Resumo Fixada no Discord
+    Executa um ciclo completo:
+    - Atualiza periodicamente os rankings Top 20 + convidados extras
+    - Consulta partidas recentes dos jogadores seguidos
+    - Renderiza Cards horizontais coh3stats + Tabelas de Ranking Tático com Avatares Steam BR
+    - Atualiza automaticamente o painel fixado no Discord (Ranking + Últimas Partidas)
     """
     cfg = load_config(config_path)
     db_path = Path(cfg.get("sqlite_db_path", "./coh3_br_matches.db"))
@@ -197,12 +240,21 @@ def run_cycle(config_path: Path, relic: RelicAPIClient, force_rank_scan: bool = 
     discord = DiscordWebhookClient(
         webhook_url=str(cfg.get("discord_webhook_url", "")),
         bot_username=str(cfg.get("bot_username", "CoH3 Brasil Monitor")),
+        db=db,
+        catalog_json_path=config_path.parent / "jogadores_br_steam.json",
     )
 
-    # Verifica se está na hora de revarrer as leaderboards para descobrir novos brasileiros no Top 20
+    layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
+
     try:
-        added_from_top = maybe_refresh_top_rankings(config_path, db, relic, discord, force=force_rank_scan)
-        if added_from_top:
+        added_from_top = maybe_refresh_top_rankings(
+            config_path,
+            db,
+            relic,
+            discord,
+            force=(force_rank_scan or layout_needs_upgrade),
+        )
+        if added_from_top or layout_needs_upgrade:
             cfg = load_config(config_path)
     except Exception as exc:
         logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", exc)
@@ -213,6 +265,8 @@ def run_cycle(config_path: Path, relic: RelicAPIClient, force_rank_scan: bool = 
     only_automatch = bool(cfg.get("only_automatch", False))
     seed_limit = int(cfg.get("initial_seed_per_player", 3))
     summary_size = int(cfg.get("summary_list_size", 15))
+    top_n = int(cfg.get("top_n_per_mode", 20))
+    custom_players = cfg.get("custom_players", [])
 
     if not active_players:
         logger.warning("Nenhum jogador brasileiro selecionado em %s.", config_path.name)
@@ -238,6 +292,7 @@ def run_cycle(config_path: Path, relic: RelicAPIClient, force_rank_scan: bool = 
             continue
 
         resolved_alias = recent_matches[0]["tracked_alias"] if recent_matches else alias
+        resolved_steam_id = recent_matches[0].get("tracked_steam_id", "") if recent_matches else ""
 
         if not is_baseline_done:
             for m in reversed(recent_matches[:seed_limit]):
@@ -245,7 +300,7 @@ def run_cycle(config_path: Path, relic: RelicAPIClient, force_rank_scan: bool = 
                     seeded_count += 1
             for m in recent_matches[seed_limit:]:
                 db.insert_match(m)
-            db.mark_baseline_synced(pid, resolved_alias)
+            db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
             players_changed = True
             logger.info(
                 "Jogador %s (#%d) sincronizado inicialmente (%d partidas recentes catalogadas).",
@@ -269,49 +324,58 @@ def run_cycle(config_path: Path, relic: RelicAPIClient, force_rank_scan: bool = 
                         m["mode"],
                         m["match_id"],
                     )
-            if resolved_alias != alias:
-                db.mark_baseline_synced(pid, resolved_alias)
+            if resolved_alias != alias or (resolved_steam_id and not player.get("steam_id")):
+                db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
 
     newly_finished.sort(key=lambda x: x["completion_time"])
+    grouped_new_matches = group_matches_by_id(newly_finished)
 
     if discord.is_configured:
-        for m in newly_finished:
+        for grp in grouped_new_matches:
             try:
-                msg_id = discord.send_match_card(m)
+                msg_id = discord.send_match_card(grp)
                 if msg_id:
-                    db.update_match_discord_id(m["match_id"], m["tracked_profile_id"], msg_id)
+                    for rec in grp["records"]:
+                        db.update_match_discord_id(rec["match_id"], rec["tracked_profile_id"], msg_id)
                 time.sleep(0.5)
             except Exception as exc:
-                logger.error("Falha ao enviar Card da partida #%d ao Discord: %s", m["match_id"], exc)
+                logger.error("Falha ao enviar Card da partida #%d ao Discord: %s", grp["match_id"], exc)
 
         summary_msg_id = db.get_state("summary_message_id")
-        if newly_finished or players_changed or not summary_msg_id:
+        layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
+        rankings_updated = db.get_state("rankings_updated_flag") == "1"
+
+        if grouped_new_matches or players_changed or not summary_msg_id or layout_needs_upgrade or rankings_updated:
             try:
-                latest_catalog = db.get_recent_recorded_matches(limit=summary_size, only_active_players=True)
+                latest_catalog = db.get_recent_recorded_matches(
+                    limit=max(40, summary_size * 3),
+                    only_active_players=True,
+                )
                 updated_players = db.get_active_players()
+                cached_rankings = load_cached_rankings(config_path.parent, top_n=top_n)
                 new_summary_id = discord.upsert_summary_message(
                     matches=latest_catalog,
                     tracked_players=updated_players,
                     existing_message_id=summary_msg_id,
+                    rankings_by_mode=cached_rankings,
+                    custom_players=custom_players,
+                    top_n=top_n,
                 )
-                if new_summary_id and new_summary_id != summary_msg_id:
-                    db.set_state("summary_message_id", new_summary_id)
-                    logger.info(
-                        "Mensagem de Lista Resumo criada no Discord (ID %s). Fixe-a no canal privado!",
-                        new_summary_id,
-                    )
-                else:
-                    logger.info("Lista Resumo no Discord atualizada com sucesso.")
+                if new_summary_id:
+                    if new_summary_id != summary_msg_id:
+                        db.set_state("summary_message_id", new_summary_id)
+                        logger.info("Mensagem Fixada criada no Discord (ID %s).", new_summary_id)
+                    else:
+                        logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
+                    db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
+                    db.set_state("rankings_updated_flag", "0")
             except Exception as exc:
-                logger.error("Falha ao atualizar Lista Resumo no Discord: %s", exc)
+                logger.error("Falha ao atualizar Mensagem Fixada no Discord: %s", exc)
     else:
-        if newly_finished or players_changed:
-            logger.info(
-                "Partidas salvas em %s (configure 'discord_webhook_url' em config.json para publicar no Discord).",
-                db_path.name,
-            )
+        if grouped_new_matches or players_changed:
+            logger.info("Partidas salvas em %s.", db_path.name)
 
-    return len(newly_finished), seeded_count
+    return len(grouped_new_matches), seeded_count
 
 
 def main() -> int:
@@ -352,7 +416,7 @@ def main() -> int:
                 force_rank_scan=(args.force_rank_scan and first_iter),
             )
             first_iter = False
-            logger.info("Ciclo concluído: %d nova(s), %d inicial(is).", new_cnt, seed_cnt)
+            logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)
         except Exception as exc:
             logger.exception("Erro inesperado no ciclo de monitoramento: %s", exc)
 
@@ -366,9 +430,11 @@ def main() -> int:
 
         elapsed = time.monotonic() - start_t
         sleep_for = max(1.0, poll_sec - elapsed)
-        end_sleep = time.monotonic() + sleep_for
-        while time.monotonic() < end_sleep and not stop_requested:
-            time.sleep(0.5)
+        slept = 0.0
+        while slept < sleep_for and not stop_requested:
+            step = min(1.0, sleep_for - slept)
+            time.sleep(step)
+            slept += step
 
     return 0
 

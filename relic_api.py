@@ -324,6 +324,8 @@ class RelicAPIClient:
         }
         tracked_prof = profiles_by_id.get(profile_id, {})
         tracked_alias = tracked_prof.get("alias") or fallback_alias or f"Player {profile_id}"
+        tracked_steam_raw = str(tracked_prof.get("name") or "")
+        tracked_steam_id = tracked_steam_raw.replace("/steam/", "") if tracked_steam_raw.startswith("/steam/") else ""
 
         raw_stats = data.get("matchHistoryStats", [])
         raw_stats.sort(key=lambda m: int(m.get("completiontime", 0)), reverse=True)
@@ -357,15 +359,23 @@ class RelicAPIClient:
                 prof = profiles_by_id.get(rpid, {})
                 mem = members_by_pid.get(rpid, {})
                 race_name = self.races.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
-                new_elo = int(mem.get("newrating", 0)) if mem.get("newrating", 0) > 0 else None
+                p_old_elo = int(mem["oldrating"]) if int(mem.get("oldrating", 0) or 0) > 0 else None
+                p_new_elo = int(mem["newrating"]) if int(mem.get("newrating", 0) or 0) > 0 else None
+                p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
+                p_steam_raw = str(prof.get("name") or "")
+                p_steam_id = p_steam_raw.replace("/steam/", "") if p_steam_raw.startswith("/steam/") else ""
 
                 participant = {
                     "profile_id": rpid,
                     "alias": prof.get("alias") or f"ID {rpid}",
+                    "steam_id": p_steam_id,
                     "country": str(prof.get("country") or "un").lower(),
                     "faction": race_name,
                     "faction_short": FACTION_SHORT.get(race_name, race_name),
-                    "elo": new_elo,
+                    "old_elo": p_old_elo,
+                    "new_elo": p_new_elo,
+                    "elo_delta": p_delta,
+                    "elo": p_new_elo,
                 }
                 if rep.get("teamid") == my_team:
                     if rpid != profile_id:
@@ -374,8 +384,8 @@ class RelicAPIClient:
                     opponents.append(participant)
 
             my_mem = members_by_pid.get(profile_id, {})
-            old_elo = int(my_mem["oldrating"]) if my_mem.get("oldrating", 0) > 0 else None
-            new_elo = int(my_mem["newrating"]) if my_mem.get("newrating", 0) > 0 else None
+            old_elo = int(my_mem["oldrating"]) if int(my_mem.get("oldrating", 0) or 0) > 0 else None
+            new_elo = int(my_mem["newrating"]) if int(my_mem.get("newrating", 0) or 0) > 0 else None
 
             counters: dict[str, Any] = {}
             raw_counters = my_rep.get("counters")
@@ -397,6 +407,7 @@ class RelicAPIClient:
                     "match_id": match_id,
                     "tracked_profile_id": profile_id,
                     "tracked_alias": tracked_alias,
+                    "tracked_steam_id": tracked_steam_id,
                     "tracked_faction": my_faction,
                     "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
                     "win": result_type == 1,
@@ -469,6 +480,121 @@ def export_players_files(players: list[dict[str, Any]], json_path: Path, csv_pat
             )
 
 
+PROFILE_ID_EXTRACT_RE = re.compile(r"(?:coh3stats\.com/(?:[a-z]{2}/)?players/)?(\d{1,12})")
+
+LEADERBOARD_ID_TO_MODE_FACTION: dict[int, tuple[str, str]] = {
+    lb_id: (m_name, f_name)
+    for m_name, facs in STEAM_LEADERBOARDS.items()
+    for f_name, lb_id in facs.items()
+}
+
+
+def parse_profile_id_input(raw_input: str) -> int | None:
+    """
+    Extrai de forma segura o Relic profile_id numérico tanto de um ID puro ('87314')
+    quanto de um link completo do coh3stats ('https://coh3stats.com/players/87314-...').
+    """
+    txt = (raw_input or "").strip()
+    if not txt:
+        return None
+    if txt.isdigit():
+        val = int(txt)
+        return val if val > 0 else None
+    m = re.search(r"coh3stats\.com/(?:[a-z]{2}/)?players/(\d{1,12})", txt, flags=re.IGNORECASE)
+    if m:
+        val = int(m.group(1))
+        return val if val > 0 else None
+    return None
+
+
+def fetch_custom_players_stats(client: RelicAPIClient, profile_ids: list[int]) -> list[dict[str, Any]]:
+    """
+    Consulta getPersonalStat na API da Relic para obter alias e ELOs de todas as facções
+    de jogadores convidados/extras (mesmo fora do Top 20 ou fora das leaderboards ativas).
+    """
+    clean_ids = sorted({int(pid) for pid in profile_ids if int(pid) > 0})
+    if not clean_ids:
+        return []
+
+    results_by_pid: dict[int, dict[str, Any]] = {}
+    for idx in range(0, len(clean_ids), 25):
+        batch = clean_ids[idx : idx + 25]
+        encoded_ids = urllib.parse.quote("[" + ",".join(str(i) for i in batch) + "]")
+        url = f"{BASE_URL}/getPersonalStat?title={TITLE_STEAM}&profile_ids={encoded_ids}"
+        data = client._get_json(url)
+
+        solo_sg_to_pid: dict[int, int] = {}
+        for sg in data.get("statGroups", []):
+            members = sg.get("members", [])
+            if sg.get("type") == 1 and len(members) == 1:
+                mem = members[0]
+                pid = int(mem.get("profile_id", 0))
+                if pid not in batch:
+                    continue
+                sg_id = int(sg["id"])
+                solo_sg_to_pid[sg_id] = pid
+                steam_raw = str(mem.get("name", ""))
+                steam_id = steam_raw.replace("/steam/", "") if steam_raw.startswith("/steam/") else ""
+                results_by_pid[pid] = {
+                    "profile_id": pid,
+                    "alias": str(mem.get("alias") or f"Player {pid}"),
+                    "steam_id": steam_id,
+                    "country": str(mem.get("country") or "br").lower(),
+                    "level": int(mem.get("level", 0)),
+                    "xp": int(mem.get("xp", 0)),
+                    "max_elo": 0,
+                    "best_mode": "",
+                    "total_wins": 0,
+                    "total_losses": 0,
+                    "last_match_date": 0,
+                    "modes": {},
+                    "inactive_modes": {},
+                    "is_custom": True,
+                    "coh3stats_url": f"https://coh3stats.com/players/{pid}",
+                }
+
+        for st in data.get("leaderboardStats", []):
+            sg_id = int(st.get("statgroup_id", -1))
+            lb_id = int(st.get("leaderboard_id", -1))
+            if sg_id not in solo_sg_to_pid or lb_id not in LEADERBOARD_ID_TO_MODE_FACTION:
+                continue
+            pid = solo_sg_to_pid[sg_id]
+            p = results_by_pid[pid]
+            mode, faction = LEADERBOARD_ID_TO_MODE_FACTION[lb_id]
+            elo = int(round(st.get("rating", 0)))
+            if elo <= 0:
+                continue
+            wins = int(st.get("wins", 0))
+            losses = int(st.get("losses", 0))
+            lmd = int(st.get("lastmatchdate", 0))
+            rank_val = int(st.get("rank", -1))
+            key = f"{mode}_{faction}"
+            stat_obj = {
+                "mode": mode,
+                "faction": faction,
+                "elo": elo,
+                "rank": rank_val,
+                "regionrank": int(st.get("regionrank", -1)),
+                "wins": wins,
+                "losses": losses,
+                "streak": int(st.get("streak", 0)),
+                "lastmatchdate": lmd,
+            }
+            if rank_val > 0:
+                p["modes"][key] = stat_obj
+            else:
+                p["inactive_modes"][key] = stat_obj
+            p["total_wins"] += wins
+            p["total_losses"] += losses
+            if elo > p["max_elo"]:
+                p["max_elo"] = elo
+                p["best_mode"] = f"{mode.upper()} ({faction.upper()})"
+            if lmd > p["last_match_date"]:
+                p["last_match_date"] = lmd
+
+    return list(results_by_pid.values())
+
+
 FACTIONS_ORDER = ("american", "british", "dak", "german")
 FACTION_KEY_LABELS = {
     "american": "USF",
@@ -487,14 +613,15 @@ STUDY_MODE_GROUPS: dict[str, tuple[str, ...]] = {
 def compute_merged_mode_rankings(
     players: list[dict[str, Any]],
     mode_groups: dict[str, tuple[str, ...]] | None = None,
+    custom_ids: set[int] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """
-    Mescla os rankings das facções ativas dentro de cada categoria de estudo:
-      - '1v1': média simples das facções ativas no 1v1 (até 4 rankings)
-      - '2v2': média simples das facções ativas no 2v2 (até 4 rankings)
-      - 'Team Games': mescla 3v3 e 4v4 pela média simples de todos os rankings ativos (até 8 rankings)
+    Mescla os rankings das facções ativas dentro de cada categoria ('1v1', '2v2', 'Team Games').
+    Jogadores extras em custom_ids entram na classificação geral pela média de ELO (usando rankings
+    ativos e, caso não tenham ranking ativo recente no modo, seu ELO histórico daquele modo).
     """
     groups = mode_groups or STUDY_MODE_GROUPS
+    custom_set = {int(x) for x in (custom_ids or set())}
     rankings_by_mode: dict[str, list[dict[str, Any]]] = {}
 
     for group_name, sub_modes in groups.items():
@@ -502,13 +629,19 @@ def compute_merged_mode_rankings(
         max_slots = len(sub_modes) * len(FACTIONS_ORDER)
 
         for p in players:
+            pid = int(p["profile_id"])
+            is_custom = pid in custom_set or bool(p.get("is_custom"))
             p_modes = p.get("modes", {})
+            p_inactive = p.get("inactive_modes", {})
             all_active_elos: list[int] = []
             per_faction_lists: dict[str, list[int]] = {f: [] for f in FACTIONS_ORDER}
             submode_elos: dict[str, int] = {}
             wins_mode = 0
             losses_mode = 0
             last_match_mode = 0
+            latest_streak = 0
+            latest_streak_ts = -1
+            used_inactive_fallback = False
 
             for sub in sub_modes:
                 for fac in FACTIONS_ORDER:
@@ -521,7 +654,33 @@ def compute_merged_mode_rankings(
                         submode_elos[key] = elo_val
                         wins_mode += int(st.get("wins", 0))
                         losses_mode += int(st.get("losses", 0))
-                        last_match_mode = max(last_match_mode, int(st.get("lastmatchdate", 0)))
+                        lmd_val = int(st.get("lastmatchdate", 0))
+                        if lmd_val > last_match_mode:
+                            last_match_mode = lmd_val
+                        if lmd_val >= latest_streak_ts:
+                            latest_streak_ts = lmd_val
+                            latest_streak = int(st.get("streak", 0))
+
+            # Se for jogador convidado sem ranking ativo atualmente no modo, aproveita seu ELO pessoal salvo na Relic
+            if not all_active_elos and is_custom and p_inactive:
+                used_inactive_fallback = True
+                for sub in sub_modes:
+                    for fac in FACTIONS_ORDER:
+                        key = f"{sub}_{fac}"
+                        st = p_inactive.get(key)
+                        if st and int(round(st.get("elo", 0))) > 0:
+                            elo_val = int(round(st["elo"]))
+                            all_active_elos.append(elo_val)
+                            per_faction_lists[fac].append(elo_val)
+                            submode_elos[key] = elo_val
+                            wins_mode += int(st.get("wins", 0))
+                            losses_mode += int(st.get("losses", 0))
+                            lmd_val = int(st.get("lastmatchdate", 0))
+                            if lmd_val > last_match_mode:
+                                last_match_mode = lmd_val
+                            if lmd_val >= latest_streak_ts:
+                                latest_streak_ts = lmd_val
+                                latest_streak = int(st.get("streak", 0))
 
             if not all_active_elos:
                 continue
@@ -533,12 +692,15 @@ def compute_merged_mode_rankings(
             }
             avg_elo = round(sum(all_active_elos) / len(all_active_elos), 1)
             max_mode_elo = max(all_active_elos)
+            total_games = wins_mode + losses_mode
+            win_ratio = int(round((wins_mode * 100.0) / total_games)) if total_games > 0 else 0
 
             mode_entries.append(
                 {
-                    "profile_id": int(p["profile_id"]),
+                    "profile_id": pid,
                     "alias": str(p["alias"]),
                     "steam_id": str(p.get("steam_id", "")),
+                    "country": str(p.get("country") or "br").lower(),
                     "mode": group_name,
                     "sub_modes": list(sub_modes),
                     "avg_elo": avg_elo,
@@ -548,10 +710,15 @@ def compute_merged_mode_rankings(
                     "max_rankings_slots": max_slots,
                     "faction_elos": faction_elos,
                     "submode_elos": submode_elos,
+                    "streak": latest_streak,
                     "wins": wins_mode,
                     "losses": losses_mode,
+                    "total": total_games,
+                    "ratio": win_ratio,
                     "last_match_date": last_match_mode,
-                    "coh3stats_url": f"https://coh3stats.com/players/{p['profile_id']}",
+                    "is_custom": is_custom,
+                    "inactive_fallback": used_inactive_fallback,
+                    "coh3stats_url": f"https://coh3stats.com/players/{pid}",
                 }
             )
 
@@ -574,16 +741,20 @@ def compute_merged_mode_rankings(
 def build_top_tracked_players(
     rankings_by_mode: dict[str, list[dict[str, Any]]],
     top_n: int = 20,
+    custom_players: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Seleciona os Top N colocados brasileiros de cada modo ('1v1', '2v2', 'Team Games')
-    e retorna a lista consolidada sem duplicatas para o config.json.
+    + todos os jogadores convidados (custom_players), sem duplicatas.
     """
+    custom_by_id = {int(cp["profile_id"]): cp for cp in (custom_players or [])}
     consolidated: dict[int, dict[str, Any]] = {}
 
     for mode, entries in rankings_by_mode.items():
-        for item in entries[:top_n]:
+        for idx, item in enumerate(entries):
             pid = item["profile_id"]
+            if idx >= top_n and pid not in custom_by_id and not item.get("is_custom"):
+                continue
             if pid not in consolidated:
                 consolidated[pid] = {
                     "profile_id": pid,
@@ -591,13 +762,27 @@ def build_top_tracked_players(
                     "steam_id": item["steam_id"],
                     "placements": [],
                     "best_avg_elo": item["avg_elo"],
+                    "is_custom": pid in custom_by_id or bool(item.get("is_custom")),
                 }
             rec = consolidated[pid]
-            rec["placements"].append(f"#{item['br_rank']} {mode} (média {item['avg_elo']:.1f})")
+            tag = " ⭐" if rec["is_custom"] and idx >= top_n else ""
+            rec["placements"].append(f"#{item['br_rank']} {mode} (média {item['avg_elo']:.1f}){tag}")
             if item["avg_elo"] > rec["best_avg_elo"]:
                 rec["best_avg_elo"] = item["avg_elo"]
 
-    ordered = sorted(consolidated.values(), key=lambda x: -x["best_avg_elo"])
+    # Garante que mesmo um convidado sem nenhuma partida ranqueada anterior seja seguido
+    for pid, cp in custom_by_id.items():
+        if pid not in consolidated:
+            consolidated[pid] = {
+                "profile_id": pid,
+                "alias": str(cp.get("alias") or f"Player {pid}"),
+                "steam_id": str(cp.get("steam_id") or ""),
+                "placements": ["⭐ Convidado (aguardando ranking)"],
+                "best_avg_elo": 0.0,
+                "is_custom": True,
+            }
+
+    ordered = sorted(consolidated.values(), key=lambda x: (-x["best_avg_elo"], x["alias"].lower()))
     return ordered
 
 
@@ -606,10 +791,22 @@ def export_merged_top_rankings(
     top_n: int,
     json_path: Path,
     csv_path: Path,
-) -> None:
-    """Exporta as tabelas de estudo dos Top N brasileiros por modo (1v1, 2v2 e Team Games)."""
-    trimmed = {mode: entries[:top_n] for mode, entries in rankings_by_mode.items()}
-    unique_players = build_top_tracked_players(rankings_by_mode, top_n=top_n)
+    custom_players: list[dict[str, Any]] | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Exporta as tabelas dos Top N brasileiros + quaisquer convidados extras posicionados além do Top N.
+    Retorna o dicionário filtrado por modo (pronto para exibição no Discord).
+    """
+    custom_ids = {int(cp["profile_id"]) for cp in (custom_players or [])}
+    trimmed: dict[str, list[dict[str, Any]]] = {}
+    for mode, entries in rankings_by_mode.items():
+        selected_rows = []
+        for idx, e in enumerate(entries):
+            if idx < top_n or e["profile_id"] in custom_ids or e.get("is_custom"):
+                selected_rows.append(e)
+        trimmed[mode] = selected_rows
+
+    unique_players = build_top_tracked_players(rankings_by_mode, top_n=top_n, custom_players=custom_players)
 
     json_path.write_text(
         json.dumps(
@@ -634,6 +831,7 @@ def export_merged_top_rankings(
             [
                 "mode",
                 "br_rank",
+                "is_custom",
                 "profile_id",
                 "alias",
                 "avg_elo",
@@ -655,6 +853,7 @@ def export_merged_top_rankings(
                     [
                         sanitize_csv_cell(mode),
                         e["br_rank"],
+                        "sim" if e.get("is_custom") else "nao",
                         pid_int,
                         sanitize_csv_cell(e["alias"]),
                         e["avg_elo"],
@@ -668,5 +867,7 @@ def export_merged_top_rankings(
                         f"https://coh3stats.com/players/{pid_int}",
                     ]
                 )
+
+    return trimmed
 
 
