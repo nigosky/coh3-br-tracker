@@ -333,6 +333,8 @@ class MatchDatabase:
         if min_ts > 0:
             where_parts.append("rm.recorded_at >= ?")
             params.append(min_ts)
+            where_parts.append("COALESCE(rm.discord_message_id, '') != ?")
+            params.append(SEEDED_DISCORD_MARKER)
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         params.append(safe_limit)
         rows = self._connect().execute(
