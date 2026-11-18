@@ -1,5 +1,5 @@
 {
-  "updated_at": 1795039128,
+  "updated_at": 1795041757,
   "methodology": "simple_average_of_active_factions_elo_1v1_2v2_team_games",
   "modes": [
     "1v1",
@@ -629,29 +629,29 @@
         "sub_modes": [
           "1v1"
         ],
-        "avg_elo": 1196.8,
-        "max_mode_elo": 1317,
+        "avg_elo": 1200.0,
+        "max_mode_elo": 1330,
         "active_factions_count": 4,
         "active_rankings_count": 4,
         "max_rankings_slots": 4,
         "faction_elos": {
-          "american": 1317,
+          "american": 1330,
           "british": 1240,
           "dak": 1032,
           "german": 1198
         },
         "submode_elos": {
-          "1v1_american": 1317,
+          "1v1_american": 1330,
           "1v1_british": 1240,
           "1v1_dak": 1032,
           "1v1_german": 1198
         },
-        "streak": 1,
-        "wins": 471,
+        "streak": 5,
+        "wins": 472,
         "losses": 413,
-        "total": 884,
+        "total": 885,
         "ratio": 53,
-        "last_match_date": 1794869656,
+        "last_match_date": 1795041695,
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
@@ -747,27 +747,27 @@
         "sub_modes": [
           "1v1"
         ],
-        "avg_elo": 1161.3,
-        "max_mode_elo": 1217,
+        "avg_elo": 1148.0,
+        "max_mode_elo": 1186,
         "active_factions_count": 3,
         "active_rankings_count": 3,
         "max_rankings_slots": 4,
         "faction_elos": {
           "american": 1138,
-          "dak": 1129,
-          "german": 1217
+          "dak": 1120,
+          "german": 1186
         },
         "submode_elos": {
           "1v1_american": 1138,
-          "1v1_dak": 1129,
-          "1v1_german": 1217
+          "1v1_dak": 1120,
+          "1v1_german": 1186
         },
-        "streak": -1,
+        "streak": -3,
         "wins": 76,
-        "losses": 50,
-        "total": 126,
-        "ratio": 60,
-        "last_match_date": 1795036166,
+        "losses": 53,
+        "total": 129,
+        "ratio": 59,
+        "last_match_date": 1795041406,
         "is_custom": false,
         "is_br_roster": false,
         "inactive_fallback": false,
@@ -1033,8 +1033,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 80,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/21206",
         "br_rank": 79
       },
@@ -1075,8 +1075,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 81,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/691",
         "br_rank": 80
       },
@@ -1111,8 +1111,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 82,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/35952",
         "br_rank": 81
       },
@@ -1153,8 +1153,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 83,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/366826",
         "br_rank": 82
       },
@@ -1189,8 +1189,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 84,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/1005730",
         "br_rank": 83
       },
@@ -1231,8 +1231,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 85,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/55693",
         "br_rank": 84
       },
@@ -1273,8 +1273,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 86,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/26910",
         "br_rank": 85
       },
@@ -1311,8 +1311,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 87,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/6557",
         "br_rank": 86
       },
@@ -1353,8 +1353,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 88,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/32922",
         "br_rank": 87
       },
@@ -1395,8 +1395,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 89,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/153969",
         "br_rank": 88
       },
@@ -1437,8 +1437,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 90,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/5768",
         "br_rank": 89
       },
@@ -1473,8 +1473,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 91,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/3895",
         "br_rank": 90
       },
@@ -1511,8 +1511,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 92,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/19747",
         "br_rank": 91
       },
@@ -1553,8 +1553,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 93,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/509690",
         "br_rank": 92
       },
@@ -1595,8 +1595,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 94,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/1226910",
         "br_rank": 93
       },
@@ -1631,8 +1631,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 95,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/1022333",
         "br_rank": 94
       },
@@ -1669,8 +1669,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 96,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/337051",
         "br_rank": 95
       },
@@ -1709,8 +1709,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": true,
-        "rank_delta": 1,
-        "prev_rank": 97,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/13450",
         "br_rank": 96
       }
@@ -1793,8 +1793,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
-        "rank_delta": 1,
-        "prev_rank": 3,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/79327",
         "br_rank": 2
       },
@@ -1831,8 +1831,8 @@
         "is_custom": false,
         "is_br_roster": false,
         "inactive_fallback": false,
-        "rank_delta": -1,
-        "prev_rank": 2,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/1333418",
         "br_rank": 3
       },
@@ -3502,8 +3502,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
-        "rank_delta": 1,
-        "prev_rank": 5,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/366826",
         "br_rank": 4
       },
@@ -3519,30 +3519,30 @@
           "3v3",
           "4v4"
         ],
-        "avg_elo": 1545.5,
+        "avg_elo": 1539.5,
         "max_mode_elo": 1583,
         "active_factions_count": 2,
         "active_rankings_count": 2,
         "max_rankings_slots": 8,
         "faction_elos": {
           "american": 1583,
-          "german": 1508
+          "german": 1496
         },
         "submode_elos": {
           "4v4_american": 1583,
-          "4v4_german": 1508
+          "4v4_german": 1496
         },
-        "streak": -1,
+        "streak": -2,
         "wins": 360,
-        "losses": 261,
-        "total": 621,
+        "losses": 262,
+        "total": 622,
         "ratio": 58,
-        "last_match_date": 1795039027,
+        "last_match_date": 1795039773,
         "is_custom": false,
         "is_br_roster": false,
         "inactive_fallback": false,
-        "rank_delta": -1,
-        "prev_rank": 4,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/71299",
         "br_rank": 5
       },
@@ -3639,27 +3639,27 @@
           "3v3",
           "4v4"
         ],
-        "avg_elo": 1497.7,
-        "max_mode_elo": 1522,
+        "avg_elo": 1494.0,
+        "max_mode_elo": 1520,
         "active_factions_count": 3,
         "active_rankings_count": 3,
         "max_rankings_slots": 8,
         "faction_elos": {
           "american": 1520,
           "british": 1451,
-          "german": 1522
+          "german": 1511
         },
         "submode_elos": {
           "3v3_american": 1520,
           "3v3_british": 1451,
-          "3v3_german": 1522
+          "3v3_german": 1511
         },
-        "streak": 1,
+        "streak": -1,
         "wins": 290,
-        "losses": 184,
-        "total": 474,
+        "losses": 185,
+        "total": 475,
         "ratio": 61,
-        "last_match_date": 1795036233,
+        "last_match_date": 1795039763,
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
@@ -3800,23 +3800,23 @@
           "3v3",
           "4v4"
         ],
-        "avg_elo": 1445.0,
-        "max_mode_elo": 1445,
+        "avg_elo": 1428.0,
+        "max_mode_elo": 1428,
         "active_factions_count": 1,
         "active_rankings_count": 1,
         "max_rankings_slots": 8,
         "faction_elos": {
-          "german": 1445
+          "german": 1428
         },
         "submode_elos": {
-          "4v4_german": 1445
+          "4v4_german": 1428
         },
-        "streak": 3,
+        "streak": -1,
         "wins": 1436,
-        "losses": 1455,
-        "total": 2891,
+        "losses": 1456,
+        "total": 2892,
         "ratio": 50,
-        "last_match_date": 1794792517,
+        "last_match_date": 1795039543,
         "is_custom": false,
         "is_br_roster": false,
         "inactive_fallback": false,
@@ -3924,33 +3924,33 @@
           "3v3",
           "4v4"
         ],
-        "avg_elo": 1372.0,
-        "max_mode_elo": 1667,
+        "avg_elo": 1370.1,
+        "max_mode_elo": 1666,
         "active_factions_count": 4,
         "active_rankings_count": 8,
         "max_rankings_slots": 8,
         "faction_elos": {
           "american": 1102,
           "british": 1245,
-          "dak": 1628,
+          "dak": 1620,
           "german": 1513
         },
         "submode_elos": {
           "3v3_american": 1081,
           "3v3_british": 1214,
-          "3v3_dak": 1588,
+          "3v3_dak": 1574,
           "3v3_german": 1440,
           "4v4_american": 1124,
           "4v4_british": 1276,
-          "4v4_dak": 1667,
+          "4v4_dak": 1666,
           "4v4_german": 1586
         },
-        "streak": 2,
-        "wins": 974,
-        "losses": 842,
-        "total": 1816,
+        "streak": 1,
+        "wins": 975,
+        "losses": 844,
+        "total": 1819,
         "ratio": 54,
-        "last_match_date": 1795038516,
+        "last_match_date": 1795040994,
         "is_custom": false,
         "is_br_roster": false,
         "inactive_fallback": false,
@@ -4190,47 +4190,10 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
-        "rank_delta": 1,
-        "prev_rank": 23,
-        "coh3stats_url": "https://coh3stats.com/players/6557",
-        "br_rank": 22
-      },
-      {
-        "profile_id": 639157,
-        "alias": "Itaperuna",
-        "current_alias": "Itaperuna",
-        "original_alias": "Itaperuna",
-        "steam_id": "76561197979883434",
-        "country": "br",
-        "mode": "Team Games",
-        "sub_modes": [
-          "3v3",
-          "4v4"
-        ],
-        "avg_elo": 1294.0,
-        "max_mode_elo": 1294,
-        "active_factions_count": 1,
-        "active_rankings_count": 1,
-        "max_rankings_slots": 8,
-        "faction_elos": {
-          "dak": 1294
-        },
-        "submode_elos": {
-          "3v3_dak": 1294
-        },
-        "streak": 1,
-        "wins": 17,
-        "losses": 8,
-        "total": 25,
-        "ratio": 68,
-        "last_match_date": 1795036233,
-        "is_custom": true,
-        "is_br_roster": true,
-        "inactive_fallback": false,
         "rank_delta": 0,
         "prev_rank": null,
-        "coh3stats_url": "https://coh3stats.com/players/639157",
-        "br_rank": 24
+        "coh3stats_url": "https://coh3stats.com/players/6557",
+        "br_rank": 22
       },
       {
         "profile_id": 32922,
@@ -4273,7 +4236,44 @@
         "rank_delta": 0,
         "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/32922",
-        "br_rank": 27
+        "br_rank": 26
+      },
+      {
+        "profile_id": 639157,
+        "alias": "Itaperuna",
+        "current_alias": "Itaperuna",
+        "original_alias": "Itaperuna",
+        "steam_id": "76561197979883434",
+        "country": "br",
+        "mode": "Team Games",
+        "sub_modes": [
+          "3v3",
+          "4v4"
+        ],
+        "avg_elo": 1283.0,
+        "max_mode_elo": 1283,
+        "active_factions_count": 1,
+        "active_rankings_count": 1,
+        "max_rankings_slots": 8,
+        "faction_elos": {
+          "dak": 1283
+        },
+        "submode_elos": {
+          "3v3_dak": 1283
+        },
+        "streak": -1,
+        "wins": 17,
+        "losses": 9,
+        "total": 26,
+        "ratio": 65,
+        "last_match_date": 1795039763,
+        "is_custom": true,
+        "is_br_roster": true,
+        "inactive_fallback": false,
+        "rank_delta": 0,
+        "prev_rank": null,
+        "coh3stats_url": "https://coh3stats.com/players/639157",
+        "br_rank": 28
       },
       {
         "profile_id": 26910,
@@ -4574,29 +4574,29 @@
           "3v3",
           "4v4"
         ],
-        "avg_elo": 1181.6,
+        "avg_elo": 1180.4,
         "max_mode_elo": 1376,
         "active_factions_count": 3,
         "active_rankings_count": 5,
         "max_rankings_slots": 8,
         "faction_elos": {
           "american": 1005,
-          "dak": 1224,
+          "dak": 1220,
           "german": 1228
         },
         "submode_elos": {
           "3v3_american": 1005,
-          "3v3_dak": 1324,
+          "3v3_dak": 1318,
           "3v3_german": 1376,
           "4v4_dak": 1123,
           "4v4_german": 1080
         },
-        "streak": 2,
-        "wins": 1148,
-        "losses": 1110,
-        "total": 2258,
+        "streak": -1,
+        "wins": 1149,
+        "losses": 1111,
+        "total": 2260,
         "ratio": 51,
-        "last_match_date": 1795038442,
+        "last_match_date": 1795041057,
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
@@ -4691,7 +4691,7 @@
         "rank_delta": 0,
         "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/559962",
-        "br_rank": 66
+        "br_rank": 65
       },
       {
         "profile_id": 1143262,
@@ -4971,10 +4971,10 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
-        "rank_delta": 1,
-        "prev_rank": 102,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/735940",
-        "br_rank": 101
+        "br_rank": 102
       },
       {
         "profile_id": 5768,
@@ -5016,8 +5016,8 @@
         "is_custom": true,
         "is_br_roster": true,
         "inactive_fallback": false,
-        "rank_delta": 1,
-        "prev_rank": 137,
+        "rank_delta": 0,
+        "prev_rank": null,
         "coh3stats_url": "https://coh3stats.com/players/5768",
         "br_rank": 136
       },
@@ -5172,7 +5172,7 @@
       "placements": [
         "#2 1v1 (média 1500.0)",
         "#1 2v2 (média 1580.7)",
-        "#24 Jogos em Equipe (média 1294.0) ⭐"
+        "#28 Jogos em Equipe (média 1283.0) ⭐"
       ],
       "best_avg_elo": 1580.7,
       "is_custom": true
@@ -5207,9 +5207,9 @@
       "original_alias": "Bruno.s",
       "steam_id": "76561198089205644",
       "placements": [
-        "#5 Jogos em Equipe (média 1545.5)"
+        "#5 Jogos em Equipe (média 1539.5)"
       ],
-      "best_avg_elo": 1545.5,
+      "best_avg_elo": 1539.5,
       "is_custom": false
     },
     {
@@ -5220,7 +5220,7 @@
       "placements": [
         "#3 1v1 (média 1477.0)",
         "#2 2v2 (média 1528.0)",
-        "#8 Jogos em Equipe (média 1497.7)"
+        "#8 Jogos em Equipe (média 1494.0)"
       ],
       "best_avg_elo": 1528.0,
       "is_custom": true
@@ -5326,17 +5326,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 975900,
-      "alias": "[COHBR/RJ]Roney",
-      "original_alias": "[COHBR/RJ]Roney",
-      "steam_id": "76561198326055603",
-      "placements": [
-        "#12 Jogos em Equipe (média 1445.0)"
-      ],
-      "best_avg_elo": 1445.0,
-      "is_custom": false
-    },
-    {
       "profile_id": 16867,
       "alias": "COHBRAMACHINE",
       "original_alias": "COHBRAMACHINE",
@@ -5345,6 +5334,17 @@
         "#6 2v2 (média 1433.0)"
       ],
       "best_avg_elo": 1433.0,
+      "is_custom": false
+    },
+    {
+      "profile_id": 975900,
+      "alias": "[COHBR/RJ]Roney",
+      "original_alias": "[COHBR/RJ]Roney",
+      "steam_id": "76561198326055603",
+      "placements": [
+        "#12 Jogos em Equipe (média 1428.0)"
+      ],
+      "best_avg_elo": 1428.0,
       "is_custom": false
     },
     {
@@ -5399,9 +5399,9 @@
       "original_alias": "joauleonardo",
       "steam_id": "76561199219878733",
       "placements": [
-        "#15 Jogos em Equipe (média 1372.0)"
+        "#15 Jogos em Equipe (média 1370.1)"
       ],
-      "best_avg_elo": 1372.0,
+      "best_avg_elo": 1370.1,
       "is_custom": false
     },
     {
@@ -5487,7 +5487,7 @@
       "placements": [
         "#87 1v1 (média 1070.0) ⭐",
         "#15 2v2 (média 1311.0)",
-        "#27 Jogos em Equipe (média 1286.8) ⭐"
+        "#26 Jogos em Equipe (média 1286.8) ⭐"
       ],
       "best_avg_elo": 1311.0,
       "is_custom": true
@@ -5606,7 +5606,7 @@
       "original_alias": "luiz_fmh",
       "steam_id": "76561198108568598",
       "placements": [
-        "#17 1v1 (média 1196.8)",
+        "#17 1v1 (média 1200.0)",
         "#41 2v2 (média 1180.0) ⭐",
         "#47 Jogos em Equipe (média 1217.7) ⭐"
       ],
@@ -5669,7 +5669,7 @@
       "placements": [
         "#94 1v1 (média 950.0) ⭐",
         "#39 2v2 (média 1183.5) ⭐",
-        "#59 Jogos em Equipe (média 1181.6) ⭐"
+        "#59 Jogos em Equipe (média 1180.4) ⭐"
       ],
       "best_avg_elo": 1183.5,
       "is_custom": true
@@ -5695,7 +5695,7 @@
       "placements": [
         "#27 1v1 (média 1113.0) ⭐",
         "#43 2v2 (média 1171.0) ⭐",
-        "#66 Jogos em Equipe (média 1151.8) ⭐"
+        "#65 Jogos em Equipe (média 1151.8) ⭐"
       ],
       "best_avg_elo": 1171.0,
       "is_custom": true
@@ -5706,9 +5706,9 @@
       "original_alias": "Anglel",
       "steam_id": "76561198275024539",
       "placements": [
-        "#20 1v1 (média 1161.3)"
+        "#20 1v1 (média 1148.0)"
       ],
-      "best_avg_elo": 1161.3,
+      "best_avg_elo": 1148.0,
       "is_custom": false
     },
     {
@@ -5732,7 +5732,7 @@
       "placements": [
         "#21 1v1 (média 1147.5) ⭐",
         "#62 2v2 (média 1071.5) ⭐",
-        "#101 Jogos em Equipe (média 1074.0) ⭐"
+        "#102 Jogos em Equipe (média 1074.0) ⭐"
       ],
       "best_avg_elo": 1147.5,
       "is_custom": true
