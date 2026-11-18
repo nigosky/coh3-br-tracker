@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v7 — Ranking (Top 20 + 31 únicos ▲/▼), Partidas via SteamID e Segurança Endurecida."""
+"""Monitor automático CoH3 Brasil v7.3 — Ranking Diário (pós-00:01 BRT), Limpeza 72h, Partidas via SteamID e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_3_daily_ranking_clean"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
@@ -556,18 +557,21 @@ def maybe_refresh_top_rankings(
     custom_ids = {int(cp["profile_id"]) for cp in custom_players if int(cp.get("profile_id", 0)) > 0}
     custom_sids = {str(cp["steam_id"]) for cp in custom_players if cp.get("steam_id")}
 
-    had_prev_snap = bool(db.get_state("ranking_snapshot_v5"))
+    post_ranking_movements = bool(cfg.get("post_ranking_movements", False))
     rankings = compute_merged_mode_rankings(
         merged_players,
         custom_ids=custom_ids,
         custom_steam_ids=custom_sids,
     )
-    movements_by_mode, has_new_movements = detect_and_apply_ranking_movements(
-        db=db,
-        full_rankings=rankings,
-        top_n=top_n,
-        custom_players=custom_players,
-    )
+    if post_ranking_movements:
+        movements_by_mode, has_new_movements = detect_and_apply_ranking_movements(
+            db=db,
+            full_rankings=rankings,
+            top_n=top_n,
+            custom_players=custom_players,
+        )
+    else:
+        movements_by_mode, has_new_movements = {}, False
 
     exported_rankings = export_merged_top_rankings(
         rankings,
@@ -615,14 +619,14 @@ def maybe_refresh_top_rankings(
     db.set_state("last_leaderboard_scan_ts", str(now))
     db.set_state("last_leaderboard_scan_date_brt", today_brt)
     db.prune_expired_avatars()
-    if has_new_movements or table_stats_changed or not had_prev_snap or force or cfg_upgraded:
+    if has_new_movements or table_stats_changed or not prev_digest or force or cfg_upgraded:
         db.set_state("rankings_updated_flag", "1")
 
     cfg["custom_players"] = custom_players
     cfg["tracked_players"] = list(updated_by_id.values())
     save_config_file(config_path, cfg)
 
-    if has_new_movements:
+    if post_ranking_movements and has_new_movements:
         for mode_k, mv_list in movements_by_mode.items():
             for mv in mv_list:
                 d = int(mv.get("rank_delta", 0))
@@ -910,11 +914,12 @@ def run_cycle(
 
             summary_msg_id = db.get_state("summary_message_id")
             layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
+            content_needs_refresh = db.get_state("summary_content_version") != CURRENT_SUMMARY_CONTENT_VERSION
             rankings_updated = db.get_state("rankings_updated_flag") == "1"
             summary_needs_refresh = db.get_state("summary_needs_refresh") == "1"
             panel_status = "inalterado"
 
-            if summary_needs_refresh or rankings_updated or not summary_msg_id or layout_needs_upgrade:
+            if summary_needs_refresh or rankings_updated or not summary_msg_id or layout_needs_upgrade or content_needs_refresh:
                 latest_catalog = db.get_recent_recorded_matches(
                     limit=max(40, summary_size * 3),
                     only_active_players=True,
@@ -941,6 +946,7 @@ def run_cycle(
                             else:
                                 logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
                             db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
+                            db.set_state("summary_content_version", CURRENT_SUMMARY_CONTENT_VERSION)
                             db.set_state("rankings_updated_flag", "0")
                             db.set_state("summary_needs_refresh", "0")
                             panel_ok = True
@@ -978,7 +984,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.2 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.3 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1008,7 +1014,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.2 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.3 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
