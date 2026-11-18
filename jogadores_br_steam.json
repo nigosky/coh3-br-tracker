@@ -1,5 +1,5 @@
 {
-  "updated_at": 1795041756,
+  "updated_at": 1795042664,
   "total_players": 443,
   "players": [
     {
@@ -325,77 +325,17 @@
       "coh3stats_url": "https://coh3stats.com/players/845669"
     },
     {
-      "profile_id": 509690,
-      "alias": "Minhoca de ferro!",
-      "steam_id": "76561198053226112",
-      "country": "br",
-      "level": 93961,
-      "xp": 93961,
-      "max_elo": 1669,
-      "best_mode": "4V4 (AMERICAN)",
-      "total_wins": 5921,
-      "total_losses": 5152,
-      "last_match_date": 1794867979,
-      "modes": {
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 1669,
-          "rank": -1,
-          "regionrank": 13,
-          "wins": 3754,
-          "losses": 3211,
-          "streak": 3,
-          "lastmatchdate": 1794815686
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 1338,
-          "rank": -1,
-          "regionrank": 27,
-          "wins": 1611,
-          "losses": 1482,
-          "streak": 1,
-          "lastmatchdate": 1794867979
-        },
-        "4v4_dak": {
-          "mode": "4v4",
-          "faction": "dak",
-          "elo": 1550,
-          "rank": -1,
-          "regionrank": 14,
-          "wins": 294,
-          "losses": 237,
-          "streak": -2,
-          "lastmatchdate": 1793409411
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 1541,
-          "rank": -1,
-          "regionrank": 21,
-          "wins": 262,
-          "losses": 222,
-          "streak": -2,
-          "lastmatchdate": 1794196116
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/509690"
-    },
-    {
       "profile_id": 1178218,
       "alias": "joauleonardo",
       "steam_id": "76561199219878733",
       "country": "br",
-      "level": 21751,
-      "xp": 21751,
-      "max_elo": 1666,
+      "level": 21761,
+      "xp": 21761,
+      "max_elo": 1682,
       "best_mode": "4V4 (DAK)",
-      "total_wins": 1365,
+      "total_wins": 1366,
       "total_losses": 1165,
-      "last_match_date": 1795040994,
+      "last_match_date": 1795042387,
       "modes": {
         "1v1_american": {
           "mode": "1v1",
@@ -543,13 +483,13 @@
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
-          "elo": 1666,
+          "elo": 1682,
           "rank": -1,
           "regionrank": 8,
-          "wins": 331,
+          "wins": 332,
           "losses": 311,
-          "streak": 1,
-          "lastmatchdate": 1795040994
+          "streak": 2,
+          "lastmatchdate": 1795042387
         },
         "4v4_german": {
           "mode": "4v4",
@@ -564,6 +504,66 @@
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1178218"
+    },
+    {
+      "profile_id": 509690,
+      "alias": "Minhoca de ferro!",
+      "steam_id": "76561198053226112",
+      "country": "br",
+      "level": 93961,
+      "xp": 93961,
+      "max_elo": 1669,
+      "best_mode": "4V4 (AMERICAN)",
+      "total_wins": 5921,
+      "total_losses": 5152,
+      "last_match_date": 1794867979,
+      "modes": {
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 1669,
+          "rank": -1,
+          "regionrank": 13,
+          "wins": 3754,
+          "losses": 3211,
+          "streak": 3,
+          "lastmatchdate": 1794815686
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 1338,
+          "rank": -1,
+          "regionrank": 27,
+          "wins": 1611,
+          "losses": 1482,
+          "streak": 1,
+          "lastmatchdate": 1794867979
+        },
+        "4v4_dak": {
+          "mode": "4v4",
+          "faction": "dak",
+          "elo": 1550,
+          "rank": -1,
+          "regionrank": 14,
+          "wins": 294,
+          "losses": 237,
+          "streak": -2,
+          "lastmatchdate": 1793409411
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 1541,
+          "rank": -1,
+          "regionrank": 21,
+          "wins": 262,
+          "losses": 222,
+          "streak": -2,
+          "lastmatchdate": 1794196116
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/509690"
     },
     {
       "profile_id": 79327,
@@ -1584,17 +1584,6 @@
           "streak": -1,
           "lastmatchdate": 1794423378
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 1007,
-          "rank": -1,
-          "regionrank": 209,
-          "wins": 38,
-          "losses": 38,
-          "streak": 1,
-          "lastmatchdate": 1794338230
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -1616,6 +1605,17 @@
           "losses": 125,
           "streak": -2,
           "lastmatchdate": 1794196116
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 1007,
+          "rank": -1,
+          "regionrank": 209,
+          "wins": 38,
+          "losses": 38,
+          "streak": 1,
+          "lastmatchdate": 1794338230
         },
         "4v4_german": {
           "mode": "4v4",
@@ -1808,7 +1808,7 @@
           "faction": "dak",
           "elo": 907,
           "rank": -1,
-          "regionrank": 199,
+          "regionrank": 200,
           "wins": 4,
           "losses": 6,
           "streak": -1,
@@ -2650,7 +2650,7 @@
           "faction": "dak",
           "elo": 1048,
           "rank": -1,
-          "regionrank": 120,
+          "regionrank": 121,
           "wins": 20,
           "losses": 20,
           "streak": 1,
@@ -2880,7 +2880,7 @@
           "faction": "german",
           "elo": 1160,
           "rank": -1,
-          "regionrank": 123,
+          "regionrank": 124,
           "wins": 82,
           "losses": 86,
           "streak": -1,
@@ -3082,7 +3082,7 @@
           "faction": "german",
           "elo": 1075,
           "rank": -1,
-          "regionrank": 187,
+          "regionrank": 186,
           "wins": 46,
           "losses": 44,
           "streak": -3,
@@ -3175,7 +3175,7 @@
           "faction": "german",
           "elo": 1080,
           "rank": -1,
-          "regionrank": 181,
+          "regionrank": 180,
           "wins": 116,
           "losses": 114,
           "streak": 2,
@@ -3300,7 +3300,7 @@
           "faction": "german",
           "elo": 897,
           "rank": -1,
-          "regionrank": 64,
+          "regionrank": 65,
           "wins": 13,
           "losses": 14,
           "streak": -3,
@@ -3344,7 +3344,7 @@
           "faction": "german",
           "elo": 1099,
           "rank": -1,
-          "regionrank": 167,
+          "regionrank": 166,
           "wins": 13,
           "losses": 10,
           "streak": -2,
@@ -4169,7 +4169,7 @@
           "faction": "german",
           "elo": 1083,
           "rank": -1,
-          "regionrank": 175,
+          "regionrank": 174,
           "wins": 93,
           "losses": 89,
           "streak": -3,
@@ -4319,13 +4319,13 @@
       "alias": "TiMC",
       "steam_id": "76561198023693363",
       "country": "br",
-      "level": 35901,
-      "xp": 35901,
+      "level": 35911,
+      "xp": 35911,
       "max_elo": 1297,
       "best_mode": "4V4 (BRITISH)",
       "total_wins": 1736,
-      "total_losses": 1779,
-      "last_match_date": 1795039884,
+      "total_losses": 1780,
+      "last_match_date": 1795042104,
       "modes": {
         "4v4_british": {
           "mode": "4v4",
@@ -4341,20 +4341,20 @@
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
-          "elo": 1041,
+          "elo": 1024,
           "rank": -1,
-          "regionrank": 169,
+          "regionrank": 184,
           "wins": 410,
-          "losses": 412,
-          "streak": -1,
-          "lastmatchdate": 1795039884
+          "losses": 413,
+          "streak": -2,
+          "lastmatchdate": 1795042104
         },
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
           "elo": 1106,
           "rank": -1,
-          "regionrank": 159,
+          "regionrank": 158,
           "wins": 1110,
           "losses": 1176,
           "streak": 2,
@@ -4436,7 +4436,7 @@
           "faction": "german",
           "elo": 991,
           "rank": -1,
-          "regionrank": 255,
+          "regionrank": 254,
           "wins": 250,
           "losses": 261,
           "streak": -2,
@@ -4763,7 +4763,7 @@
           "faction": "german",
           "elo": 1173,
           "rank": -1,
-          "regionrank": 110,
+          "regionrank": 111,
           "wins": 359,
           "losses": 346,
           "streak": -3,
@@ -4818,17 +4818,6 @@
           "streak": 3,
           "lastmatchdate": 1794790999
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 993,
-          "rank": -1,
-          "regionrank": 224,
-          "wins": 142,
-          "losses": 124,
-          "streak": 2,
-          "lastmatchdate": 1794763684
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -4839,6 +4828,17 @@
           "losses": 48,
           "streak": -4,
           "lastmatchdate": 1793839679
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 993,
+          "rank": -1,
+          "regionrank": 224,
+          "wins": 142,
+          "losses": 124,
+          "streak": 2,
+          "lastmatchdate": 1794763684
         },
         "4v4_german": {
           "mode": "4v4",
@@ -5014,7 +5014,7 @@
           "faction": "german",
           "elo": 1070,
           "rank": -1,
-          "regionrank": 190,
+          "regionrank": 189,
           "wins": 22,
           "losses": 20,
           "streak": -2,
@@ -5325,7 +5325,7 @@
           "faction": "dak",
           "elo": 852,
           "rank": -1,
-          "regionrank": 222,
+          "regionrank": 223,
           "wins": 28,
           "losses": 44,
           "streak": 2,
@@ -5432,13 +5432,13 @@
       "alias": "Anglel",
       "steam_id": "76561198275024539",
       "country": "br",
-      "level": 8001,
-      "xp": 8001,
+      "level": 8011,
+      "xp": 8011,
       "max_elo": 1242,
       "best_mode": "4V4 (DAK)",
       "total_wins": 451,
-      "total_losses": 381,
-      "last_match_date": 1795041406,
+      "total_losses": 382,
+      "last_match_date": 1795042015,
       "modes": {
         "1v1_american": {
           "mode": "1v1",
@@ -5454,13 +5454,13 @@
         "1v1_german": {
           "mode": "1v1",
           "faction": "german",
-          "elo": 1186,
+          "elo": 1170,
           "rank": -1,
           "regionrank": 19,
           "wins": 41,
-          "losses": 30,
-          "streak": -3,
-          "lastmatchdate": 1795041406
+          "losses": 31,
+          "streak": -4,
+          "lastmatchdate": 1795042015
         },
         "1v1_dak": {
           "mode": "1v1",
@@ -5517,17 +5517,6 @@
           "streak": 3,
           "lastmatchdate": 1795012595
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 1010,
-          "rank": -1,
-          "regionrank": 207,
-          "wins": 33,
-          "losses": 31,
-          "streak": -1,
-          "lastmatchdate": 1793495801
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -5549,6 +5538,17 @@
           "losses": 90,
           "streak": 1,
           "lastmatchdate": 1794883354
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 1010,
+          "rank": -1,
+          "regionrank": 207,
+          "wins": 33,
+          "losses": 31,
+          "streak": -1,
+          "lastmatchdate": 1793495801
         },
         "4v4_german": {
           "mode": "4v4",
@@ -5626,7 +5626,7 @@
           "faction": "german",
           "elo": 1173,
           "rank": -1,
-          "regionrank": 111,
+          "regionrank": 112,
           "wins": 53,
           "losses": 39,
           "streak": 1,
@@ -5767,7 +5767,7 @@
           "faction": "dak",
           "elo": 1027,
           "rank": -1,
-          "regionrank": 133,
+          "regionrank": 134,
           "wins": 53,
           "losses": 47,
           "streak": 3,
@@ -5854,7 +5854,7 @@
           "faction": "german",
           "elo": 1169,
           "rank": -1,
-          "regionrank": 116,
+          "regionrank": 117,
           "wins": 81,
           "losses": 73,
           "streak": -4,
@@ -5887,17 +5887,6 @@
           "streak": 2,
           "lastmatchdate": 1793410270
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 995,
-          "rank": -1,
-          "regionrank": 220,
-          "wins": 64,
-          "losses": 56,
-          "streak": 2,
-          "lastmatchdate": 1793915353
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -5908,6 +5897,17 @@
           "losses": 105,
           "streak": 2,
           "lastmatchdate": 1795031039
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 995,
+          "rank": -1,
+          "regionrank": 220,
+          "wins": 64,
+          "losses": 56,
+          "streak": 2,
+          "lastmatchdate": 1793915353
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -6421,7 +6421,7 @@
           "faction": "german",
           "elo": 1214,
           "rank": -1,
-          "regionrank": 90,
+          "regionrank": 91,
           "wins": 80,
           "losses": 72,
           "streak": -1,
@@ -6640,17 +6640,6 @@
           "streak": -3,
           "lastmatchdate": 1795039763
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 798,
-          "rank": -1,
-          "regionrank": 356,
-          "wins": 5,
-          "losses": 12,
-          "streak": 2,
-          "lastmatchdate": 1794354902
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -6661,6 +6650,17 @@
           "losses": 110,
           "streak": -3,
           "lastmatchdate": 1793499936
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 798,
+          "rank": -1,
+          "regionrank": 356,
+          "wins": 5,
+          "losses": 12,
+          "streak": 2,
+          "lastmatchdate": 1794354902
         },
         "4v4_german": {
           "mode": "4v4",
@@ -6738,7 +6738,7 @@
           "faction": "german",
           "elo": 1105,
           "rank": -1,
-          "regionrank": 161,
+          "regionrank": 160,
           "wins": 158,
           "losses": 161,
           "streak": -1,
@@ -6765,7 +6765,7 @@
           "faction": "dak",
           "elo": 1047,
           "rank": -1,
-          "regionrank": 121,
+          "regionrank": 122,
           "wins": 104,
           "losses": 106,
           "streak": -3,
@@ -7120,7 +7120,7 @@
           "faction": "dak",
           "elo": 1182,
           "rank": -1,
-          "regionrank": 86,
+          "regionrank": 85,
           "wins": 32,
           "losses": 26,
           "streak": -1,
@@ -7316,7 +7316,7 @@
           "faction": "dak",
           "elo": 943,
           "rank": -1,
-          "regionrank": 179,
+          "regionrank": 180,
           "wins": 25,
           "losses": 22,
           "streak": 3,
@@ -7349,7 +7349,7 @@
           "faction": "german",
           "elo": 1171,
           "rank": -1,
-          "regionrank": 113,
+          "regionrank": 114,
           "wins": 54,
           "losses": 43,
           "streak": -1,
@@ -7480,7 +7480,7 @@
           "faction": "dak",
           "elo": 955,
           "rank": -1,
-          "regionrank": 171,
+          "regionrank": 172,
           "wins": 15,
           "losses": 20,
           "streak": -2,
@@ -7502,7 +7502,7 @@
           "faction": "german",
           "elo": 1165,
           "rank": -1,
-          "regionrank": 120,
+          "regionrank": 121,
           "wins": 80,
           "losses": 107,
           "streak": -2,
@@ -7769,7 +7769,7 @@
           "faction": "german",
           "elo": 939,
           "rank": -1,
-          "regionrank": 309,
+          "regionrank": 310,
           "wins": 70,
           "losses": 75,
           "streak": -2,
@@ -7862,17 +7862,6 @@
           "streak": 6,
           "lastmatchdate": 1794786102
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 990,
-          "rank": -1,
-          "regionrank": 229,
-          "wins": 13,
-          "losses": 15,
-          "streak": -1,
-          "lastmatchdate": 1794607658
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -7883,6 +7872,17 @@
           "losses": 44,
           "streak": -1,
           "lastmatchdate": 1794176331
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 990,
+          "rank": -1,
+          "regionrank": 229,
+          "wins": 13,
+          "losses": 15,
+          "streak": -1,
+          "lastmatchdate": 1794607658
         },
         "4v4_german": {
           "mode": "4v4",
@@ -7955,17 +7955,6 @@
           "streak": 1,
           "lastmatchdate": 1794022011
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 976,
-          "rank": -1,
-          "regionrank": 271,
-          "wins": 89,
-          "losses": 96,
-          "streak": -1,
-          "lastmatchdate": 1794628649
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -7976,6 +7965,17 @@
           "losses": 101,
           "streak": 5,
           "lastmatchdate": 1792976264
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 976,
+          "rank": -1,
+          "regionrank": 271,
+          "wins": 89,
+          "losses": 96,
+          "streak": -1,
+          "lastmatchdate": 1794628649
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/653415"
@@ -8026,17 +8026,6 @@
           "streak": -1,
           "lastmatchdate": 1794258127
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 998,
-          "rank": -1,
-          "regionrank": 217,
-          "wins": 182,
-          "losses": 168,
-          "streak": -6,
-          "lastmatchdate": 1794951694
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -8058,6 +8047,17 @@
           "losses": 82,
           "streak": -1,
           "lastmatchdate": 1793551943
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 998,
+          "rank": -1,
+          "regionrank": 217,
+          "wins": 182,
+          "losses": 168,
+          "streak": -6,
+          "lastmatchdate": 1794951694
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/106497"
@@ -8135,17 +8135,6 @@
       "total_losses": 153,
       "last_match_date": 1794776466,
       "modes": {
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 1016,
-          "rank": -1,
-          "regionrank": 202,
-          "wins": 63,
-          "losses": 52,
-          "streak": 1,
-          "lastmatchdate": 1794776466
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -8156,6 +8145,17 @@
           "losses": 101,
           "streak": -3,
           "lastmatchdate": 1794022915
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 1016,
+          "rank": -1,
+          "regionrank": 202,
+          "wins": 63,
+          "losses": 52,
+          "streak": 1,
+          "lastmatchdate": 1794776466
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1209494"
@@ -8200,7 +8200,7 @@
           "faction": "british",
           "elo": 1108,
           "rank": -1,
-          "regionrank": 90,
+          "regionrank": 89,
           "wins": 29,
           "losses": 24,
           "streak": -2,
@@ -8284,8 +8284,8 @@
       "max_elo": 1133,
       "best_mode": "4V4 (BRITISH)",
       "total_wins": 229,
-      "total_losses": 205,
-      "last_match_date": 1795040060,
+      "total_losses": 206,
+      "last_match_date": 1795042206,
       "modes": {
         "4v4_american": {
           "mode": "4v4",
@@ -8314,7 +8314,7 @@
           "faction": "dak",
           "elo": 1034,
           "rank": -1,
-          "regionrank": 173,
+          "regionrank": 172,
           "wins": 43,
           "losses": 41,
           "streak": -1,
@@ -8323,13 +8323,13 @@
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
-          "elo": 1107,
+          "elo": 1091,
           "rank": -1,
-          "regionrank": 158,
+          "regionrank": 169,
           "wins": 72,
-          "losses": 69,
-          "streak": 2,
-          "lastmatchdate": 1795040060
+          "losses": 70,
+          "streak": -1,
+          "lastmatchdate": 1795042206
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/593274"
@@ -8379,7 +8379,7 @@
           "faction": "german",
           "elo": 1131,
           "rank": -1,
-          "regionrank": 141,
+          "regionrank": 140,
           "wins": 39,
           "losses": 33,
           "streak": 2,
@@ -8412,17 +8412,6 @@
           "streak": 4,
           "lastmatchdate": 1794861333
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 956,
-          "rank": -1,
-          "regionrank": 245,
-          "wins": 21,
-          "losses": 19,
-          "streak": -2,
-          "lastmatchdate": 1794945299
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -8433,6 +8422,17 @@
           "losses": 16,
           "streak": -1,
           "lastmatchdate": 1794757956
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 956,
+          "rank": -1,
+          "regionrank": 245,
+          "wins": 21,
+          "losses": 19,
+          "streak": -2,
+          "lastmatchdate": 1794945299
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/942935"
@@ -8466,7 +8466,7 @@
           "faction": "german",
           "elo": 1130,
           "rank": -1,
-          "regionrank": 142,
+          "regionrank": 141,
           "wins": 331,
           "losses": 331,
           "streak": -2,
@@ -8564,7 +8564,7 @@
           "faction": "german",
           "elo": 1066,
           "rank": -1,
-          "regionrank": 192,
+          "regionrank": 191,
           "wins": 128,
           "losses": 127,
           "streak": -3,
@@ -8673,7 +8673,7 @@
           "faction": "dak",
           "elo": 1003,
           "rank": -1,
-          "regionrank": 146,
+          "regionrank": 147,
           "wins": 89,
           "losses": 100,
           "streak": -3,
@@ -8755,7 +8755,7 @@
           "faction": "german",
           "elo": 851,
           "rank": -1,
-          "regionrank": 388,
+          "regionrank": 389,
           "wins": 11,
           "losses": 17,
           "streak": -2,
@@ -8782,7 +8782,7 @@
           "faction": "german",
           "elo": 1127,
           "rank": -1,
-          "regionrank": 145,
+          "regionrank": 144,
           "wins": 12,
           "losses": 9,
           "streak": -7,
@@ -8881,17 +8881,6 @@
           "streak": -1,
           "lastmatchdate": 1794001174
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 955,
-          "rank": -1,
-          "regionrank": 247,
-          "wins": 9,
-          "losses": 9,
-          "streak": 1,
-          "lastmatchdate": 1794775819
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -8902,6 +8891,17 @@
           "losses": 16,
           "streak": 3,
           "lastmatchdate": 1794777781
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 955,
+          "rank": -1,
+          "regionrank": 247,
+          "wins": 9,
+          "losses": 9,
+          "streak": 1,
+          "lastmatchdate": 1794775819
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/952169"
@@ -8962,7 +8962,7 @@
           "faction": "dak",
           "elo": 997,
           "rank": -1,
-          "regionrank": 151,
+          "regionrank": 152,
           "wins": 20,
           "losses": 18,
           "streak": 1,
@@ -8989,6 +8989,17 @@
           "losses": 11,
           "streak": 2,
           "lastmatchdate": 1794102822
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 928,
+          "rank": -1,
+          "regionrank": 234,
+          "wins": 6,
+          "losses": 8,
+          "streak": -1,
+          "lastmatchdate": 1794273913
         },
         "4v4_american": {
           "mode": "4v4",
@@ -9022,17 +9033,6 @@
           "losses": 5,
           "streak": 2,
           "lastmatchdate": 1794111643
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 928,
-          "rank": -1,
-          "regionrank": 234,
-          "wins": 6,
-          "losses": 8,
-          "streak": -1,
-          "lastmatchdate": 1794273913
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/27052"
@@ -9066,7 +9066,7 @@
           "faction": "dak",
           "elo": 979,
           "rank": -1,
-          "regionrank": 221,
+          "regionrank": 222,
           "wins": 35,
           "losses": 34,
           "streak": -5,
@@ -9169,7 +9169,7 @@
           "faction": "dak",
           "elo": 1004,
           "rank": -1,
-          "regionrank": 145,
+          "regionrank": 146,
           "wins": 78,
           "losses": 75,
           "streak": -2,
@@ -9343,7 +9343,7 @@
           "faction": "dak",
           "elo": 1041,
           "rank": -1,
-          "regionrank": 123,
+          "regionrank": 124,
           "wins": 72,
           "losses": 76,
           "streak": -2,
@@ -9359,17 +9359,6 @@
           "losses": 10,
           "streak": 1,
           "lastmatchdate": 1795005999
-        },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 1012,
-          "rank": -1,
-          "regionrank": 206,
-          "wins": 295,
-          "losses": 268,
-          "streak": -2,
-          "lastmatchdate": 1794888857
         },
         "4v4_british": {
           "mode": "4v4",
@@ -9387,11 +9376,22 @@
           "faction": "dak",
           "elo": 1025,
           "rank": -1,
-          "regionrank": 182,
+          "regionrank": 181,
           "wins": 150,
           "losses": 149,
           "streak": 1,
           "lastmatchdate": 1795035802
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 1012,
+          "rank": -1,
+          "regionrank": 206,
+          "wins": 295,
+          "losses": 268,
+          "streak": -2,
+          "lastmatchdate": 1794888857
         },
         "4v4_german": {
           "mode": "4v4",
@@ -9556,7 +9556,7 @@
           "faction": "german",
           "elo": 989,
           "rank": -1,
-          "regionrank": 256,
+          "regionrank": 255,
           "wins": 30,
           "losses": 29,
           "streak": -1,
@@ -9594,7 +9594,7 @@
           "faction": "british",
           "elo": 1103,
           "rank": -1,
-          "regionrank": 92,
+          "regionrank": 91,
           "wins": 6,
           "losses": 4,
           "streak": -1,
@@ -9742,17 +9742,6 @@
           "streak": 1,
           "lastmatchdate": 1793829908
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 994,
-          "rank": -1,
-          "regionrank": 223,
-          "wins": 115,
-          "losses": 107,
-          "streak": -1,
-          "lastmatchdate": 1793907633
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -9764,12 +9753,23 @@
           "streak": 1,
           "lastmatchdate": 1794878510
         },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 994,
+          "rank": -1,
+          "regionrank": 223,
+          "wins": 115,
+          "losses": 107,
+          "streak": -1,
+          "lastmatchdate": 1793907633
+        },
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
           "elo": 1081,
           "rank": -1,
-          "regionrank": 178,
+          "regionrank": 177,
           "wins": 95,
           "losses": 91,
           "streak": -1,
@@ -9829,7 +9829,7 @@
           "faction": "german",
           "elo": 1100,
           "rank": -1,
-          "regionrank": 165,
+          "regionrank": 164,
           "wins": 70,
           "losses": 63,
           "streak": 2,
@@ -10123,7 +10123,7 @@
           "faction": "german",
           "elo": 1001,
           "rank": -1,
-          "regionrank": 46,
+          "regionrank": 47,
           "wins": 8,
           "losses": 7,
           "streak": 2,
@@ -10228,6 +10228,17 @@
           "streak": 2,
           "lastmatchdate": 1794721845
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 960,
+          "rank": -1,
+          "regionrank": 207,
+          "wins": 33,
+          "losses": 33,
+          "streak": -2,
+          "lastmatchdate": 1795035107
+        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -10244,22 +10255,11 @@
           "faction": "german",
           "elo": 1078,
           "rank": -1,
-          "regionrank": 184,
+          "regionrank": 183,
           "wins": 22,
           "losses": 20,
           "streak": 3,
           "lastmatchdate": 1794505672
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 960,
-          "rank": -1,
-          "regionrank": 207,
-          "wins": 33,
-          "losses": 33,
-          "streak": -2,
-          "lastmatchdate": 1795035107
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1385115"
@@ -10321,6 +10321,17 @@
           "streak": 1,
           "lastmatchdate": 1794970847
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 928,
+          "rank": -1,
+          "regionrank": 235,
+          "wins": 771,
+          "losses": 747,
+          "streak": 2,
+          "lastmatchdate": 1794638500
+        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -10337,22 +10348,11 @@
           "faction": "german",
           "elo": 992,
           "rank": -1,
-          "regionrank": 254,
+          "regionrank": 253,
           "wins": 229,
           "losses": 248,
           "streak": 2,
           "lastmatchdate": 1794917645
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 928,
-          "rank": -1,
-          "regionrank": 235,
-          "wins": 771,
-          "losses": 747,
-          "streak": 2,
-          "lastmatchdate": 1794638500
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/5768"
@@ -10397,7 +10397,7 @@
           "faction": "german",
           "elo": 967,
           "rank": -1,
-          "regionrank": 51,
+          "regionrank": 52,
           "wins": 77,
           "losses": 83,
           "streak": -1,
@@ -10528,7 +10528,7 @@
           "faction": "german",
           "elo": 1080,
           "rank": -1,
-          "regionrank": 180,
+          "regionrank": 179,
           "wins": 51,
           "losses": 43,
           "streak": 6,
@@ -10648,7 +10648,7 @@
           "faction": "dak",
           "elo": 963,
           "rank": -1,
-          "regionrank": 166,
+          "regionrank": 167,
           "wins": 14,
           "losses": 14,
           "streak": 2,
@@ -10785,7 +10785,7 @@
           "faction": "dak",
           "elo": 936,
           "rank": -1,
-          "regionrank": 183,
+          "regionrank": 184,
           "wins": 30,
           "losses": 27,
           "streak": -1,
@@ -10813,17 +10813,6 @@
           "streak": -1,
           "lastmatchdate": 1794436685
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 941,
-          "rank": -1,
-          "regionrank": 257,
-          "wins": 60,
-          "losses": 50,
-          "streak": -3,
-          "lastmatchdate": 1795033755
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -10834,6 +10823,17 @@
           "losses": 31,
           "streak": -1,
           "lastmatchdate": 1794083604
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 941,
+          "rank": -1,
+          "regionrank": 257,
+          "wins": 60,
+          "losses": 50,
+          "streak": -3,
+          "lastmatchdate": 1795033755
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -10851,7 +10851,7 @@
           "faction": "german",
           "elo": 789,
           "rank": -1,
-          "regionrank": 443,
+          "regionrank": 444,
           "wins": 31,
           "losses": 37,
           "streak": -2,
@@ -10928,6 +10928,17 @@
           "streak": 3,
           "lastmatchdate": 1794702467
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 872,
+          "rank": -1,
+          "regionrank": 265,
+          "wins": 33,
+          "losses": 38,
+          "streak": 1,
+          "lastmatchdate": 1794883179
+        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -10949,17 +10960,6 @@
           "losses": 82,
           "streak": 1,
           "lastmatchdate": 1794700596
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 872,
-          "rank": -1,
-          "regionrank": 266,
-          "wins": 33,
-          "losses": 38,
-          "streak": 1,
-          "lastmatchdate": 1794883179
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/768410"
@@ -10999,17 +10999,6 @@
           "streak": 2,
           "lastmatchdate": 1793235088
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 992,
-          "rank": -1,
-          "regionrank": 226,
-          "wins": 17,
-          "losses": 17,
-          "streak": -2,
-          "lastmatchdate": 1794074976
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -11020,6 +11009,17 @@
           "losses": 123,
           "streak": -2,
           "lastmatchdate": 1794966863
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 992,
+          "rank": -1,
+          "regionrank": 226,
+          "wins": 17,
+          "losses": 17,
+          "streak": -2,
+          "lastmatchdate": 1794074976
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -11211,7 +11211,7 @@
           "faction": "american",
           "elo": 925,
           "rank": -1,
-          "regionrank": 269,
+          "regionrank": 270,
           "wins": 174,
           "losses": 172,
           "streak": 1,
@@ -11557,13 +11557,13 @@
       "alias": "yanmagnus",
       "steam_id": "76561198019799182",
       "country": "br",
-      "level": 1731,
-      "xp": 1731,
+      "level": 1741,
+      "xp": 1741,
       "max_elo": 1054,
       "best_mode": "1V1 (AMERICAN)",
-      "total_wins": 25,
-      "total_losses": 21,
-      "last_match_date": 1794998092,
+      "total_wins": 45,
+      "total_losses": 43,
+      "last_match_date": 1795042038,
       "modes": {
         "1v1_american": {
           "mode": "1v1",
@@ -11575,6 +11575,17 @@
           "losses": 21,
           "streak": 1,
           "lastmatchdate": 1794998092
+        },
+        "1v1_german": {
+          "mode": "1v1",
+          "faction": "german",
+          "elo": 1016,
+          "rank": -1,
+          "regionrank": 45,
+          "wins": 20,
+          "losses": 22,
+          "streak": -6,
+          "lastmatchdate": 1795042038
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/780382"
@@ -11657,7 +11668,7 @@
           "faction": "dak",
           "elo": 707,
           "rank": -1,
-          "regionrank": 263,
+          "regionrank": 264,
           "wins": 19,
           "losses": 31,
           "streak": -2,
@@ -11731,13 +11742,13 @@
       "alias": "7 DIVISAO PHANTOM",
       "steam_id": "76561198284234077",
       "country": "br",
-      "level": 38111,
-      "xp": 38111,
+      "level": 38121,
+      "xp": 38121,
       "max_elo": 1050,
       "best_mode": "3V3 (BRITISH)",
-      "total_wins": 1872,
+      "total_wins": 1873,
       "total_losses": 2022,
-      "last_match_date": 1795035333,
+      "last_match_date": 1795041992,
       "modes": {
         "3v3_american": {
           "mode": "3v3",
@@ -11766,7 +11777,7 @@
           "faction": "dak",
           "elo": 787,
           "rank": -1,
-          "regionrank": 247,
+          "regionrank": 248,
           "wins": 80,
           "losses": 89,
           "streak": -1,
@@ -11782,6 +11793,17 @@
           "losses": 108,
           "streak": 1,
           "lastmatchdate": 1793823887
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 814,
+          "rank": -1,
+          "regionrank": 291,
+          "wins": 382,
+          "losses": 404,
+          "streak": 3,
+          "lastmatchdate": 1794874415
         },
         "4v4_american": {
           "mode": "4v4",
@@ -11808,24 +11830,13 @@
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
-          "elo": 633,
+          "elo": 649,
           "rank": -1,
-          "regionrank": 526,
-          "wins": 332,
+          "regionrank": 523,
+          "wins": 333,
           "losses": 397,
-          "streak": 2,
-          "lastmatchdate": 1794358952
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 814,
-          "rank": -1,
-          "regionrank": 291,
-          "wins": 382,
-          "losses": 404,
           "streak": 3,
-          "lastmatchdate": 1794874415
+          "lastmatchdate": 1795041992
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/13450"
@@ -11876,6 +11887,17 @@
           "streak": 2,
           "lastmatchdate": 1794273180
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 855,
+          "rank": -1,
+          "regionrank": 274,
+          "wins": 52,
+          "losses": 56,
+          "streak": -1,
+          "lastmatchdate": 1794626294
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -11897,17 +11919,6 @@
           "losses": 82,
           "streak": -3,
           "lastmatchdate": 1793753097
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 855,
-          "rank": -1,
-          "regionrank": 274,
-          "wins": 52,
-          "losses": 56,
-          "streak": -1,
-          "lastmatchdate": 1794626294
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/918684"
@@ -11979,7 +11990,7 @@
           "faction": "dak",
           "elo": 1045,
           "rank": -1,
-          "regionrank": 122,
+          "regionrank": 123,
           "wins": 26,
           "losses": 39,
           "streak": -3,
@@ -12012,7 +12023,7 @@
           "faction": "german",
           "elo": 784,
           "rank": -1,
-          "regionrank": 450,
+          "regionrank": 451,
           "wins": 558,
           "losses": 827,
           "streak": -2,
@@ -12056,6 +12067,17 @@
           "streak": 1,
           "lastmatchdate": 1794793568
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 887,
+          "rank": -1,
+          "regionrank": 256,
+          "wins": 16,
+          "losses": 20,
+          "streak": -6,
+          "lastmatchdate": 1794760980
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -12077,17 +12099,6 @@
           "losses": 110,
           "streak": 2,
           "lastmatchdate": 1794963945
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 887,
-          "rank": -1,
-          "regionrank": 256,
-          "wins": 16,
-          "losses": 20,
-          "streak": -6,
-          "lastmatchdate": 1794760980
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/763806"
@@ -12121,7 +12132,7 @@
           "faction": "dak",
           "elo": 745,
           "rank": -1,
-          "regionrank": 255,
+          "regionrank": 256,
           "wins": 9,
           "losses": 17,
           "streak": 1,
@@ -12138,17 +12149,6 @@
           "streak": 1,
           "lastmatchdate": 1794592413
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 947,
-          "rank": -1,
-          "regionrank": 253,
-          "wins": 14,
-          "losses": 12,
-          "streak": 3,
-          "lastmatchdate": 1794267960
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -12160,12 +12160,23 @@
           "streak": 2,
           "lastmatchdate": 1794967640
         },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 947,
+          "rank": -1,
+          "regionrank": 253,
+          "wins": 14,
+          "losses": 12,
+          "streak": 3,
+          "lastmatchdate": 1794267960
+        },
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
           "elo": 643,
           "rank": -1,
-          "regionrank": 524,
+          "regionrank": 525,
           "wins": 20,
           "losses": 35,
           "streak": 1,
@@ -12290,7 +12301,7 @@
           "faction": "dak",
           "elo": 1039,
           "rank": -1,
-          "regionrank": 126,
+          "regionrank": 127,
           "wins": 122,
           "losses": 124,
           "streak": 5,
@@ -12318,17 +12329,6 @@
           "streak": -1,
           "lastmatchdate": 1794795729
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 900,
-          "rank": -1,
-          "regionrank": 347,
-          "wins": 58,
-          "losses": 67,
-          "streak": -1,
-          "lastmatchdate": 1794082466
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -12339,6 +12339,17 @@
           "losses": 27,
           "streak": -2,
           "lastmatchdate": 1793550571
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 900,
+          "rank": -1,
+          "regionrank": 347,
+          "wins": 58,
+          "losses": 67,
+          "streak": -1,
+          "lastmatchdate": 1794082466
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/892597"
@@ -12367,17 +12378,6 @@
           "streak": 1,
           "lastmatchdate": 1793112901
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 955,
-          "rank": -1,
-          "regionrank": 248,
-          "wins": 65,
-          "losses": 60,
-          "streak": 1,
-          "lastmatchdate": 1794339359
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -12389,12 +12389,23 @@
           "streak": 6,
           "lastmatchdate": 1794868329
         },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 955,
+          "rank": -1,
+          "regionrank": 248,
+          "wins": 65,
+          "losses": 60,
+          "streak": 1,
+          "lastmatchdate": 1794339359
+        },
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
           "elo": 785,
           "rank": -1,
-          "regionrank": 449,
+          "regionrank": 450,
           "wins": 19,
           "losses": 23,
           "streak": 1,
@@ -12421,7 +12432,7 @@
           "faction": "german",
           "elo": 937,
           "rank": -1,
-          "regionrank": 56,
+          "regionrank": 57,
           "wins": 27,
           "losses": 26,
           "streak": -1,
@@ -12492,7 +12503,7 @@
           "faction": "dak",
           "elo": 976,
           "rank": -1,
-          "regionrank": 160,
+          "regionrank": 161,
           "wins": 122,
           "losses": 125,
           "streak": 1,
@@ -12601,7 +12612,7 @@
           "faction": "dak",
           "elo": 934,
           "rank": -1,
-          "regionrank": 186,
+          "regionrank": 187,
           "wins": 144,
           "losses": 151,
           "streak": 1,
@@ -12612,7 +12623,7 @@
           "faction": "dak",
           "elo": 1031,
           "rank": -1,
-          "regionrank": 176,
+          "regionrank": 175,
           "wins": 175,
           "losses": 174,
           "streak": -1,
@@ -12737,17 +12748,6 @@
       "total_losses": 76,
       "last_match_date": 1795034571,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 848,
-          "rank": -1,
-          "regionrank": 251,
-          "wins": 17,
-          "losses": 21,
-          "streak": 4,
-          "lastmatchdate": 1794949575
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -12758,6 +12758,17 @@
           "losses": 19,
           "streak": 1,
           "lastmatchdate": 1794855661
+        },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 848,
+          "rank": -1,
+          "regionrank": 251,
+          "wins": 17,
+          "losses": 21,
+          "streak": 4,
+          "lastmatchdate": 1794949575
         },
         "4v4_american": {
           "mode": "4v4",
@@ -12857,7 +12868,7 @@
           "faction": "dak",
           "elo": 937,
           "rank": -1,
-          "regionrank": 182,
+          "regionrank": 183,
           "wins": 46,
           "losses": 49,
           "streak": 2,
@@ -12873,6 +12884,17 @@
           "losses": 94,
           "streak": 1,
           "lastmatchdate": 1794847746
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 839,
+          "rank": -1,
+          "regionrank": 281,
+          "wins": 115,
+          "losses": 126,
+          "streak": -5,
+          "lastmatchdate": 1794857652
         },
         "4v4_american": {
           "mode": "4v4",
@@ -12906,17 +12928,6 @@
           "losses": 52,
           "streak": -5,
           "lastmatchdate": 1793547653
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 839,
-          "rank": -1,
-          "regionrank": 281,
-          "wins": 115,
-          "losses": 126,
-          "streak": -5,
-          "lastmatchdate": 1794857652
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/802058"
@@ -13026,7 +13037,7 @@
           "faction": "german",
           "elo": 850,
           "rank": -1,
-          "regionrank": 391,
+          "regionrank": 392,
           "wins": 31,
           "losses": 40,
           "streak": 2,
@@ -13140,7 +13151,7 @@
           "faction": "dak",
           "elo": 945,
           "rank": -1,
-          "regionrank": 178,
+          "regionrank": 179,
           "wins": 6,
           "losses": 10,
           "streak": -2,
@@ -13233,17 +13244,6 @@
       "total_losses": 125,
       "last_match_date": 1794773919,
       "modes": {
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 934,
-          "rank": -1,
-          "regionrank": 261,
-          "wins": 79,
-          "losses": 72,
-          "streak": -1,
-          "lastmatchdate": 1794773919
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -13254,6 +13254,17 @@
           "losses": 53,
           "streak": -1,
           "lastmatchdate": 1792983104
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 934,
+          "rank": -1,
+          "regionrank": 261,
+          "wins": 79,
+          "losses": 72,
+          "streak": -1,
+          "lastmatchdate": 1794773919
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1348602"
@@ -13325,7 +13336,7 @@
           "faction": "german",
           "elo": 1006,
           "rank": -1,
-          "regionrank": 45,
+          "regionrank": 46,
           "wins": 26,
           "losses": 24,
           "streak": 1,
@@ -13548,7 +13559,7 @@
           "faction": "german",
           "elo": 935,
           "rank": -1,
-          "regionrank": 315,
+          "regionrank": 316,
           "wins": 20,
           "losses": 22,
           "streak": 2,
@@ -13592,6 +13603,17 @@
           "streak": 1,
           "lastmatchdate": 1794961347
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 858,
+          "rank": -1,
+          "regionrank": 270,
+          "wins": 10,
+          "losses": 16,
+          "streak": -2,
+          "lastmatchdate": 1794185644
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -13608,22 +13630,11 @@
           "faction": "german",
           "elo": 851,
           "rank": -1,
-          "regionrank": 387,
+          "regionrank": 388,
           "wins": 18,
           "losses": 17,
           "streak": -1,
           "lastmatchdate": 1794960044
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 858,
-          "rank": -1,
-          "regionrank": 270,
-          "wins": 10,
-          "losses": 16,
-          "streak": -2,
-          "lastmatchdate": 1794185644
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/739286"
@@ -13667,44 +13678,6 @@
       "coh3stats_url": "https://coh3stats.com/players/206875"
     },
     {
-      "profile_id": 957597,
-      "alias": "Tavinho",
-      "steam_id": "76561199570467525",
-      "country": "br",
-      "level": 21201,
-      "xp": 21201,
-      "max_elo": 999,
-      "best_mode": "4V4 (GERMAN)",
-      "total_wins": 802,
-      "total_losses": 853,
-      "last_match_date": 1794974604,
-      "modes": {
-        "4v4_dak": {
-          "mode": "4v4",
-          "faction": "dak",
-          "elo": 981,
-          "rank": -1,
-          "regionrank": 220,
-          "wins": 504,
-          "losses": 539,
-          "streak": 2,
-          "lastmatchdate": 1794868607
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 999,
-          "rank": -1,
-          "regionrank": 246,
-          "wins": 298,
-          "losses": 314,
-          "streak": -4,
-          "lastmatchdate": 1794974604
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/957597"
-    },
-    {
       "profile_id": 431386,
       "alias": "lambda x: x",
       "steam_id": "76561198040299448",
@@ -13722,7 +13695,7 @@
           "faction": "british",
           "elo": 999,
           "rank": -1,
-          "regionrank": 177,
+          "regionrank": 176,
           "wins": 82,
           "losses": 83,
           "streak": 1,
@@ -13749,7 +13722,7 @@
           "faction": "dak",
           "elo": 998,
           "rank": -1,
-          "regionrank": 150,
+          "regionrank": 151,
           "wins": 57,
           "losses": 55,
           "streak": 1,
@@ -13766,17 +13739,6 @@
           "streak": 2,
           "lastmatchdate": 1794632220
         },
-        "4v4_dak": {
-          "mode": "4v4",
-          "faction": "dak",
-          "elo": 964,
-          "rank": -1,
-          "regionrank": 236,
-          "wins": 162,
-          "losses": 164,
-          "streak": -1,
-          "lastmatchdate": 1794628649
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -13787,6 +13749,17 @@
           "losses": 167,
           "streak": 1,
           "lastmatchdate": 1794621655
+        },
+        "4v4_dak": {
+          "mode": "4v4",
+          "faction": "dak",
+          "elo": 964,
+          "rank": -1,
+          "regionrank": 236,
+          "wins": 162,
+          "losses": 164,
+          "streak": -1,
+          "lastmatchdate": 1794628649
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/650140"
@@ -13847,7 +13820,7 @@
           "faction": "german",
           "elo": 850,
           "rank": -1,
-          "regionrank": 72,
+          "regionrank": 73,
           "wins": 5,
           "losses": 8,
           "streak": 3,
@@ -13869,17 +13842,6 @@
       "total_losses": 153,
       "last_match_date": 1794163506,
       "modes": {
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 995,
-          "rank": -1,
-          "regionrank": 219,
-          "wins": 46,
-          "losses": 41,
-          "streak": 1,
-          "lastmatchdate": 1794089794
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -13890,6 +13852,17 @@
           "losses": 54,
           "streak": 1,
           "lastmatchdate": 1793918582
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 995,
+          "rank": -1,
+          "regionrank": 219,
+          "wins": 46,
+          "losses": 41,
+          "streak": 1,
+          "lastmatchdate": 1794089794
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -13907,7 +13880,7 @@
           "faction": "german",
           "elo": 850,
           "rank": -1,
-          "regionrank": 389,
+          "regionrank": 390,
           "wins": 30,
           "losses": 38,
           "streak": 2,
@@ -14054,7 +14027,7 @@
           "faction": "dak",
           "elo": 886,
           "rank": -1,
-          "regionrank": 210,
+          "regionrank": 211,
           "wins": 182,
           "losses": 186,
           "streak": -3,
@@ -14125,6 +14098,17 @@
       "total_losses": 69,
       "last_match_date": 1794770412,
       "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 773,
+          "rank": -1,
+          "regionrank": 313,
+          "wins": 19,
+          "losses": 25,
+          "streak": -1,
+          "lastmatchdate": 1794687426
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -14141,22 +14125,11 @@
           "faction": "dak",
           "elo": 988,
           "rank": -1,
-          "regionrank": 208,
+          "regionrank": 209,
           "wins": 7,
           "losses": 9,
           "streak": -2,
           "lastmatchdate": 1794618836
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 773,
-          "rank": -1,
-          "regionrank": 313,
-          "wins": 19,
-          "losses": 25,
-          "streak": -1,
-          "lastmatchdate": 1794687426
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/12326"
@@ -14228,7 +14201,7 @@
           "faction": "german",
           "elo": 986,
           "rank": -1,
-          "regionrank": 258,
+          "regionrank": 257,
           "wins": 170,
           "losses": 176,
           "streak": -1,
@@ -14272,6 +14245,17 @@
           "streak": -4,
           "lastmatchdate": 1792972011
         },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 939,
+          "rank": -1,
+          "regionrank": 220,
+          "wins": 39,
+          "losses": 44,
+          "streak": -2,
+          "lastmatchdate": 1794962319
+        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -14288,22 +14272,11 @@
           "faction": "german",
           "elo": 986,
           "rank": -1,
-          "regionrank": 257,
+          "regionrank": 256,
           "wins": 16,
           "losses": 18,
           "streak": -3,
           "lastmatchdate": 1794534046
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 939,
-          "rank": -1,
-          "regionrank": 220,
-          "wins": 39,
-          "losses": 44,
-          "streak": -2,
-          "lastmatchdate": 1794962319
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1228682"
@@ -14343,17 +14316,6 @@
           "streak": -6,
           "lastmatchdate": 1795027862
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 932,
-          "rank": -1,
-          "regionrank": 264,
-          "wins": 18,
-          "losses": 18,
-          "streak": 1,
-          "lastmatchdate": 1795040531
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -14364,6 +14326,17 @@
           "losses": 16,
           "streak": 1,
           "lastmatchdate": 1795024646
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 932,
+          "rank": -1,
+          "regionrank": 265,
+          "wins": 18,
+          "losses": 18,
+          "streak": 1,
+          "lastmatchdate": 1795040531
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1436158"
@@ -14386,7 +14359,7 @@
           "faction": "dak",
           "elo": 985,
           "rank": -1,
-          "regionrank": 214,
+          "regionrank": 215,
           "wins": 1197,
           "losses": 1231,
           "streak": -2,
@@ -14446,22 +14419,11 @@
           "faction": "dak",
           "elo": 985,
           "rank": -1,
-          "regionrank": 156,
+          "regionrank": 157,
           "wins": 21,
           "losses": 23,
           "streak": -4,
           "lastmatchdate": 1794329875
-        },
-        "4v4_dak": {
-          "mode": "4v4",
-          "faction": "dak",
-          "elo": 787,
-          "rank": -1,
-          "regionrank": 358,
-          "wins": 18,
-          "losses": 31,
-          "streak": -1,
-          "lastmatchdate": 1793753097
         },
         "4v4_british": {
           "mode": "4v4",
@@ -14473,6 +14435,17 @@
           "losses": 23,
           "streak": 1,
           "lastmatchdate": 1794359351
+        },
+        "4v4_dak": {
+          "mode": "4v4",
+          "faction": "dak",
+          "elo": 787,
+          "rank": -1,
+          "regionrank": 358,
+          "wins": 18,
+          "losses": 31,
+          "streak": -1,
+          "lastmatchdate": 1793753097
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1181845"
@@ -14517,7 +14490,7 @@
           "faction": "german",
           "elo": 984,
           "rank": -1,
-          "regionrank": 262,
+          "regionrank": 261,
           "wins": 14,
           "losses": 18,
           "streak": -3,
@@ -14525,6 +14498,44 @@
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/738632"
+    },
+    {
+      "profile_id": 957597,
+      "alias": "Tavinho",
+      "steam_id": "76561199570467525",
+      "country": "br",
+      "level": 21201,
+      "xp": 21201,
+      "max_elo": 983,
+      "best_mode": "4V4 (GERMAN)",
+      "total_wins": 802,
+      "total_losses": 854,
+      "last_match_date": 1795042008,
+      "modes": {
+        "4v4_dak": {
+          "mode": "4v4",
+          "faction": "dak",
+          "elo": 981,
+          "rank": -1,
+          "regionrank": 221,
+          "wins": 504,
+          "losses": 539,
+          "streak": 2,
+          "lastmatchdate": 1794868607
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 983,
+          "rank": -1,
+          "regionrank": 262,
+          "wins": 298,
+          "losses": 315,
+          "streak": -5,
+          "lastmatchdate": 1795042008
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/957597"
     },
     {
       "profile_id": 742802,
@@ -14642,17 +14653,6 @@
       "total_losses": 833,
       "last_match_date": 1795020541,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 912,
-          "rank": -1,
-          "regionrank": 214,
-          "wins": 169,
-          "losses": 180,
-          "streak": -1,
-          "lastmatchdate": 1793928773
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -14664,12 +14664,23 @@
           "streak": -1,
           "lastmatchdate": 1795018179
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 912,
+          "rank": -1,
+          "regionrank": 214,
+          "wins": 169,
+          "losses": 180,
+          "streak": -1,
+          "lastmatchdate": 1793928773
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 762,
           "rank": -1,
-          "regionrank": 254,
+          "regionrank": 255,
           "wins": 113,
           "losses": 132,
           "streak": -2,
@@ -14685,6 +14696,17 @@
           "losses": 71,
           "streak": 4,
           "lastmatchdate": 1794358971
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 738,
+          "rank": -1,
+          "regionrank": 332,
+          "wins": 127,
+          "losses": 135,
+          "streak": 2,
+          "lastmatchdate": 1795020541
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -14707,17 +14729,6 @@
           "losses": 95,
           "streak": 1,
           "lastmatchdate": 1794352360
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 738,
-          "rank": -1,
-          "regionrank": 332,
-          "wins": 127,
-          "losses": 135,
-          "streak": 2,
-          "lastmatchdate": 1795020541
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/16028"
@@ -14740,7 +14751,7 @@
           "faction": "dak",
           "elo": 976,
           "rank": -1,
-          "regionrank": 159,
+          "regionrank": 160,
           "wins": 7,
           "losses": 8,
           "streak": 1,
@@ -14811,11 +14822,22 @@
           "faction": "dak",
           "elo": 730,
           "rank": -1,
-          "regionrank": 258,
+          "regionrank": 259,
           "wins": 106,
           "losses": 135,
           "streak": -1,
           "lastmatchdate": 1794857501
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 790,
+          "rank": -1,
+          "regionrank": 303,
+          "wins": 152,
+          "losses": 138,
+          "streak": 2,
+          "lastmatchdate": 1794948385
         },
         "4v4_american": {
           "mode": "4v4",
@@ -14849,17 +14871,6 @@
           "losses": 57,
           "streak": 3,
           "lastmatchdate": 1793678917
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 790,
-          "rank": -1,
-          "regionrank": 303,
-          "wins": 152,
-          "losses": 138,
-          "streak": 2,
-          "lastmatchdate": 1794948385
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/83244"
@@ -14904,7 +14915,7 @@
           "faction": "dak",
           "elo": 976,
           "rank": -1,
-          "regionrank": 158,
+          "regionrank": 159,
           "wins": 34,
           "losses": 36,
           "streak": 2,
@@ -14920,6 +14931,17 @@
           "losses": 38,
           "streak": 1,
           "lastmatchdate": 1794270534
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 856,
+          "rank": -1,
+          "regionrank": 272,
+          "wins": 25,
+          "losses": 28,
+          "streak": -6,
+          "lastmatchdate": 1794358817
         },
         "4v4_american": {
           "mode": "4v4",
@@ -14953,17 +14975,6 @@
           "losses": 58,
           "streak": -2,
           "lastmatchdate": 1794267405
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 856,
-          "rank": -1,
-          "regionrank": 272,
-          "wins": 25,
-          "losses": 28,
-          "streak": -6,
-          "lastmatchdate": 1794358817
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/944737"
@@ -15003,17 +15014,6 @@
           "streak": -3,
           "lastmatchdate": 1794365810
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 800,
-          "rank": -1,
-          "regionrank": 354,
-          "wins": 74,
-          "losses": 63,
-          "streak": 3,
-          "lastmatchdate": 1794967553
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -15024,6 +15024,17 @@
           "losses": 24,
           "streak": -3,
           "lastmatchdate": 1793416753
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 800,
+          "rank": -1,
+          "regionrank": 354,
+          "wins": 74,
+          "losses": 63,
+          "streak": 3,
+          "lastmatchdate": 1794967553
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1285189"
@@ -15128,17 +15139,6 @@
           "streak": -2,
           "lastmatchdate": 1792885585
         },
-        "4v4_dak": {
-          "mode": "4v4",
-          "faction": "dak",
-          "elo": 972,
-          "rank": -1,
-          "regionrank": 227,
-          "wins": 7,
-          "losses": 8,
-          "streak": 1,
-          "lastmatchdate": 1794716720
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -15149,6 +15149,17 @@
           "losses": 17,
           "streak": -3,
           "lastmatchdate": 1794962319
+        },
+        "4v4_dak": {
+          "mode": "4v4",
+          "faction": "dak",
+          "elo": 972,
+          "rank": -1,
+          "regionrank": 227,
+          "wins": 7,
+          "losses": 8,
+          "streak": 1,
+          "lastmatchdate": 1794716720
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/966123"
@@ -15171,7 +15182,7 @@
           "faction": "dak",
           "elo": 797,
           "rank": -1,
-          "regionrank": 244,
+          "regionrank": 245,
           "wins": 196,
           "losses": 211,
           "streak": -1,
@@ -15275,17 +15286,6 @@
           "streak": 2,
           "lastmatchdate": 1794970456
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 898,
-          "rank": -1,
-          "regionrank": 286,
-          "wins": 122,
-          "losses": 109,
-          "streak": -5,
-          "lastmatchdate": 1793932952
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -15296,6 +15296,17 @@
           "losses": 146,
           "streak": 3,
           "lastmatchdate": 1794999873
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 898,
+          "rank": -1,
+          "regionrank": 286,
+          "wins": 122,
+          "losses": 109,
+          "streak": -5,
+          "lastmatchdate": 1793932952
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1191187"
@@ -15345,7 +15356,7 @@
           "faction": "dak",
           "elo": 936,
           "rank": -1,
-          "regionrank": 184,
+          "regionrank": 185,
           "wins": 8,
           "losses": 10,
           "streak": 1,
@@ -15405,6 +15416,17 @@
       "total_losses": 262,
       "last_match_date": 1795040204,
       "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 934,
+          "rank": -1,
+          "regionrank": 226,
+          "wins": 24,
+          "losses": 25,
+          "streak": 1,
+          "lastmatchdate": 1794705528
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -15437,17 +15459,6 @@
           "losses": 184,
           "streak": 2,
           "lastmatchdate": 1795040204
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 934,
-          "rank": -1,
-          "regionrank": 226,
-          "wins": 24,
-          "losses": 25,
-          "streak": 1,
-          "lastmatchdate": 1794705528
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1213751"
@@ -15470,7 +15481,7 @@
           "faction": "german",
           "elo": 893,
           "rank": -1,
-          "regionrank": 66,
+          "regionrank": 67,
           "wins": 580,
           "losses": 609,
           "streak": -1,
@@ -15541,7 +15552,7 @@
           "faction": "dak",
           "elo": 956,
           "rank": -1,
-          "regionrank": 170,
+          "regionrank": 171,
           "wins": 100,
           "losses": 110,
           "streak": -1,
@@ -15661,7 +15672,7 @@
           "faction": "dak",
           "elo": 959,
           "rank": -1,
-          "regionrank": 169,
+          "regionrank": 170,
           "wins": 16,
           "losses": 18,
           "streak": -2,
@@ -15716,17 +15727,6 @@
       "total_losses": 199,
       "last_match_date": 1795008418,
       "modes": {
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 955,
-          "rank": -1,
-          "regionrank": 246,
-          "wins": 8,
-          "losses": 7,
-          "streak": 1,
-          "lastmatchdate": 1792722132
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -15737,6 +15737,17 @@
           "losses": 192,
           "streak": 1,
           "lastmatchdate": 1795008418
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 955,
+          "rank": -1,
+          "regionrank": 246,
+          "wins": 8,
+          "losses": 7,
+          "streak": 1,
+          "lastmatchdate": 1792722132
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1318025"
@@ -15814,17 +15825,6 @@
           "streak": 1,
           "lastmatchdate": 1793989896
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 407,
-          "rank": -1,
-          "regionrank": 557,
-          "wins": 222,
-          "losses": 396,
-          "streak": 1,
-          "lastmatchdate": 1794268517
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -15835,6 +15835,17 @@
           "losses": 184,
           "streak": -4,
           "lastmatchdate": 1794771216
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 407,
+          "rank": -1,
+          "regionrank": 557,
+          "wins": 222,
+          "losses": 396,
+          "streak": 1,
+          "lastmatchdate": 1794268517
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/83351"
@@ -15895,22 +15906,11 @@
           "faction": "dak",
           "elo": 951,
           "rank": -1,
-          "regionrank": 174,
+          "regionrank": 175,
           "wins": 36,
           "losses": 42,
           "streak": -1,
           "lastmatchdate": 1794533119
-        },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 811,
-          "rank": -1,
-          "regionrank": 270,
-          "wins": 36,
-          "losses": 40,
-          "streak": 1,
-          "lastmatchdate": 1794803792
         },
         "3v3_british": {
           "mode": "3v3",
@@ -15923,6 +15923,17 @@
           "streak": 2,
           "lastmatchdate": 1794262066
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 811,
+          "rank": -1,
+          "regionrank": 270,
+          "wins": 36,
+          "losses": 40,
+          "streak": 1,
+          "lastmatchdate": 1794803792
+        },
         "3v3_german": {
           "mode": "3v3",
           "faction": "german",
@@ -15933,6 +15944,17 @@
           "losses": 42,
           "streak": 1,
           "lastmatchdate": 1794967658
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 881,
+          "rank": -1,
+          "regionrank": 260,
+          "wins": 47,
+          "losses": 58,
+          "streak": 1,
+          "lastmatchdate": 1793663546
         },
         "4v4_american": {
           "mode": "4v4",
@@ -15966,17 +15988,6 @@
           "losses": 53,
           "streak": 2,
           "lastmatchdate": 1794266086
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 881,
-          "rank": -1,
-          "regionrank": 260,
-          "wins": 47,
-          "losses": 58,
-          "streak": 1,
-          "lastmatchdate": 1793663546
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/29251"
@@ -16146,7 +16157,7 @@
           "faction": "dak",
           "elo": 823,
           "rank": -1,
-          "regionrank": 235,
+          "regionrank": 236,
           "wins": 5,
           "losses": 10,
           "streak": 2,
@@ -16206,7 +16217,7 @@
           "faction": "german",
           "elo": 944,
           "rank": -1,
-          "regionrank": 305,
+          "regionrank": 306,
           "wins": 61,
           "losses": 70,
           "streak": -1,
@@ -16279,6 +16290,44 @@
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/965932"
+    },
+    {
+      "profile_id": 145428,
+      "alias": "reactx78",
+      "steam_id": "76561198020874210",
+      "country": "br",
+      "level": 13611,
+      "xp": 13611,
+      "max_elo": 932,
+      "best_mode": "4V4 (AMERICAN)",
+      "total_wins": 749,
+      "total_losses": 731,
+      "last_match_date": 1795042333,
+      "modes": {
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 892,
+          "rank": -1,
+          "regionrank": 225,
+          "wins": 344,
+          "losses": 345,
+          "streak": 4,
+          "lastmatchdate": 1795040068
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 932,
+          "rank": -1,
+          "regionrank": 264,
+          "wins": 405,
+          "losses": 386,
+          "streak": 2,
+          "lastmatchdate": 1795042333
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/145428"
     },
     {
       "profile_id": 232075,
@@ -16379,7 +16428,7 @@
           "faction": "dak",
           "elo": 919,
           "rank": -1,
-          "regionrank": 194,
+          "regionrank": 195,
           "wins": 16,
           "losses": 13,
           "streak": 1,
@@ -16498,44 +16547,6 @@
       "coh3stats_url": "https://coh3stats.com/players/109098"
     },
     {
-      "profile_id": 145428,
-      "alias": "reactx78",
-      "steam_id": "76561198020874210",
-      "country": "br",
-      "level": 13601,
-      "xp": 13601,
-      "max_elo": 917,
-      "best_mode": "4V4 (AMERICAN)",
-      "total_wins": 748,
-      "total_losses": 731,
-      "last_match_date": 1795040068,
-      "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 892,
-          "rank": -1,
-          "regionrank": 225,
-          "wins": 344,
-          "losses": 345,
-          "streak": 4,
-          "lastmatchdate": 1795040068
-        },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 917,
-          "rank": -1,
-          "regionrank": 272,
-          "wins": 404,
-          "losses": 386,
-          "streak": 1,
-          "lastmatchdate": 1794955649
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/145428"
-    },
-    {
       "profile_id": 2290,
       "alias": "luissaster",
       "steam_id": "76561198329413012",
@@ -16591,7 +16602,7 @@
           "faction": "dak",
           "elo": 913,
           "rank": -1,
-          "regionrank": 196,
+          "regionrank": 197,
           "wins": 123,
           "losses": 130,
           "streak": 4,
@@ -16668,17 +16679,6 @@
           "streak": 1,
           "lastmatchdate": 1793666737
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 800,
-          "rank": -1,
-          "regionrank": 433,
-          "wins": 29,
-          "losses": 35,
-          "streak": -2,
-          "lastmatchdate": 1793667577
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -16689,6 +16689,17 @@
           "losses": 106,
           "streak": 1,
           "lastmatchdate": 1792794088
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 800,
+          "rank": -1,
+          "regionrank": 433,
+          "wins": 29,
+          "losses": 35,
+          "streak": -2,
+          "lastmatchdate": 1793667577
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/996918"
@@ -16717,17 +16728,6 @@
           "streak": 1,
           "lastmatchdate": 1795028981
         },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 908,
-          "rank": -1,
-          "regionrank": 216,
-          "wins": 86,
-          "losses": 90,
-          "streak": -2,
-          "lastmatchdate": 1794077893
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -16739,12 +16739,23 @@
           "streak": 1,
           "lastmatchdate": 1793822259
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 908,
+          "rank": -1,
+          "regionrank": 216,
+          "wins": 86,
+          "losses": 90,
+          "streak": -2,
+          "lastmatchdate": 1794077893
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 784,
           "rank": -1,
-          "regionrank": 249,
+          "regionrank": 250,
           "wins": 124,
           "losses": 141,
           "streak": -3,
@@ -16777,7 +16788,7 @@
           "faction": "german",
           "elo": 661,
           "rank": -1,
-          "regionrank": 514,
+          "regionrank": 515,
           "wins": 107,
           "losses": 136,
           "streak": -1,
@@ -16979,17 +16990,6 @@
           "streak": -1,
           "lastmatchdate": 1794545752
         },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 870,
-          "rank": -1,
-          "regionrank": 237,
-          "wins": 59,
-          "losses": 58,
-          "streak": 1,
-          "lastmatchdate": 1794948943
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -17001,12 +17001,23 @@
           "streak": -3,
           "lastmatchdate": 1794963865
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 870,
+          "rank": -1,
+          "regionrank": 237,
+          "wins": 59,
+          "losses": 58,
+          "streak": 1,
+          "lastmatchdate": 1794948943
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 691,
           "rank": -1,
-          "regionrank": 265,
+          "regionrank": 266,
           "wins": 28,
           "losses": 44,
           "streak": 2,
@@ -17022,6 +17033,17 @@
           "losses": 87,
           "streak": -2,
           "lastmatchdate": 1794625499
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 753,
+          "rank": -1,
+          "regionrank": 319,
+          "wins": 30,
+          "losses": 36,
+          "streak": -4,
+          "lastmatchdate": 1794369196
         },
         "4v4_american": {
           "mode": "4v4",
@@ -17055,17 +17077,6 @@
           "losses": 104,
           "streak": 4,
           "lastmatchdate": 1794436263
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 753,
-          "rank": -1,
-          "regionrank": 319,
-          "wins": 30,
-          "losses": 36,
-          "streak": -4,
-          "lastmatchdate": 1794369196
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/951280"
@@ -17192,17 +17203,6 @@
           "streak": 1,
           "lastmatchdate": 1794531704
         },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 822,
-          "rank": -1,
-          "regionrank": 266,
-          "wins": 4,
-          "losses": 8,
-          "streak": -1,
-          "lastmatchdate": 1794441496
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -17214,12 +17214,23 @@
           "streak": -2,
           "lastmatchdate": 1794695333
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 822,
+          "rank": -1,
+          "regionrank": 266,
+          "wins": 4,
+          "losses": 8,
+          "streak": -1,
+          "lastmatchdate": 1794441496
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 726,
           "rank": -1,
-          "regionrank": 259,
+          "regionrank": 260,
           "wins": 3,
           "losses": 12,
           "streak": -7,
@@ -17235,6 +17246,17 @@
           "losses": 15,
           "streak": 2,
           "lastmatchdate": 1793653210
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 519,
+          "rank": -1,
+          "regionrank": 375,
+          "wins": 7,
+          "losses": 19,
+          "streak": 1,
+          "lastmatchdate": 1794876732
         },
         "4v4_american": {
           "mode": "4v4",
@@ -17268,17 +17290,6 @@
           "losses": 21,
           "streak": -3,
           "lastmatchdate": 1794527968
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 519,
-          "rank": -1,
-          "regionrank": 375,
-          "wins": 7,
-          "losses": 19,
-          "streak": 1,
-          "lastmatchdate": 1794876732
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1260191"
@@ -17323,7 +17334,7 @@
           "faction": "dak",
           "elo": 660,
           "rank": -1,
-          "regionrank": 267,
+          "regionrank": 268,
           "wins": 37,
           "losses": 54,
           "streak": 5,
@@ -17351,17 +17362,6 @@
           "streak": -2,
           "lastmatchdate": 1794957167
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 828,
-          "rank": -1,
-          "regionrank": 411,
-          "wins": 30,
-          "losses": 43,
-          "streak": -3,
-          "lastmatchdate": 1795013206
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -17372,6 +17372,17 @@
           "losses": 85,
           "streak": -2,
           "lastmatchdate": 1795015191
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 828,
+          "rank": -1,
+          "regionrank": 411,
+          "wins": 30,
+          "losses": 43,
+          "streak": -3,
+          "lastmatchdate": 1795013206
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/895134"
@@ -17519,7 +17530,7 @@
           "faction": "german",
           "elo": 898,
           "rank": -1,
-          "regionrank": 63,
+          "regionrank": 64,
           "wins": 4,
           "losses": 6,
           "streak": -4,
@@ -17600,7 +17611,7 @@
           "faction": "dak",
           "elo": 896,
           "rank": -1,
-          "regionrank": 206,
+          "regionrank": 207,
           "wins": 26,
           "losses": 28,
           "streak": -3,
@@ -17736,16 +17747,16 @@
           "streak": 1,
           "lastmatchdate": 1794111947
         },
-        "4v4_american": {
+        "4v4_british": {
           "mode": "4v4",
-          "faction": "american",
-          "elo": 700,
+          "faction": "british",
+          "elo": 742,
           "rank": -1,
-          "regionrank": 408,
-          "wins": 15,
-          "losses": 25,
-          "streak": -5,
-          "lastmatchdate": 1794495680
+          "regionrank": 329,
+          "wins": 28,
+          "losses": 35,
+          "streak": -2,
+          "lastmatchdate": 1794936412
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -17758,6 +17769,17 @@
           "streak": 3,
           "lastmatchdate": 1794939177
         },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 700,
+          "rank": -1,
+          "regionrank": 408,
+          "wins": 15,
+          "losses": 25,
+          "streak": -5,
+          "lastmatchdate": 1794495680
+        },
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
@@ -17768,17 +17790,6 @@
           "losses": 31,
           "streak": 1,
           "lastmatchdate": 1794447589
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 742,
-          "rank": -1,
-          "regionrank": 329,
-          "wins": 28,
-          "losses": 35,
-          "streak": -2,
-          "lastmatchdate": 1794936412
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/389673"
@@ -17850,17 +17861,6 @@
       "total_losses": 103,
       "last_match_date": 1794958046,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 891,
-          "rank": -1,
-          "regionrank": 226,
-          "wins": 24,
-          "losses": 26,
-          "streak": -2,
-          "lastmatchdate": 1794958046
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -17872,16 +17872,16 @@
           "streak": 2,
           "lastmatchdate": 1793032315
         },
-        "4v4_american": {
-          "mode": "4v4",
+        "3v3_american": {
+          "mode": "3v3",
           "faction": "american",
-          "elo": 821,
+          "elo": 891,
           "rank": -1,
-          "regionrank": 339,
-          "wins": 31,
-          "losses": 32,
-          "streak": 3,
-          "lastmatchdate": 1794956649
+          "regionrank": 226,
+          "wins": 24,
+          "losses": 26,
+          "streak": -2,
+          "lastmatchdate": 1794958046
         },
         "4v4_british": {
           "mode": "4v4",
@@ -17893,6 +17893,17 @@
           "losses": 22,
           "streak": 1,
           "lastmatchdate": 1793313801
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 821,
+          "rank": -1,
+          "regionrank": 339,
+          "wins": 31,
+          "losses": 32,
+          "streak": 3,
+          "lastmatchdate": 1794956649
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1213971"
@@ -17937,7 +17948,7 @@
           "faction": "british",
           "elo": 864,
           "rank": -1,
-          "regionrank": 267,
+          "regionrank": 266,
           "wins": 10,
           "losses": 14,
           "streak": -1,
@@ -17986,7 +17997,7 @@
           "faction": "american",
           "elo": 568,
           "rank": -1,
-          "regionrank": 445,
+          "regionrank": 447,
           "wins": 58,
           "losses": 67,
           "streak": 1,
@@ -18024,7 +18035,7 @@
           "faction": "german",
           "elo": 890,
           "rank": -1,
-          "regionrank": 67,
+          "regionrank": 68,
           "wins": 5,
           "losses": 8,
           "streak": -1,
@@ -18051,22 +18062,11 @@
           "faction": "dak",
           "elo": 889,
           "rank": -1,
-          "regionrank": 208,
+          "regionrank": 209,
           "wins": 5,
           "losses": 9,
           "streak": -3,
           "lastmatchdate": 1794942942
-        },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 737,
-          "rank": -1,
-          "regionrank": 389,
-          "wins": 8,
-          "losses": 20,
-          "streak": -7,
-          "lastmatchdate": 1795022189
         },
         "4v4_british": {
           "mode": "4v4",
@@ -18078,6 +18078,17 @@
           "losses": 38,
           "streak": 1,
           "lastmatchdate": 1795022924
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 737,
+          "rank": -1,
+          "regionrank": 389,
+          "wins": 8,
+          "losses": 20,
+          "streak": -7,
+          "lastmatchdate": 1795022189
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -18204,17 +18215,6 @@
           "streak": -1,
           "lastmatchdate": 1793398148
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 850,
-          "rank": -1,
-          "regionrank": 322,
-          "wins": 111,
-          "losses": 106,
-          "streak": 2,
-          "lastmatchdate": 1793655357
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -18225,6 +18225,17 @@
           "losses": 95,
           "streak": 1,
           "lastmatchdate": 1794786350
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 850,
+          "rank": -1,
+          "regionrank": 322,
+          "wins": 111,
+          "losses": 106,
+          "streak": 2,
+          "lastmatchdate": 1793655357
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/993209"
@@ -18242,6 +18253,17 @@
       "total_losses": 134,
       "last_match_date": 1794958290,
       "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 784,
+          "rank": -1,
+          "regionrank": 307,
+          "wins": 53,
+          "losses": 60,
+          "streak": -1,
+          "lastmatchdate": 1794952337
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -18274,17 +18296,6 @@
           "losses": 25,
           "streak": -3,
           "lastmatchdate": 1794785894
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 784,
-          "rank": -1,
-          "regionrank": 307,
-          "wins": 53,
-          "losses": 60,
-          "streak": -1,
-          "lastmatchdate": 1794952337
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1285871"
@@ -18348,8 +18359,8 @@
       "alias": "Flash.Point -Mariatti- Panda",
       "steam_id": "76561198009899628",
       "country": "br",
-      "level": 1021,
-      "xp": 1021,
+      "level": 1031,
+      "xp": 1031,
       "max_elo": 880,
       "best_mode": "3V3 (BRITISH)",
       "total_wins": 34,
@@ -18405,7 +18416,7 @@
           "faction": "dak",
           "elo": 779,
           "rank": -1,
-          "regionrank": 250,
+          "regionrank": 251,
           "wins": 3,
           "losses": 9,
           "streak": -2,
@@ -18509,7 +18520,7 @@
           "faction": "dak",
           "elo": 878,
           "rank": -1,
-          "regionrank": 214,
+          "regionrank": 215,
           "wins": 7,
           "losses": 9,
           "streak": 1,
@@ -18547,7 +18558,7 @@
           "faction": "dak",
           "elo": 880,
           "rank": -1,
-          "regionrank": 212,
+          "regionrank": 213,
           "wins": 102,
           "losses": 170,
           "streak": 1,
@@ -18602,6 +18613,17 @@
       "total_losses": 164,
       "last_match_date": 1794972890,
       "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 744,
+          "rank": -1,
+          "regionrank": 327,
+          "wins": 58,
+          "losses": 58,
+          "streak": -3,
+          "lastmatchdate": 1794972890
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
@@ -18634,17 +18656,6 @@
           "losses": 37,
           "streak": -3,
           "lastmatchdate": 1794015926
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 744,
-          "rank": -1,
-          "regionrank": 327,
-          "wins": 58,
-          "losses": 58,
-          "streak": -3,
-          "lastmatchdate": 1794972890
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1194945"
@@ -18738,17 +18749,6 @@
           "streak": 1,
           "lastmatchdate": 1795036123
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 876,
-          "rank": -1,
-          "regionrank": 307,
-          "wins": 8,
-          "losses": 14,
-          "streak": -1,
-          "lastmatchdate": 1795033721
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -18759,6 +18759,17 @@
           "losses": 31,
           "streak": -5,
           "lastmatchdate": 1794808030
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 876,
+          "rank": -1,
+          "regionrank": 307,
+          "wins": 8,
+          "losses": 14,
+          "streak": -1,
+          "lastmatchdate": 1795033721
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/137848"
@@ -18803,7 +18814,7 @@
           "faction": "dak",
           "elo": 874,
           "rank": -1,
-          "regionrank": 216,
+          "regionrank": 217,
           "wins": 25,
           "losses": 31,
           "streak": -1,
@@ -18874,22 +18885,11 @@
           "faction": "dak",
           "elo": 778,
           "rank": -1,
-          "regionrank": 251,
+          "regionrank": 252,
           "wins": 35,
           "losses": 54,
           "streak": 1,
           "lastmatchdate": 1794690688
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 734,
-          "rank": -1,
-          "regionrank": 483,
-          "wins": 6,
-          "losses": 14,
-          "streak": -4,
-          "lastmatchdate": 1794687804
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -18901,9 +18901,47 @@
           "losses": 277,
           "streak": -5,
           "lastmatchdate": 1794872223
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 734,
+          "rank": -1,
+          "regionrank": 483,
+          "wins": 6,
+          "losses": 14,
+          "streak": -4,
+          "lastmatchdate": 1794687804
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/128365"
+    },
+    {
+      "profile_id": 1022387,
+      "alias": "Anuldelare",
+      "steam_id": "76561198068722886",
+      "country": "br",
+      "level": 371,
+      "xp": 371,
+      "max_elo": 874,
+      "best_mode": "4V4 (BRITISH)",
+      "total_wins": 9,
+      "total_losses": 12,
+      "last_match_date": 1793065727,
+      "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 874,
+          "rank": -1,
+          "regionrank": 263,
+          "wins": 9,
+          "losses": 12,
+          "streak": 1,
+          "lastmatchdate": 1793065727
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/1022387"
     },
     {
       "profile_id": 1064661,
@@ -18931,33 +18969,6 @@
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1064661"
-    },
-    {
-      "profile_id": 1022387,
-      "alias": "Anuldelare",
-      "steam_id": "76561198068722886",
-      "country": "br",
-      "level": 371,
-      "xp": 371,
-      "max_elo": 874,
-      "best_mode": "4V4 (BRITISH)",
-      "total_wins": 9,
-      "total_losses": 12,
-      "last_match_date": 1793065727,
-      "modes": {
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 874,
-          "rank": -1,
-          "regionrank": 264,
-          "wins": 9,
-          "losses": 12,
-          "streak": 1,
-          "lastmatchdate": 1793065727
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/1022387"
     },
     {
       "profile_id": 739954,
@@ -19096,7 +19107,7 @@
           "faction": "dak",
           "elo": 865,
           "rank": -1,
-          "regionrank": 219,
+          "regionrank": 220,
           "wins": 14,
           "losses": 16,
           "streak": 1,
@@ -19161,7 +19172,7 @@
           "faction": "german",
           "elo": 864,
           "rank": -1,
-          "regionrank": 69,
+          "regionrank": 70,
           "wins": 148,
           "losses": 181,
           "streak": -2,
@@ -19169,6 +19180,66 @@
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1002810"
+    },
+    {
+      "profile_id": 677441,
+      "alias": "Resilient",
+      "steam_id": "76561198013484803",
+      "country": "br",
+      "level": 13611,
+      "xp": 13611,
+      "max_elo": 862,
+      "best_mode": "3V3 (AMERICAN)",
+      "total_wins": 573,
+      "total_losses": 608,
+      "last_match_date": 1795041992,
+      "modes": {
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 862,
+          "rank": -1,
+          "regionrank": 243,
+          "wins": 196,
+          "losses": 207,
+          "streak": 1,
+          "lastmatchdate": 1794942114
+        },
+        "3v3_german": {
+          "mode": "3v3",
+          "faction": "german",
+          "elo": 813,
+          "rank": -1,
+          "regionrank": 321,
+          "wins": 13,
+          "losses": 16,
+          "streak": -1,
+          "lastmatchdate": 1794355303
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 798,
+          "rank": -1,
+          "regionrank": 357,
+          "wins": 349,
+          "losses": 353,
+          "streak": 3,
+          "lastmatchdate": 1794874415
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 671,
+          "rank": -1,
+          "regionrank": 510,
+          "wins": 15,
+          "losses": 32,
+          "streak": 3,
+          "lastmatchdate": 1795041992
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/677441"
     },
     {
       "profile_id": 125626,
@@ -19237,7 +19308,7 @@
           "faction": "dak",
           "elo": 862,
           "rank": -1,
-          "regionrank": 220,
+          "regionrank": 221,
           "wins": 62,
           "losses": 74,
           "streak": 2,
@@ -19256,66 +19327,6 @@
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/9669"
-    },
-    {
-      "profile_id": 677441,
-      "alias": "Resilient",
-      "steam_id": "76561198013484803",
-      "country": "br",
-      "level": 13601,
-      "xp": 13601,
-      "max_elo": 862,
-      "best_mode": "3V3 (AMERICAN)",
-      "total_wins": 572,
-      "total_losses": 608,
-      "last_match_date": 1794942114,
-      "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 862,
-          "rank": -1,
-          "regionrank": 243,
-          "wins": 196,
-          "losses": 207,
-          "streak": 1,
-          "lastmatchdate": 1794942114
-        },
-        "3v3_german": {
-          "mode": "3v3",
-          "faction": "german",
-          "elo": 813,
-          "rank": -1,
-          "regionrank": 321,
-          "wins": 13,
-          "losses": 16,
-          "streak": -1,
-          "lastmatchdate": 1794355303
-        },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 798,
-          "rank": -1,
-          "regionrank": 357,
-          "wins": 349,
-          "losses": 353,
-          "streak": 3,
-          "lastmatchdate": 1794874415
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 655,
-          "rank": -1,
-          "regionrank": 519,
-          "wins": 14,
-          "losses": 32,
-          "streak": 2,
-          "lastmatchdate": 1794358952
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/677441"
     },
     {
       "profile_id": 1305475,
@@ -19346,7 +19357,7 @@
           "faction": "british",
           "elo": 860,
           "rank": -1,
-          "regionrank": 269,
+          "regionrank": 268,
           "wins": 8,
           "losses": 11,
           "streak": -1,
@@ -19460,17 +19471,6 @@
       "total_losses": 86,
       "last_match_date": 1795033129,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 856,
-          "rank": -1,
-          "regionrank": 249,
-          "wins": 19,
-          "losses": 23,
-          "streak": -1,
-          "lastmatchdate": 1794966412
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -19482,16 +19482,16 @@
           "streak": -1,
           "lastmatchdate": 1795009956
         },
-        "4v4_american": {
-          "mode": "4v4",
+        "3v3_american": {
+          "mode": "3v3",
           "faction": "american",
-          "elo": 772,
+          "elo": 856,
           "rank": -1,
-          "regionrank": 375,
-          "wins": 16,
-          "losses": 29,
-          "streak": 2,
-          "lastmatchdate": 1795033129
+          "regionrank": 249,
+          "wins": 19,
+          "losses": 23,
+          "streak": -1,
+          "lastmatchdate": 1794966412
         },
         "4v4_british": {
           "mode": "4v4",
@@ -19503,6 +19503,17 @@
           "losses": 20,
           "streak": 1,
           "lastmatchdate": 1794877963
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 772,
+          "rank": -1,
+          "regionrank": 375,
+          "wins": 16,
+          "losses": 29,
+          "streak": 2,
+          "lastmatchdate": 1795033129
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/413433"
@@ -19617,7 +19628,7 @@
           "faction": "german",
           "elo": 812,
           "rank": -1,
-          "regionrank": 77,
+          "regionrank": 78,
           "wins": 39,
           "losses": 41,
           "streak": -3,
@@ -19650,7 +19661,7 @@
           "faction": "german",
           "elo": 854,
           "rank": -1,
-          "regionrank": 386,
+          "regionrank": 387,
           "wins": 55,
           "losses": 68,
           "streak": 2,
@@ -19791,7 +19802,7 @@
           "faction": "dak",
           "elo": 845,
           "rank": -1,
-          "regionrank": 225,
+          "regionrank": 226,
           "wins": 87,
           "losses": 103,
           "streak": -3,
@@ -19889,7 +19900,7 @@
           "faction": "dak",
           "elo": 839,
           "rank": -1,
-          "regionrank": 228,
+          "regionrank": 229,
           "wins": 14,
           "losses": 22,
           "streak": -3,
@@ -19922,7 +19933,7 @@
           "faction": "german",
           "elo": 778,
           "rank": -1,
-          "regionrank": 451,
+          "regionrank": 452,
           "wins": 14,
           "losses": 20,
           "streak": 5,
@@ -19949,7 +19960,7 @@
           "faction": "german",
           "elo": 840,
           "rank": -1,
-          "regionrank": 73,
+          "regionrank": 74,
           "wins": 8,
           "losses": 17,
           "streak": -1,
@@ -20052,7 +20063,7 @@
           "faction": "dak",
           "elo": 838,
           "rank": -1,
-          "regionrank": 229,
+          "regionrank": 230,
           "wins": 27,
           "losses": 31,
           "streak": -2,
@@ -20291,7 +20302,7 @@
           "faction": "german",
           "elo": 826,
           "rank": -1,
-          "regionrank": 76,
+          "regionrank": 77,
           "wins": 209,
           "losses": 224,
           "streak": 2,
@@ -20509,7 +20520,7 @@
           "faction": "dak",
           "elo": 734,
           "rank": -1,
-          "regionrank": 257,
+          "regionrank": 258,
           "wins": 18,
           "losses": 31,
           "streak": 1,
@@ -20542,17 +20553,6 @@
       "total_losses": 32,
       "last_match_date": 1794532429,
       "modes": {
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 817,
-          "rank": -1,
-          "regionrank": 342,
-          "wins": 13,
-          "losses": 16,
-          "streak": 1,
-          "lastmatchdate": 1794532429
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -20563,6 +20563,17 @@
           "losses": 16,
           "streak": -3,
           "lastmatchdate": 1794531219
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 817,
+          "rank": -1,
+          "regionrank": 342,
+          "wins": 13,
+          "losses": 16,
+          "streak": 1,
+          "lastmatchdate": 1794532429
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1020192"
@@ -20585,7 +20596,7 @@
           "faction": "dak",
           "elo": 816,
           "rank": -1,
-          "regionrank": 239,
+          "regionrank": 240,
           "wins": 6,
           "losses": 10,
           "streak": 1,
@@ -20656,17 +20667,6 @@
           "streak": 1,
           "lastmatchdate": 1793927556
         },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 607,
-          "rank": -1,
-          "regionrank": 326,
-          "wins": 9,
-          "losses": 22,
-          "streak": 2,
-          "lastmatchdate": 1794182895
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -20677,6 +20677,17 @@
           "losses": 23,
           "streak": -4,
           "lastmatchdate": 1794016297
+        },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 607,
+          "rank": -1,
+          "regionrank": 326,
+          "wins": 9,
+          "losses": 22,
+          "streak": 2,
+          "lastmatchdate": 1794182895
         },
         "3v3_german": {
           "mode": "3v3",
@@ -20694,22 +20705,11 @@
           "faction": "american",
           "elo": 527,
           "rank": -1,
-          "regionrank": 452,
+          "regionrank": 454,
           "wins": 29,
           "losses": 55,
           "streak": 4,
           "lastmatchdate": 1794184762
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 808,
-          "rank": -1,
-          "regionrank": 427,
-          "wins": 9,
-          "losses": 18,
-          "streak": 1,
-          "lastmatchdate": 1794176633
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -20721,6 +20721,17 @@
           "losses": 18,
           "streak": -4,
           "lastmatchdate": 1794085819
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 808,
+          "rank": -1,
+          "regionrank": 427,
+          "wins": 9,
+          "losses": 18,
+          "streak": 1,
+          "lastmatchdate": 1794176633
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/900415"
@@ -20749,17 +20760,6 @@
           "streak": 2,
           "lastmatchdate": 1793415414
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 701,
-          "rank": -1,
-          "regionrank": 502,
-          "wins": 637,
-          "losses": 947,
-          "streak": -4,
-          "lastmatchdate": 1794878813
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -20770,6 +20770,17 @@
           "losses": 83,
           "streak": -4,
           "lastmatchdate": 1793744865
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 701,
+          "rank": -1,
+          "regionrank": 502,
+          "wins": 637,
+          "losses": 947,
+          "streak": -4,
+          "lastmatchdate": 1794878813
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/31504"
@@ -20928,12 +20939,23 @@
       "total_losses": 342,
       "last_match_date": 1795023213,
       "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 803,
+          "rank": -1,
+          "regionrank": 296,
+          "wins": 123,
+          "losses": 120,
+          "streak": -1,
+          "lastmatchdate": 1794520540
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
           "elo": 641,
           "rank": -1,
-          "regionrank": 426,
+          "regionrank": 427,
           "wins": 87,
           "losses": 101,
           "streak": -1,
@@ -20949,17 +20971,6 @@
           "losses": 121,
           "streak": 2,
           "lastmatchdate": 1792780993
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 803,
-          "rank": -1,
-          "regionrank": 296,
-          "wins": 123,
-          "losses": 120,
-          "streak": -1,
-          "lastmatchdate": 1794520540
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1285769"
@@ -21085,7 +21096,7 @@
           "faction": "dak",
           "elo": 793,
           "rank": -1,
-          "regionrank": 245,
+          "regionrank": 246,
           "wins": 8,
           "losses": 15,
           "streak": -6,
@@ -21117,6 +21128,33 @@
       "coh3stats_url": "https://coh3stats.com/players/77393"
     },
     {
+      "profile_id": 26736,
+      "alias": "Arkymendes",
+      "steam_id": "76561198002634846",
+      "country": "br",
+      "level": 4371,
+      "xp": 4371,
+      "max_elo": 790,
+      "best_mode": "4V4 (GERMAN)",
+      "total_wins": 145,
+      "total_losses": 175,
+      "last_match_date": 1795042402,
+      "modes": {
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 790,
+          "rank": -1,
+          "regionrank": 442,
+          "wins": 145,
+          "losses": 175,
+          "streak": 1,
+          "lastmatchdate": 1795042402
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/26736"
+    },
+    {
       "profile_id": 1214004,
       "alias": "Major Caveira",
       "steam_id": "76561198854581943",
@@ -21134,7 +21172,7 @@
           "faction": "dak",
           "elo": 763,
           "rank": -1,
-          "regionrank": 253,
+          "regionrank": 254,
           "wins": 66,
           "losses": 84,
           "streak": 1,
@@ -21194,17 +21232,6 @@
       "total_losses": 212,
       "last_match_date": 1795040254,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 756,
-          "rank": -1,
-          "regionrank": 297,
-          "wins": 11,
-          "losses": 16,
-          "streak": -1,
-          "lastmatchdate": 1794745888
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -21216,12 +21243,23 @@
           "streak": -1,
           "lastmatchdate": 1795030438
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 756,
+          "rank": -1,
+          "regionrank": 297,
+          "wins": 11,
+          "losses": 16,
+          "streak": -1,
+          "lastmatchdate": 1794745888
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 785,
           "rank": -1,
-          "regionrank": 248,
+          "regionrank": 249,
           "wins": 9,
           "losses": 19,
           "streak": -2,
@@ -21237,6 +21275,17 @@
           "losses": 12,
           "streak": -6,
           "lastmatchdate": 1793889724
+        },
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 763,
+          "rank": -1,
+          "regionrank": 316,
+          "wins": 36,
+          "losses": 40,
+          "streak": -3,
+          "lastmatchdate": 1795040254
         },
         "4v4_american": {
           "mode": "4v4",
@@ -21270,17 +21319,6 @@
           "losses": 25,
           "streak": -2,
           "lastmatchdate": 1794165400
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 763,
-          "rank": -1,
-          "regionrank": 316,
-          "wins": 36,
-          "losses": 40,
-          "streak": -3,
-          "lastmatchdate": 1795040254
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1359516"
@@ -21449,33 +21487,6 @@
       "coh3stats_url": "https://coh3stats.com/players/1148751"
     },
     {
-      "profile_id": 26736,
-      "alias": "Arkymendes",
-      "steam_id": "76561198002634846",
-      "country": "br",
-      "level": 4361,
-      "xp": 4361,
-      "max_elo": 774,
-      "best_mode": "4V4 (GERMAN)",
-      "total_wins": 144,
-      "total_losses": 175,
-      "last_match_date": 1794967892,
-      "modes": {
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 774,
-          "rank": -1,
-          "regionrank": 453,
-          "wins": 144,
-          "losses": 175,
-          "streak": -3,
-          "lastmatchdate": 1794967892
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/26736"
-    },
-    {
       "profile_id": 1092009,
       "alias": "Cabal4LXK",
       "steam_id": "76561199544333080",
@@ -21488,17 +21499,6 @@
       "total_losses": 128,
       "last_match_date": 1794760300,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 767,
-          "rank": -1,
-          "regionrank": 295,
-          "wins": 17,
-          "losses": 27,
-          "streak": 1,
-          "lastmatchdate": 1794760300
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -21510,16 +21510,16 @@
           "streak": -1,
           "lastmatchdate": 1792980003
         },
-        "4v4_american": {
-          "mode": "4v4",
+        "3v3_american": {
+          "mode": "3v3",
           "faction": "american",
-          "elo": 581,
+          "elo": 767,
           "rank": -1,
-          "regionrank": 442,
-          "wins": 14,
-          "losses": 26,
+          "regionrank": 295,
+          "wins": 17,
+          "losses": 27,
           "streak": 1,
-          "lastmatchdate": 1793486184
+          "lastmatchdate": 1794760300
         },
         "4v4_british": {
           "mode": "4v4",
@@ -21531,6 +21531,17 @@
           "losses": 51,
           "streak": 2,
           "lastmatchdate": 1793490194
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 581,
+          "rank": -1,
+          "regionrank": 444,
+          "wins": 14,
+          "losses": 26,
+          "streak": 1,
+          "lastmatchdate": 1793486184
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1092009"
@@ -21624,17 +21635,6 @@
       "total_losses": 222,
       "last_match_date": 1794951993,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 713,
-          "rank": -1,
-          "regionrank": 309,
-          "wins": 19,
-          "losses": 28,
-          "streak": -1,
-          "lastmatchdate": 1794947137
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -21646,16 +21646,16 @@
           "streak": -1,
           "lastmatchdate": 1794342655
         },
-        "4v4_american": {
-          "mode": "4v4",
+        "3v3_american": {
+          "mode": "3v3",
           "faction": "american",
-          "elo": 610,
+          "elo": 713,
           "rank": -1,
-          "regionrank": 435,
-          "wins": 78,
-          "losses": 93,
-          "streak": 3,
-          "lastmatchdate": 1794951993
+          "regionrank": 309,
+          "wins": 19,
+          "losses": 28,
+          "streak": -1,
+          "lastmatchdate": 1794947137
         },
         "4v4_british": {
           "mode": "4v4",
@@ -21667,6 +21667,17 @@
           "losses": 80,
           "streak": 1,
           "lastmatchdate": 1794774131
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 610,
+          "rank": -1,
+          "regionrank": 436,
+          "wins": 78,
+          "losses": 93,
+          "streak": 3,
+          "lastmatchdate": 1794951993
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/964593"
@@ -21765,7 +21776,7 @@
           "faction": "american",
           "elo": 540,
           "rank": -1,
-          "regionrank": 450,
+          "regionrank": 452,
           "wins": 97,
           "losses": 116,
           "streak": 5,
@@ -21787,17 +21798,6 @@
       "total_losses": 155,
       "last_match_date": 1794760300,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 768,
-          "rank": -1,
-          "regionrank": 294,
-          "wins": 18,
-          "losses": 23,
-          "streak": 1,
-          "lastmatchdate": 1794136536
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -21809,16 +21809,16 @@
           "streak": 1,
           "lastmatchdate": 1794760300
         },
-        "4v4_american": {
-          "mode": "4v4",
+        "3v3_american": {
+          "mode": "3v3",
           "faction": "american",
-          "elo": 696,
+          "elo": 768,
           "rank": -1,
-          "regionrank": 411,
-          "wins": 36,
-          "losses": 48,
-          "streak": -5,
-          "lastmatchdate": 1793919518
+          "regionrank": 294,
+          "wins": 18,
+          "losses": 23,
+          "streak": 1,
+          "lastmatchdate": 1794136536
         },
         "4v4_british": {
           "mode": "4v4",
@@ -21830,6 +21830,17 @@
           "losses": 41,
           "streak": 3,
           "lastmatchdate": 1793490194
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 696,
+          "rank": -1,
+          "regionrank": 411,
+          "wins": 36,
+          "losses": 48,
+          "streak": -5,
+          "lastmatchdate": 1793919518
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1095498"
@@ -21934,16 +21945,16 @@
       "total_losses": 519,
       "last_match_date": 1794879892,
       "modes": {
-        "4v4_american": {
+        "4v4_british": {
           "mode": "4v4",
-          "faction": "american",
-          "elo": 715,
+          "faction": "british",
+          "elo": 696,
           "rank": -1,
-          "regionrank": 401,
-          "wins": 108,
-          "losses": 120,
-          "streak": -2,
-          "lastmatchdate": 1794879892
+          "regionrank": 346,
+          "wins": 75,
+          "losses": 90,
+          "streak": -1,
+          "lastmatchdate": 1794691512
         },
         "4v4_dak": {
           "mode": "4v4",
@@ -21956,6 +21967,17 @@
           "streak": -2,
           "lastmatchdate": 1792631983
         },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 715,
+          "rank": -1,
+          "regionrank": 401,
+          "wins": 108,
+          "losses": 120,
+          "streak": -2,
+          "lastmatchdate": 1794879892
+        },
         "4v4_german": {
           "mode": "4v4",
           "faction": "german",
@@ -21966,17 +21988,6 @@
           "losses": 141,
           "streak": -2,
           "lastmatchdate": 1793661774
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 696,
-          "rank": -1,
-          "regionrank": 346,
-          "wins": 75,
-          "losses": 90,
-          "streak": -1,
-          "lastmatchdate": 1794691512
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/838813"
@@ -21986,24 +21997,24 @@
       "alias": "F.E.B_BRASIL_COH",
       "steam_id": "76561198096999667",
       "country": "br",
-      "level": 1091,
-      "xp": 1091,
+      "level": 1101,
+      "xp": 1101,
       "max_elo": 741,
       "best_mode": "4V4 (AMERICAN)",
-      "total_wins": 20,
+      "total_wins": 21,
       "total_losses": 57,
-      "last_match_date": 1795040575,
+      "last_match_date": 1795042600,
       "modes": {
         "1v1_american": {
           "mode": "1v1",
           "faction": "american",
-          "elo": 639,
+          "elo": 666,
           "rank": -1,
           "regionrank": 79,
-          "wins": 3,
+          "wins": 4,
           "losses": 15,
-          "streak": -2,
-          "lastmatchdate": 1795040575
+          "streak": 1,
+          "lastmatchdate": 1795042600
         },
         "3v3_american": {
           "mode": "3v3",
@@ -22016,17 +22027,6 @@
           "streak": -5,
           "lastmatchdate": 1794992161
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 741,
-          "rank": -1,
-          "regionrank": 387,
-          "wins": 11,
-          "losses": 21,
-          "streak": 1,
-          "lastmatchdate": 1794989065
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -22037,6 +22037,17 @@
           "losses": 12,
           "streak": 1,
           "lastmatchdate": 1794959944
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 741,
+          "rank": -1,
+          "regionrank": 387,
+          "wins": 11,
+          "losses": 21,
+          "streak": 1,
+          "lastmatchdate": 1794989065
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1157401"
@@ -22097,7 +22108,7 @@
           "faction": "german",
           "elo": 665,
           "rank": -1,
-          "regionrank": 513,
+          "regionrank": 514,
           "wins": 12,
           "losses": 26,
           "streak": 1,
@@ -22200,7 +22211,7 @@
           "faction": "dak",
           "elo": 639,
           "rank": -1,
-          "regionrank": 271,
+          "regionrank": 272,
           "wins": 3,
           "losses": 16,
           "streak": 1,
@@ -22260,7 +22271,7 @@
           "faction": "german",
           "elo": 726,
           "rank": -1,
-          "regionrank": 86,
+          "regionrank": 87,
           "wins": 10,
           "losses": 18,
           "streak": -1,
@@ -22336,7 +22347,7 @@
           "faction": "american",
           "elo": 439,
           "rank": -1,
-          "regionrank": 459,
+          "regionrank": 461,
           "wins": 18,
           "losses": 38,
           "streak": -3,
@@ -22401,7 +22412,7 @@
           "faction": "dak",
           "elo": 715,
           "rank": -1,
-          "regionrank": 261,
+          "regionrank": 262,
           "wins": 2,
           "losses": 10,
           "streak": -3,
@@ -22591,7 +22602,7 @@
           "faction": "german",
           "elo": 502,
           "rank": -1,
-          "regionrank": 92,
+          "regionrank": 93,
           "wins": 11,
           "losses": 36,
           "streak": -1,
@@ -22618,7 +22629,7 @@
           "faction": "german",
           "elo": 635,
           "rank": -1,
-          "regionrank": 87,
+          "regionrank": 88,
           "wins": 4,
           "losses": 17,
           "streak": -4,
@@ -22684,17 +22695,6 @@
           "streak": -2,
           "lastmatchdate": 1794488473
         },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 602,
-          "rank": -1,
-          "regionrank": 328,
-          "wins": 67,
-          "losses": 87,
-          "streak": -2,
-          "lastmatchdate": 1792936405
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -22706,12 +22706,23 @@
           "streak": 1,
           "lastmatchdate": 1795006942
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 602,
+          "rank": -1,
+          "regionrank": 328,
+          "wins": 67,
+          "losses": 87,
+          "streak": -2,
+          "lastmatchdate": 1792936405
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 507,
           "rank": -1,
-          "regionrank": 280,
+          "regionrank": 281,
           "wins": 82,
           "losses": 130,
           "streak": -5,
@@ -22727,17 +22738,6 @@
           "losses": 169,
           "streak": 1,
           "lastmatchdate": 1795013902
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 370,
-          "rank": -1,
-          "regionrank": 562,
-          "wins": 193,
-          "losses": 276,
-          "streak": 1,
-          "lastmatchdate": 1794256621
         },
         "4v4_british": {
           "mode": "4v4",
@@ -22760,6 +22760,17 @@
           "losses": 177,
           "streak": -3,
           "lastmatchdate": 1794406634
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 370,
+          "rank": -1,
+          "regionrank": 562,
+          "wins": 193,
+          "losses": 276,
+          "streak": 1,
+          "lastmatchdate": 1794256621
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/900421"
@@ -22832,17 +22843,6 @@
           "streak": -1,
           "lastmatchdate": 1794500346
         },
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 436,
-          "rank": -1,
-          "regionrank": 338,
-          "wins": 22,
-          "losses": 54,
-          "streak": -1,
-          "lastmatchdate": 1794387746
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -22854,16 +22854,16 @@
           "streak": 2,
           "lastmatchdate": 1794398743
         },
-        "4v4_american": {
-          "mode": "4v4",
+        "3v3_american": {
+          "mode": "3v3",
           "faction": "american",
-          "elo": 335,
+          "elo": 436,
           "rank": -1,
-          "regionrank": 462,
-          "wins": 27,
-          "losses": 61,
+          "regionrank": 338,
+          "wins": 22,
+          "losses": 54,
           "streak": -1,
-          "lastmatchdate": 1794504696
+          "lastmatchdate": 1794387746
         },
         "4v4_british": {
           "mode": "4v4",
@@ -22875,6 +22875,17 @@
           "losses": 21,
           "streak": -7,
           "lastmatchdate": 1794483650
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 335,
+          "rank": -1,
+          "regionrank": 464,
+          "wins": 27,
+          "losses": 61,
+          "streak": -1,
+          "lastmatchdate": 1794504696
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/1151802"
@@ -22897,7 +22908,7 @@
           "faction": "german",
           "elo": 593,
           "rank": -1,
-          "regionrank": 88,
+          "regionrank": 89,
           "wins": 62,
           "losses": 100,
           "streak": -2,
@@ -22952,17 +22963,6 @@
       "total_losses": 156,
       "last_match_date": 1794770782,
       "modes": {
-        "3v3_american": {
-          "mode": "3v3",
-          "faction": "american",
-          "elo": 600,
-          "rank": -1,
-          "regionrank": 330,
-          "wins": 5,
-          "losses": 18,
-          "streak": 1,
-          "lastmatchdate": 1794350114
-        },
         "3v3_british": {
           "mode": "3v3",
           "faction": "british",
@@ -22974,38 +22974,27 @@
           "streak": -4,
           "lastmatchdate": 1794616127
         },
+        "3v3_american": {
+          "mode": "3v3",
+          "faction": "american",
+          "elo": 600,
+          "rank": -1,
+          "regionrank": 330,
+          "wins": 5,
+          "losses": 18,
+          "streak": 1,
+          "lastmatchdate": 1794350114
+        },
         "3v3_dak": {
           "mode": "3v3",
           "faction": "dak",
           "elo": 646,
           "rank": -1,
-          "regionrank": 270,
+          "regionrank": 271,
           "wins": 3,
           "losses": 14,
           "streak": -3,
           "lastmatchdate": 1793928272
-        },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 502,
-          "rank": -1,
-          "regionrank": 455,
-          "wins": 13,
-          "losses": 32,
-          "streak": -1,
-          "lastmatchdate": 1794770782
-        },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 631,
-          "rank": -1,
-          "regionrank": 527,
-          "wins": 11,
-          "losses": 25,
-          "streak": -1,
-          "lastmatchdate": 1794600214
         },
         "4v4_british": {
           "mode": "4v4",
@@ -23018,6 +23007,17 @@
           "streak": -1,
           "lastmatchdate": 1794508554
         },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 502,
+          "rank": -1,
+          "regionrank": 457,
+          "wins": 13,
+          "losses": 32,
+          "streak": -1,
+          "lastmatchdate": 1794770782
+        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -23028,9 +23028,47 @@
           "losses": 22,
           "streak": -2,
           "lastmatchdate": 1794058687
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 631,
+          "rank": -1,
+          "regionrank": 527,
+          "wins": 11,
+          "losses": 25,
+          "streak": -1,
+          "lastmatchdate": 1794600214
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/738999"
+    },
+    {
+      "profile_id": 29436,
+      "alias": "edergabriel",
+      "steam_id": "76561198048274930",
+      "country": "br",
+      "level": 4601,
+      "xp": 4601,
+      "max_elo": 680,
+      "best_mode": "4V4 (AMERICAN)",
+      "total_wins": 123,
+      "total_losses": 150,
+      "last_match_date": 1795042333,
+      "modes": {
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 680,
+          "rank": -1,
+          "regionrank": 416,
+          "wins": 123,
+          "losses": 150,
+          "streak": 2,
+          "lastmatchdate": 1795042333
+        }
+      },
+      "coh3stats_url": "https://coh3stats.com/players/29436"
     },
     {
       "profile_id": 173761,
@@ -23088,7 +23126,7 @@
           "faction": "german",
           "elo": 667,
           "rank": -1,
-          "regionrank": 511,
+          "regionrank": 512,
           "wins": 227,
           "losses": 343,
           "streak": 1,
@@ -23143,17 +23181,6 @@
           "streak": 2,
           "lastmatchdate": 1794788204
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 552,
-          "rank": -1,
-          "regionrank": 447,
-          "wins": 27,
-          "losses": 48,
-          "streak": -1,
-          "lastmatchdate": 1793750643
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -23164,36 +23191,20 @@
           "losses": 96,
           "streak": -3,
           "lastmatchdate": 1794181908
-        }
-      },
-      "coh3stats_url": "https://coh3stats.com/players/739759"
-    },
-    {
-      "profile_id": 29436,
-      "alias": "edergabriel",
-      "steam_id": "76561198048274930",
-      "country": "br",
-      "level": 4591,
-      "xp": 4591,
-      "max_elo": 665,
-      "best_mode": "4V4 (AMERICAN)",
-      "total_wins": 122,
-      "total_losses": 150,
-      "last_match_date": 1795039279,
-      "modes": {
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
-          "elo": 665,
+          "elo": 552,
           "rank": -1,
-          "regionrank": 419,
-          "wins": 122,
-          "losses": 150,
-          "streak": 1,
-          "lastmatchdate": 1795039279
+          "regionrank": 449,
+          "wins": 27,
+          "losses": 48,
+          "streak": -1,
+          "lastmatchdate": 1793750643
         }
       },
-      "coh3stats_url": "https://coh3stats.com/players/29436"
+      "coh3stats_url": "https://coh3stats.com/players/739759"
     },
     {
       "profile_id": 124729,
@@ -23208,17 +23219,6 @@
       "total_losses": 380,
       "last_match_date": 1794771216,
       "modes": {
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 661,
-          "rank": -1,
-          "regionrank": 515,
-          "wins": 72,
-          "losses": 132,
-          "streak": -2,
-          "lastmatchdate": 1794771216
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -23229,6 +23229,17 @@
           "losses": 248,
           "streak": 1,
           "lastmatchdate": 1794449745
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 661,
+          "rank": -1,
+          "regionrank": 516,
+          "wins": 72,
+          "losses": 132,
+          "streak": -2,
+          "lastmatchdate": 1794771216
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/124729"
@@ -23257,17 +23268,6 @@
           "streak": 1,
           "lastmatchdate": 1794618492
         },
-        "4v4_american": {
-          "mode": "4v4",
-          "faction": "american",
-          "elo": 531,
-          "rank": -1,
-          "regionrank": 451,
-          "wins": 6,
-          "losses": 24,
-          "streak": -1,
-          "lastmatchdate": 1794537757
-        },
         "4v4_british": {
           "mode": "4v4",
           "faction": "british",
@@ -23278,6 +23278,17 @@
           "losses": 54,
           "streak": 1,
           "lastmatchdate": 1794528519
+        },
+        "4v4_american": {
+          "mode": "4v4",
+          "faction": "american",
+          "elo": 531,
+          "rank": -1,
+          "regionrank": 453,
+          "wins": 6,
+          "losses": 24,
+          "streak": -1,
+          "lastmatchdate": 1794537757
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/51059"
@@ -23295,12 +23306,23 @@
       "total_losses": 120,
       "last_match_date": 1794697491,
       "modes": {
+        "4v4_british": {
+          "mode": "4v4",
+          "faction": "british",
+          "elo": 632,
+          "rank": -1,
+          "regionrank": 362,
+          "wins": 15,
+          "losses": 34,
+          "streak": -4,
+          "lastmatchdate": 1794675373
+        },
         "4v4_american": {
           "mode": "4v4",
           "faction": "american",
           "elo": 353,
           "rank": -1,
-          "regionrank": 461,
+          "regionrank": 463,
           "wins": 13,
           "losses": 40,
           "streak": 1,
@@ -23316,17 +23338,6 @@
           "losses": 46,
           "streak": -3,
           "lastmatchdate": 1794697491
-        },
-        "4v4_british": {
-          "mode": "4v4",
-          "faction": "british",
-          "elo": 632,
-          "rank": -1,
-          "regionrank": 362,
-          "wins": 15,
-          "losses": 34,
-          "streak": -4,
-          "lastmatchdate": 1794675373
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/717201"
@@ -23425,7 +23436,7 @@
           "faction": "american",
           "elo": 457,
           "rank": -1,
-          "regionrank": 458,
+          "regionrank": 460,
           "wins": 46,
           "losses": 73,
           "streak": -1,
@@ -23501,7 +23512,7 @@
           "faction": "american",
           "elo": 573,
           "rank": -1,
-          "regionrank": 444,
+          "regionrank": 446,
           "wins": 21,
           "losses": 39,
           "streak": 1,
@@ -23604,7 +23615,7 @@
           "faction": "dak",
           "elo": -412,
           "rank": -1,
-          "regionrank": 283,
+          "regionrank": 284,
           "wins": 357,
           "losses": 696,
           "streak": -4,
@@ -23621,17 +23632,6 @@
           "streak": -1,
           "lastmatchdate": 1794636719
         },
-        "4v4_german": {
-          "mode": "4v4",
-          "faction": "german",
-          "elo": 475,
-          "rank": -1,
-          "regionrank": 551,
-          "wins": 169,
-          "losses": 287,
-          "streak": -1,
-          "lastmatchdate": 1794719124
-        },
         "4v4_dak": {
           "mode": "4v4",
           "faction": "dak",
@@ -23642,6 +23642,17 @@
           "losses": 2708,
           "streak": -1,
           "lastmatchdate": 1794889944
+        },
+        "4v4_german": {
+          "mode": "4v4",
+          "faction": "german",
+          "elo": 475,
+          "rank": -1,
+          "regionrank": 551,
+          "wins": 169,
+          "losses": 287,
+          "streak": -1,
+          "lastmatchdate": 1794719124
         }
       },
       "coh3stats_url": "https://coh3stats.com/players/2834"
@@ -23664,7 +23675,7 @@
           "faction": "german",
           "elo": 593,
           "rank": -1,
-          "regionrank": 89,
+          "regionrank": 90,
           "wins": 22,
           "losses": 50,
           "streak": -2,
@@ -23691,7 +23702,7 @@
           "faction": "dak",
           "elo": 588,
           "rank": -1,
-          "regionrank": 277,
+          "regionrank": 278,
           "wins": 55,
           "losses": 81,
           "streak": 1,
@@ -23740,7 +23751,7 @@
           "faction": "american",
           "elo": 397,
           "rank": -1,
-          "regionrank": 460,
+          "regionrank": 462,
           "wins": 21,
           "losses": 42,
           "streak": 2,
@@ -23767,7 +23778,7 @@
           "faction": "american",
           "elo": 560,
           "rank": -1,
-          "regionrank": 446,
+          "regionrank": 448,
           "wins": 11,
           "losses": 30,
           "streak": -3,
@@ -23832,7 +23843,7 @@
           "faction": "dak",
           "elo": 555,
           "rank": -1,
-          "regionrank": 279,
+          "regionrank": 280,
           "wins": 18,
           "losses": 42,
           "streak": -2,
@@ -23897,7 +23908,7 @@
           "faction": "american",
           "elo": 498,
           "rank": -1,
-          "regionrank": 457,
+          "regionrank": 459,
           "wins": 7,
           "losses": 24,
           "streak": -4,
@@ -23973,7 +23984,7 @@
           "faction": "dak",
           "elo": 352,
           "rank": -1,
-          "regionrank": 282,
+          "regionrank": 283,
           "wins": 138,
           "losses": 207,
           "streak": -6,

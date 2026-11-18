@@ -80,6 +80,18 @@
       "is_custom": true
     },
     {
+      "profile_id": 31145,
+      "alias": "vonMises",
+      "original_alias": "vonMises",
+      "steam_id": "76561197985268629",
+      "placements": [
+        "#19 1v1 (média 1187.5)",
+        "#7 2v2 (média 1431.7)",
+        "#10 Jogos em Equipe (média 1480.0)"
+      ],
+      "is_custom": true
+    },
+    {
       "profile_id": 691,
       "alias": "Vítor",
       "original_alias": "Vítor",
@@ -279,7 +291,7 @@
       "placements": [
         "#43 1v1 (média 978.0) ⭐",
         "#78 2v2 (média 1009.0) ⭐",
-        "#67 Jogos em Equipe (média 1148.0) ⭐"
+        "#66 Jogos em Equipe (média 1148.0) ⭐"
       ],
       "is_custom": true
     },
@@ -289,9 +301,9 @@
       "original_alias": "Jimmy Duelista",
       "steam_id": "76561198034510845",
       "placements": [
-        "#21 1v1 (média 1147.5) ⭐",
+        "#20 1v1 (média 1147.5)",
         "#62 2v2 (média 1071.5) ⭐",
-        "#102 Jogos em Equipe (média 1074.0) ⭐"
+        "#101 Jogos em Equipe (média 1074.0) ⭐"
       ],
       "is_custom": true
     },
@@ -303,7 +315,7 @@
       "placements": [
         "#90 1v1 (média 994.0) ⭐",
         "#164 2v2 (média 1031.5) ⭐",
-        "#68 Jogos em Equipe (média 1147.5) ⭐"
+        "#67 Jogos em Equipe (média 1147.5) ⭐"
       ],
       "is_custom": true
     },
@@ -313,7 +325,7 @@
       "original_alias": "Bineto",
       "steam_id": "76561198024839791",
       "placements": [
-        "#22 1v1 (média 1145.0) ⭐",
+        "#21 1v1 (média 1145.0) ⭐",
         "#51 2v2 (média 1123.0) ⭐",
         "#390 Jogos em Equipe (média 1077.6) ⭐"
       ],
@@ -374,7 +386,7 @@
       "placements": [
         "#96 1v1 (média 936.3) ⭐",
         "#166 2v2 (média 835.8) ⭐",
-        "#252 Jogos em Equipe (média 856.0) ⭐"
+        "#249 Jogos em Equipe (média 858.0) ⭐"
       ],
       "is_custom": true
     },
@@ -629,6 +641,13 @@
       "steam_id": "76561199791811246",
       "original_alias": "arc",
       "alias": "arc",
+      "is_core_roster": true
+    },
+    {
+      "profile_id": 31145,
+      "steam_id": "76561197985268629",
+      "original_alias": "vonMises",
+      "alias": "vonMises",
       "is_core_roster": true
     }
   ],
