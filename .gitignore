@@ -1,0 +1,13 @@
+# Segredos locais — NUNCA versionados no Git
+.env
+.env.*
+*.secret
+
+# Temporários e cache Python
+__pycache__/
+*.py[cod]
+*.tmp
+*.json.tmp
+*.db-journal
+*.db-wal
+*.db-shm
