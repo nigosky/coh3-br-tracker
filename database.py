@@ -11,6 +11,7 @@ from typing import Any
 
 PENDING_DISCORD_MARKER = "PENDING"
 SEEDED_DISCORD_MARKER = "SEEDED"
+PRUNED_DISCORD_MARKER = "PRUNED"
 
 
 class MatchDatabase:
@@ -125,6 +126,16 @@ class MatchDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_avatars_pid
                     ON player_avatars (profile_id);
+
+                CREATE TABLE IF NOT EXISTS discord_ephemeral_messages (
+                    message_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    sent_at INTEGER NOT NULL,
+                    pruned_at INTEGER
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_ephemeral_prune
+                    ON discord_ephemeral_messages (pruned_at, sent_at);
                 """
             )
             existing_match_cols = {
@@ -397,6 +408,99 @@ class MatchDatabase:
             (PENDING_DISCORD_MARKER, cutoff),
         ).fetchone()
         return int(row["cnt"]) if row else 0
+
+    def record_ephemeral_message(
+        self,
+        message_id: str,
+        kind: str,
+        sent_at: int | None = None,
+    ) -> None:
+        """Registra Snowflake de cards temporários (movimentação, novo Top 20, teste) para limpeza após 72h."""
+        clean_id = (message_id or "").strip()
+        if not clean_id or len(clean_id) < 15 or not clean_id.isdigit():
+            return
+        ts = int(sent_at) if sent_at is not None else int(time.time())
+        conn = self._connect()
+        with conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO discord_ephemeral_messages (message_id, kind, sent_at, pruned_at)
+                VALUES (?, ?, ?, NULL)
+                """,
+                (clean_id, str(kind)[:32], ts),
+            )
+
+    def get_prunable_discord_messages(
+        self,
+        max_age_sec: int = 72 * 3600,
+        exclude_message_ids: set[str] | None = None,
+        limit: int = 40,
+    ) -> list[tuple[str, str]]:
+        """Retorna lista (message_id, origem) de mensagens do Discord com mais de max_age_sec para limpeza."""
+        safe_limit = max(1, min(int(limit), 200))
+        cutoff = int(time.time()) - max(3600, int(max_age_sec))
+        excluded = {str(x).strip() for x in (exclude_message_ids or set()) if x}
+        conn = self._connect()
+
+        candidates: list[tuple[int, str, str]] = []
+        seen_ids: set[str] = set()
+
+        match_rows = conn.execute(
+            """
+            SELECT discord_message_id, MAX(recorded_at) AS latest_ts
+            FROM recorded_matches
+            WHERE discord_message_id IS NOT NULL
+              AND length(discord_message_id) >= 15
+              AND discord_message_id NOT GLOB '*[^0-9]*'
+            GROUP BY discord_message_id
+            HAVING MAX(recorded_at) <= ?
+            ORDER BY latest_ts ASC
+            LIMIT ?
+            """,
+            (cutoff, safe_limit),
+        ).fetchall()
+        for r in match_rows:
+            mid = str(r["discord_message_id"])
+            if mid not in excluded and mid not in seen_ids:
+                seen_ids.add(mid)
+                candidates.append((int(r["latest_ts"]), mid, "match"))
+
+        eph_rows = conn.execute(
+            """
+            SELECT message_id, kind, sent_at
+            FROM discord_ephemeral_messages
+            WHERE pruned_at IS NULL
+              AND sent_at <= ?
+            ORDER BY sent_at ASC
+            LIMIT ?
+            """,
+            (cutoff, safe_limit),
+        ).fetchall()
+        for r in eph_rows:
+            mid = str(r["message_id"])
+            if mid not in excluded and mid not in seen_ids:
+                seen_ids.add(mid)
+                candidates.append((int(r["sent_at"]), mid, str(r["kind"])))
+
+        candidates.sort(key=lambda item: item[0])
+        return [(mid, kind) for _, mid, kind in candidates[:safe_limit]]
+
+    def mark_discord_message_pruned(self, message_id: str) -> None:
+        """Marca a mensagem como limpa no canal sem remover o histórico de partidas do SQLite."""
+        clean_id = (message_id or "").strip()
+        if not clean_id:
+            return
+        now = int(time.time())
+        conn = self._connect()
+        with conn:
+            conn.execute(
+                "UPDATE recorded_matches SET discord_message_id = ? WHERE discord_message_id = ?",
+                (PRUNED_DISCORD_MARKER, clean_id),
+            )
+            conn.execute(
+                "UPDATE discord_ephemeral_messages SET pruned_at = ? WHERE message_id = ?",
+                (now, clean_id),
+            )
 
     def get_cached_avatar(
         self,

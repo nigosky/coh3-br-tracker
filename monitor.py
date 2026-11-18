@@ -12,6 +12,7 @@ import os
 import signal
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,8 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
+BRT_TZ = timezone(timedelta(hours=-3))
+DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
 
 def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
@@ -430,6 +433,69 @@ def _compute_rankings_digest(rankings_by_mode: dict[str, list[dict[str, Any]]] |
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _should_run_daily_ranking_scan(
+    now_ts: int,
+    last_scan_date_brt: str | None,
+    last_scan_ts: int,
+    cutoff_hour_brt: int = 0,
+    cutoff_minute_brt: int = 1,
+) -> tuple[bool, str]:
+    """Determina se o ranking diário deve rodar hoje (apenas 1x ao dia, a partir das 00:01 BRT)."""
+    now_brt = datetime.fromtimestamp(int(now_ts), tz=BRT_TZ)
+    today_brt = now_brt.strftime("%Y-%m-%d")
+
+    effective_last_date = (last_scan_date_brt or "").strip()
+    if not effective_last_date and last_scan_ts > 0:
+        effective_last_date = datetime.fromtimestamp(int(last_scan_ts), tz=BRT_TZ).strftime("%Y-%m-%d")
+
+    past_cutoff = (now_brt.hour, now_brt.minute) >= (int(cutoff_hour_brt), int(cutoff_minute_brt))
+    return (past_cutoff and effective_last_date != today_brt), today_brt
+
+
+def prune_old_discord_messages(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+    retention_hours: int = DEFAULT_DISCORD_CLEANUP_HOURS,
+    max_per_cycle: int = 40,
+) -> int:
+    """Remove do canal de texto do Discord partidas/cards com mais de retention_hours (padrão 72h), preservando o Painel Fixado."""
+    if retention_hours <= 0 or not discord.is_configured:
+        return 0
+
+    summary_msg_id = (db.get_state("summary_message_id") or "").strip()
+    excluded = {summary_msg_id} if summary_msg_id else set()
+    to_prune = db.get_prunable_discord_messages(
+        max_age_sec=int(retention_hours) * 3600,
+        exclude_message_ids=excluded,
+        limit=max_per_cycle,
+    )
+    if not to_prune:
+        return 0
+
+    pruned_count = 0
+    for msg_id, kind in to_prune:
+        try:
+            if discord.delete_message(msg_id, protected_message_id=summary_msg_id or None):
+                db.mark_discord_message_pruned(msg_id)
+                pruned_count += 1
+            time.sleep(0.35)
+        except Exception as exc:
+            logger.warning(
+                "Falha transitória ao limpar mensagem antiga (%s | %s) do Discord: %s",
+                msg_id,
+                kind,
+                redact_secrets(exc),
+            )
+
+    if pruned_count:
+        logger.info(
+            "[LIMPEZA %dh] %d mensagem(ns) antiga(s) removida(s) do canal de texto do Discord (Painel Fixado preservado).",
+            retention_hours,
+            pruned_count,
+        )
+    return pruned_count
+
+
 def maybe_refresh_top_rankings(
     config_path: Path,
     cfg: dict[str, Any],
@@ -439,7 +505,7 @@ def maybe_refresh_top_rankings(
     force: bool = False,
     is_oneshot: bool = False,
 ) -> tuple[bool, dict[str, list[dict[str, Any]]] | None]:
-    """Revarre leaderboards da Relic, detecta movimentações e retorna (alterou, rankings_em_memoria)."""
+    """Revarre leaderboards da Relic 1x/dia após 00:01 BRT (ou quando forçado) e retorna (alterou, rankings_em_memoria)."""
     cfg_upgraded = ensure_core_roster_in_config(cfg)
 
     if not cfg.get("auto_follow_top_br", True) and not force and not cfg_upgraded:
@@ -454,14 +520,29 @@ def maybe_refresh_top_rankings(
     now = int(time.time())
     last_scan_str = db.get_state("last_leaderboard_scan_ts")
     last_scan_ts = int(last_scan_str) if last_scan_str and last_scan_str.isdigit() else 0
+    ranking_mode = str(cfg.get("ranking_update_mode", "daily")).strip().lower()
+    cutoff_h = max(0, min(23, int(cfg.get("ranking_daily_hour_brt", 0))))
+    cutoff_m = max(0, min(59, int(cfg.get("ranking_daily_minute_brt", 1))))
+    due_daily, today_brt = _should_run_daily_ranking_scan(
+        now_ts=now,
+        last_scan_date_brt=db.get_state("last_leaderboard_scan_date_brt"),
+        last_scan_ts=last_scan_ts,
+        cutoff_hour_brt=cutoff_h,
+        cutoff_minute_brt=cutoff_m,
+    )
 
-    effective_refresh_mins = max(refresh_mins, 30) if is_oneshot else refresh_mins
-    if not force and not cfg_upgraded and last_scan_ts > 0 and (now - last_scan_ts) < (effective_refresh_mins * 60):
-        return False, None
+    if not force and not cfg_upgraded:
+        if ranking_mode == "daily":
+            if not due_daily:
+                return False, None
+        else:
+            effective_refresh_mins = max(refresh_mins, 30) if is_oneshot else refresh_mins
+            if last_scan_ts > 0 and (now - last_scan_ts) < (effective_refresh_mins * 60):
+                return False, None
 
     unique_cnt = sum(1 for cp in custom_players if not cp.get("merged_into_profile_id"))
     logger.info(
-        "Atualizando Ranking BR (Top %d + %d monitorados únicos / %d contas Steam: 1v1, 2v2, Jogos em Equipe)...",
+        "Atualizando Ranking BR diário (Top %d + %d monitorados únicos / %d contas Steam: 1v1, 2v2, Jogos em Equipe)...",
         top_n,
         unique_cnt,
         len(custom_players),
@@ -532,6 +613,7 @@ def maybe_refresh_top_rankings(
         updated_by_id[pid] = rec_tp
 
     db.set_state("last_leaderboard_scan_ts", str(now))
+    db.set_state("last_leaderboard_scan_date_brt", today_brt)
     db.prune_expired_avatars()
     if has_new_movements or table_stats_changed or not had_prev_snap or force or cfg_upgraded:
         db.set_state("rankings_updated_flag", "1")
@@ -555,13 +637,17 @@ def maybe_refresh_top_rankings(
                 )
         if discord.is_configured:
             try:
-                discord.send_ranking_movement_card(movements_by_mode)
+                mv_msg_id = discord.send_ranking_movement_card(movements_by_mode)
+                if mv_msg_id:
+                    db.record_ephemeral_message(mv_msg_id, kind="ranking_movement")
             except Exception as exc:
                 logger.error("Erro ao enviar Card de Movimentação do Ranking ao Discord: %s", redact_secrets(exc))
 
     if not only_custom and newly_entered and was_already_populated and discord.is_configured:
         try:
-            discord.send_new_top_entrant_card(newly_entered, top_n=top_n)
+            ent_msg_id = discord.send_new_top_entrant_card(newly_entered, top_n=top_n)
+            if ent_msg_id:
+                db.record_ephemeral_message(ent_msg_id, kind="new_top_entrant")
         except Exception as exc:
             logger.error("Erro ao notificar novo integrante Top %d no Discord: %s", top_n, redact_secrets(exc))
 
@@ -796,9 +882,9 @@ def run_cycle(
                             redact_secrets(exc),
                         )
 
-        # Atualiza Ranking Top BR imediatamente após novas partidas, ou periodicamente nos ciclos ociosos
+        # Atualiza Ranking Top BR apenas 1x ao dia após 00:01 BRT (ou quando forçado manualmente)
         if not already_scanned_rankings:
-            should_force_rank = force_rank_scan or layout_needs_upgrade or cfg_upgraded or bool(newly_finished)
+            should_force_rank = force_rank_scan or layout_needs_upgrade or cfg_upgraded
             try:
                 rankings_changed, fresh_rankings = maybe_refresh_top_rankings(
                     config_path=config_path,
@@ -816,6 +902,9 @@ def run_cycle(
                 logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", redact_secrets(exc))
 
         if discord.is_configured:
+            cleanup_hours = max(0, int(cfg.get("discord_cleanup_hours", DEFAULT_DISCORD_CLEANUP_HOURS)))
+            pruned_count = prune_old_discord_messages(db, discord, retention_hours=cleanup_hours)
+
             if cards_confirmed > 0 or newly_finished or players_changed or rankings_changed:
                 db.set_state("summary_needs_refresh", "1")
 
@@ -873,11 +962,13 @@ def run_cycle(
 
             remaining_pending = db.count_pending_matches(max_age_sec=21600)
             logger.info(
-                "[DUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | Cards confirmados: %d | Pendentes restantes: %d | Painel Fixado: %s",
+                "[DUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
                 cards_confirmed,
                 remaining_pending,
+                cleanup_hours,
+                pruned_count,
                 panel_status,
             )
         elif grouped_new_matches or players_changed:
@@ -887,7 +978,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.1 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.2 -> SQLite + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -917,7 +1008,7 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.1 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.2 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:

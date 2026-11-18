@@ -480,6 +480,8 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
             print(f"[OK] Painel Fixado PT-BR atualizado no Discord (message_id={new_summary_id}).")
 
         card_id = discord.send_match_card(sample_group)
+        if card_id:
+            db.record_ephemeral_message(card_id, kind="test_card")
         print(f"[OK] Card PT-BR da partida #{sample_group['match_id']} enviado ao Discord (message_id={card_id}).")
         return 0
 
