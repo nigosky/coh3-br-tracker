@@ -33,6 +33,11 @@ TITLE_STEAM = "coh3"
 SOUTH_AMERICA_REGION_ID = 2074438
 MAX_RELIC_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB limite rígido (fio e pós-descompressão Gzip)
 
+COH3STATS_API_BASE_URL = "https://cache.coh3stats.com/sharedAPIGen2Http"
+ALLOWED_COH3STATS_HOSTS: frozenset[str] = frozenset({"cache.coh3stats.com"})
+COH3STATS_PLAYER_MATCHES_PATH_RE = re.compile(r"^/sharedAPIGen2Http/players/\d{1,12}/matches$")
+MAX_COH3STATS_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB limite rígido (fio e pós-descompressão Gzip)
+
 # IDs oficiais das leaderboards Steam usadas pelo coh3stats.com
 STEAM_LEADERBOARDS: dict[str, dict[str, int]] = {
     "1v1": {
@@ -256,7 +261,7 @@ class RelicAPIClient:
         )
         opener = _get_thread_opener()
         headers = {
-            "User-Agent": "CoH3-BR-Discord-Tracker/7.0",
+            "User-Agent": "CoH3-BR-Discord-Tracker/7.6",
             "Accept": "application/json",
             "Accept-Encoding": "gzip",
         }
@@ -429,6 +434,114 @@ class RelicAPIClient:
 
         return sorted(players.values(), key=lambda x: (-x["max_elo"], -x["last_match_date"]))
 
+    def _parse_relic_match_entry(
+        self,
+        match: dict[str, Any],
+        pid_clean: int,
+        profiles_by_id: dict[int, dict[str, Any]],
+        fallback_alias: str,
+        only_automatch: bool,
+        active_roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    ) -> dict[str, Any] | None:
+        match_id = int(match.get("id", 0) or 0)
+        if match_id <= 0:
+            return None
+        mt_id = int(match.get("matchtype_id", 0) or 0)
+        mode_label = normalize_mode_name(mt_id, self.match_types.get(mt_id))
+
+        if only_automatch and mode_label not in AUTOMATCH_MODES:
+            return None
+
+        reports = match.get("matchhistoryreportresults", [])
+        if not isinstance(reports, list):
+            return None
+        my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
+        if not my_rep:
+            return None
+
+        tracked_prof = profiles_by_id.get(pid_clean, {})
+        tracked_alias = tracked_prof.get("alias") or fallback_alias or f"Player {pid_clean}"
+        tracked_steam_id = _extract_steam_id(tracked_prof.get("name"))
+
+        members_by_pid: dict[int, dict[str, Any]] = {
+            int(mem["profile_id"]): mem
+            for mem in (match.get("matchhistorymember") or [])
+            if isinstance(mem, dict) and "profile_id" in mem
+        }
+
+        my_team = my_rep.get("teamid", 0)
+        allies: list[dict[str, Any]] = []
+        opponents: list[dict[str, Any]] = []
+
+        for rep in reports:
+            if not isinstance(rep, dict):
+                continue
+            rpid = int(rep.get("profile_id", 0) or 0)
+            prof = profiles_by_id.get(rpid, {})
+            mem = members_by_pid.get(rpid, {})
+            race_name = self.races.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
+            raw_old = int(mem.get("oldrating", 0) or 0)
+            raw_new = int(mem.get("newrating", 0) or 0)
+            p_old_elo = raw_old if raw_old > 0 else None
+            p_new_elo = raw_new if raw_new > 0 else None
+            p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
+
+            participant = {
+                "profile_id": rpid,
+                "alias": prof.get("alias") or f"ID {rpid}",
+                "steam_id": _extract_steam_id(prof.get("name")),
+                "country": str(prof.get("country") or "un").lower(),
+                "faction": race_name,
+                "faction_short": FACTION_SHORT.get(race_name, race_name),
+                "old_elo": p_old_elo,
+                "new_elo": p_new_elo,
+                "elo_delta": p_delta,
+                "elo": p_new_elo,
+            }
+            if rep.get("teamid") == my_team:
+                if rpid != pid_clean:
+                    allies.append(participant)
+            else:
+                opponents.append(participant)
+
+        my_mem = members_by_pid.get(pid_clean, {})
+        my_old_raw = int(my_mem.get("oldrating", 0) or 0)
+        my_new_raw = int(my_mem.get("newrating", 0) or 0)
+        old_elo = my_old_raw if my_old_raw > 0 else None
+        new_elo = my_new_raw if my_new_raw > 0 else None
+
+        start_ts = int(match.get("startgametime", 0) or 0)
+        end_ts = int(match.get("completiontime", 0) or 0)
+        raw_map = str(match.get("mapname") or "unknown_map")
+        my_faction = self.races.get(int(my_rep.get("race_id", -1)), "Unknown")
+        result_type = int(my_rep.get("resulttype", 0) or 0)
+
+        m_obj = {
+            "match_id": match_id,
+            "tracked_profile_id": pid_clean,
+            "tracked_alias": tracked_alias,
+            "tracked_steam_id": tracked_steam_id,
+            "tracked_faction": my_faction,
+            "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
+            "win": result_type == 1,
+            "resulttype": result_type,
+            "mode": mode_label,
+            "matchtype_id": mt_id,
+            "map_raw": raw_map,
+            "map_clean": clean_map_name(raw_map),
+            "start_time": start_ts,
+            "completion_time": end_ts,
+            "duration_sec": max(0, end_ts - start_ts),
+            "old_elo": old_elo,
+            "new_elo": new_elo,
+            "allies": allies,
+            "opponents": opponents,
+            "counters": {},
+            "has_replay": bool(match.get("matchurls")),
+            "coh3stats_url": f"https://coh3stats.com/players/{pid_clean}/matches/{match_id}",
+        }
+        return enrich_match_with_roster(m_obj, active_roster_maps)
+
     def fetch_player_recent_matches(
         self,
         profile_id: int,
@@ -447,47 +560,290 @@ class RelicAPIClient:
         data = self._get_json(url)
 
         profiles_by_id: dict[int, dict[str, Any]] = {
-            int(pr["profile_id"]): pr for pr in data.get("profiles", []) if "profile_id" in pr
+            int(pr["profile_id"]): pr for pr in data.get("profiles", []) if isinstance(pr, dict) and "profile_id" in pr
         }
-        tracked_prof = profiles_by_id.get(pid_clean, {})
-        tracked_alias = tracked_prof.get("alias") or fallback_alias or f"Player {pid_clean}"
-        tracked_steam_id = _extract_steam_id(tracked_prof.get("name"))
-
         raw_stats = sorted(
             data.get("matchHistoryStats", []),
-            key=lambda m: int(m.get("completiontime", 0)),
+            key=lambda m: int(m.get("completiontime", 0) or 0),
             reverse=True,
         )
 
         parsed_matches: list[dict[str, Any]] = []
         for match in raw_stats:
-            match_id = int(match.get("id", 0))
-            mt_id = int(match.get("matchtype_id", 0))
-            mode_label = normalize_mode_name(mt_id, self.match_types.get(mt_id))
+            if not isinstance(match, dict):
+                continue
+            parsed = self._parse_relic_match_entry(
+                match=match,
+                pid_clean=pid_clean,
+                profiles_by_id=profiles_by_id,
+                fallback_alias=fallback_alias,
+                only_automatch=only_automatch,
+                active_roster_maps=active_roster_maps,
+            )
+            if parsed is not None:
+                parsed_matches.append(parsed)
 
+        return parsed_matches
+
+    def fetch_recent_matches_direct_batch(
+        self,
+        players: list[dict[str, Any]],
+        only_automatch: bool = False,
+        roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+        batch_size: int = 10,
+    ) -> tuple[dict[int, list[dict[str, Any]]], int]:
+        """
+        Consulta direta em lote ao endpoint Relic `getRecentMatchHistory` (por SteamID64 / profile_names,
+        com fallback seguro por profile_ids) para auditoria independente de partidas recentes.
+        """
+        self.ensure_metadata()
+        active_roster_maps = roster_maps or build_roster_lookup_maps()
+        safe_batch = max(1, min(int(batch_size), 10))
+
+        steam_players: list[dict[str, Any]] = []
+        pid_only_players: list[dict[str, Any]] = []
+        alias_by_pid: dict[int, str] = {}
+        tracked_pids: set[int] = set()
+
+        for pl in players or []:
+            pid = int(pl.get("profile_id", 0) or 0)
+            if pid <= 0 or pid in tracked_pids:
+                continue
+            tracked_pids.add(pid)
+            alias_by_pid[pid] = str(pl.get("original_alias") or pl.get("alias") or f"Player {pid}")
+            sid = str(pl.get("steam_id") or "").replace("/steam/", "").strip()
+            if STEAM_ID64_VALID_RE.fullmatch(sid):
+                steam_players.append({"profile_id": pid, "steam_id": sid})
+            else:
+                pid_only_players.append({"profile_id": pid})
+
+        matches_by_pid: dict[int, dict[int, dict[str, Any]]] = {pid: {} for pid in tracked_pids}
+        failed_batches = 0
+
+        def _ingest_batch_payload(data: dict[str, Any], target_pids: set[int]) -> None:
+            profiles_by_id: dict[int, dict[str, Any]] = {
+                int(pr["profile_id"]): pr
+                for pr in data.get("profiles", [])
+                if isinstance(pr, dict) and "profile_id" in pr
+            }
+            for match in data.get("matchHistoryStats", []):
+                if not isinstance(match, dict):
+                    continue
+                reports = match.get("matchhistoryreportresults", [])
+                if not isinstance(reports, list):
+                    continue
+                rep_pids = {
+                    int(r.get("profile_id", 0) or 0)
+                    for r in reports
+                    if isinstance(r, dict)
+                }
+                for pid in rep_pids & target_pids:
+                    parsed = self._parse_relic_match_entry(
+                        match=match,
+                        pid_clean=pid,
+                        profiles_by_id=profiles_by_id,
+                        fallback_alias=alias_by_pid.get(pid, f"Player {pid}"),
+                        only_automatch=only_automatch,
+                        active_roster_maps=active_roster_maps,
+                    )
+                    if parsed is not None:
+                        matches_by_pid[pid][int(parsed["match_id"])] = parsed
+
+        for idx in range(0, len(steam_players), safe_batch):
+            chunk = steam_players[idx : idx + safe_batch]
+            chunk_pids = {int(c["profile_id"]) for c in chunk}
+            names_json = json.dumps([f"/steam/{c['steam_id']}" for c in chunk], separators=(",", ":"))
+            encoded_names = urllib.parse.quote(names_json)
+            url = f"{BASE_URL}/getRecentMatchHistory?title={TITLE_STEAM}&profile_names={encoded_names}"
+            try:
+                data = self._get_json(url, retries=2)
+                _ingest_batch_payload(data, chunk_pids)
+            except Exception as exc:
+                logger.warning(
+                    "[3ª CHECAGEM] Lote Relic Direto por SteamID falhou (%d contas); tentando fallback profile_ids: %s",
+                    len(chunk),
+                    redact_secrets(exc),
+                )
+                pid_only_players.extend({"profile_id": p} for p in sorted(chunk_pids))
+
+        for idx in range(0, len(pid_only_players), safe_batch):
+            chunk = pid_only_players[idx : idx + safe_batch]
+            chunk_pids = {int(c["profile_id"]) for c in chunk}
+            encoded_ids = urllib.parse.quote("[" + ",".join(str(p) for p in sorted(chunk_pids)) + "]")
+            url = f"{BASE_URL}/getRecentMatchHistory?title={TITLE_STEAM}&profile_ids={encoded_ids}"
+            try:
+                data = self._get_json(url, retries=2)
+                _ingest_batch_payload(data, chunk_pids)
+            except Exception as exc:
+                failed_batches += 1
+                logger.warning(
+                    "[3ª CHECAGEM] Lote Relic Direto por profile_ids falhou (%d contas): %s",
+                    len(chunk),
+                    redact_secrets(exc),
+                )
+
+        result: dict[int, list[dict[str, Any]]] = {}
+        for pid, by_mid in matches_by_pid.items():
+            ordered = sorted(by_mid.values(), key=lambda m: int(m.get("completion_time", 0)), reverse=True)
+            result[pid] = ordered
+        return result, failed_batches
+
+
+class Coh3StatsAPIClient:
+    """Cliente HTTPS endurecido para cruzamento de partidas recentes no site oficial coh3stats.com."""
+
+    def __init__(
+        self,
+        min_interval_sec: float = 0.12,
+        timeout_sec: float = 10.0,
+        circuit_breaker_threshold: int = 4,
+    ) -> None:
+        self.min_interval_sec = max(0.05, float(min_interval_sec))
+        self.timeout_sec = max(2.0, float(timeout_sec))
+        self.circuit_breaker_threshold = max(1, int(circuit_breaker_threshold))
+        self._next_req_ts = 0.0
+        self._rate_lock = threading.Lock()
+        self._cb_lock = threading.Lock()
+        self._consecutive_errors = 0
+        self._circuit_open = False
+
+    def reset_circuit_breaker(self) -> None:
+        with self._cb_lock:
+            self._consecutive_errors = 0
+            self._circuit_open = False
+
+    @property
+    def is_circuit_open(self) -> bool:
+        with self._cb_lock:
+            return self._circuit_open
+
+    def _record_success(self) -> None:
+        with self._cb_lock:
+            self._consecutive_errors = 0
+
+    def _record_failure(self) -> bool:
+        with self._cb_lock:
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= self.circuit_breaker_threshold:
+                self._circuit_open = True
+            return self._circuit_open
+
+    def _reserve_rate_slot(self) -> None:
+        with self._rate_lock:
+            now_m = time.monotonic()
+            target = max(now_m, self._next_req_ts)
+            self._next_req_ts = target + self.min_interval_sec
+            wait = target - now_m
+        if wait > 0:
+            time.sleep(wait)
+
+    def _get_json(self, url: str, retries: int = 2) -> Any:
+        validate_https_endpoint(
+            url,
+            ALLOWED_COH3STATS_HOSTS,
+            path_prefix="/sharedAPIGen2Http/players/",
+            path_regex=COH3STATS_PLAYER_MATCHES_PATH_RE,
+        )
+        opener = _get_thread_opener()
+        headers = {
+            "User-Agent": "CoH3-BR-Discord-Tracker/7.6",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+        }
+
+        last_err: Exception | None = None
+        for attempt in range(max(1, int(retries))):
+            self._reserve_rate_slot()
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with opener.open(req, timeout=self.timeout_sec) as resp:
+                    raw_bytes = read_bounded_http_body(resp, MAX_COH3STATS_RESPONSE_BYTES)
+                return json.loads(raw_bytes.decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                last_err = exc
+                if exc.code in (400, 401, 403, 404):
+                    break
+                if attempt + 1 < retries:
+                    time.sleep((2**attempt) * 0.6)
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+                last_err = exc
+                if "403" in str(exc):
+                    break
+                if attempt + 1 < retries:
+                    time.sleep((2**attempt) * 0.6)
+
+        raise RuntimeError(f"Erro ao consultar coh3stats ({url}): {redact_secrets(last_err)}")
+
+    def fetch_player_recent_matches(
+        self,
+        profile_id: int,
+        fallback_alias: str = "",
+        only_automatch: bool = False,
+        roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+        races: dict[int, str] | None = None,
+        match_types: dict[int, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Consulta as partidas recentes de um jogador no backend público do coh3stats.com."""
+        pid_clean = int(profile_id)
+        if pid_clean <= 0:
+            raise ValueError(f"profile_id inválido: {profile_id}")
+
+        url = f"{COH3STATS_API_BASE_URL}/players/{pid_clean}/matches"
+        data = self._get_json(url)
+        raw_matches = data.get("playerMatches", []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        if not isinstance(raw_matches, list):
+            return []
+
+        active_roster_maps = roster_maps or build_roster_lookup_maps()
+        race_map = races or FALLBACK_RACES
+        mt_map = match_types or {}
+
+        parsed_matches: list[dict[str, Any]] = []
+        for match in raw_matches:
+            if not isinstance(match, dict):
+                continue
+            match_id = int(match.get("id", 0) or 0)
+            if match_id <= 0:
+                continue
+            mt_id = int(match.get("matchtype_id", 0) or 0)
+            mode_label = normalize_mode_name(mt_id, mt_map.get(mt_id))
             if only_automatch and mode_label not in AUTOMATCH_MODES:
                 continue
 
             reports = match.get("matchhistoryreportresults", [])
-            my_rep = next((r for r in reports if int(r.get("profile_id", -1)) == pid_clean), None)
+            if not isinstance(reports, list):
+                continue
+            my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
             if not my_rep:
                 continue
 
-            members_by_pid: dict[int, dict[str, Any]] = {
-                int(mem["profile_id"]): mem
-                for mem in match.get("matchhistorymember", [])
-                if "profile_id" in mem
+            top_profiles: dict[int, dict[str, Any]] = {
+                int(pr["profile_id"]): pr
+                for pr in (match.get("profiles") or [])
+                if isinstance(pr, dict) and "profile_id" in pr
             }
+            top_members: dict[int, dict[str, Any]] = {
+                int(mem["profile_id"]): mem
+                for mem in (match.get("matchhistorymember") or [])
+                if isinstance(mem, dict) and "profile_id" in mem
+            }
+
+            my_prof = my_rep.get("profile") if isinstance(my_rep.get("profile"), dict) else top_profiles.get(pid_clean, {})
+            my_mem = my_rep.get("matchhistorymember") if isinstance(my_rep.get("matchhistorymember"), dict) else top_members.get(pid_clean, {})
+            tracked_alias = str(my_prof.get("alias") or fallback_alias or f"Player {pid_clean}")
+            tracked_steam_id = _extract_steam_id(my_prof.get("name"))
 
             my_team = my_rep.get("teamid", 0)
             allies: list[dict[str, Any]] = []
             opponents: list[dict[str, Any]] = []
 
             for rep in reports:
-                rpid = int(rep.get("profile_id", 0))
-                prof = profiles_by_id.get(rpid, {})
-                mem = members_by_pid.get(rpid, {})
-                race_name = self.races.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
+                if not isinstance(rep, dict):
+                    continue
+                rpid = int(rep.get("profile_id", 0) or 0)
+                prof = rep.get("profile") if isinstance(rep.get("profile"), dict) else top_profiles.get(rpid, {})
+                mem = rep.get("matchhistorymember") if isinstance(rep.get("matchhistorymember"), dict) else top_members.get(rpid, {})
+                race_name = race_map.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
                 raw_old = int(mem.get("oldrating", 0) or 0)
                 raw_new = int(mem.get("newrating", 0) or 0)
                 p_old_elo = raw_old if raw_old > 0 else None
@@ -512,17 +868,16 @@ class RelicAPIClient:
                 else:
                     opponents.append(participant)
 
-            my_mem = members_by_pid.get(pid_clean, {})
             my_old_raw = int(my_mem.get("oldrating", 0) or 0)
             my_new_raw = int(my_mem.get("newrating", 0) or 0)
             old_elo = my_old_raw if my_old_raw > 0 else None
             new_elo = my_new_raw if my_new_raw > 0 else None
 
-            start_ts = int(match.get("startgametime", 0))
-            end_ts = int(match.get("completiontime", 0))
+            start_ts = int(match.get("startgametime", 0) or 0)
+            end_ts = int(match.get("completiontime", 0) or 0)
             raw_map = str(match.get("mapname") or "unknown_map")
-            my_faction = self.races.get(int(my_rep.get("race_id", -1)), "Unknown")
-            result_type = int(my_rep.get("resulttype", 0))
+            my_faction = race_map.get(int(my_rep.get("race_id", -1)), "Unknown")
+            result_type = int(my_rep.get("resulttype", 0) or 0)
 
             m_obj = {
                 "match_id": match_id,
@@ -550,7 +905,69 @@ class RelicAPIClient:
             }
             parsed_matches.append(enrich_match_with_roster(m_obj, active_roster_maps))
 
+        parsed_matches.sort(key=lambda m: int(m.get("completion_time", 0)), reverse=True)
         return parsed_matches
+
+    def fetch_players_recent_matches_batch(
+        self,
+        players: list[dict[str, Any]],
+        only_automatch: bool = False,
+        roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+        races: dict[int, str] | None = None,
+        match_types: dict[int, str] | None = None,
+        max_workers: int = 4,
+    ) -> tuple[dict[int, list[dict[str, Any]]], int, int]:
+        """Consulta em paralelo controlado todos os jogadores no coh3stats.com com circuit breaker seguro."""
+        self.reset_circuit_breaker()
+        unique_players: list[dict[str, Any]] = []
+        seen_pids: set[int] = set()
+        for pl in players or []:
+            pid = int(pl.get("profile_id", 0) or 0)
+            if pid > 0 and pid not in seen_pids:
+                seen_pids.add(pid)
+                unique_players.append(pl)
+
+        if not unique_players:
+            return {}, 0, 0
+
+        def _fetch_one(pl: dict[str, Any]) -> tuple[int, list[dict[str, Any]] | None, Exception | None]:
+            pid = int(pl["profile_id"])
+            if self.is_circuit_open:
+                return pid, None, RuntimeError("circuit_open")
+            try:
+                rows = self.fetch_player_recent_matches(
+                    profile_id=pid,
+                    fallback_alias=str(pl.get("original_alias") or pl.get("alias") or ""),
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                    races=races,
+                    match_types=match_types,
+                )
+                self._record_success()
+                return pid, rows, None
+            except Exception as err:
+                tripped = self._record_failure()
+                if tripped:
+                    logger.warning(
+                        "[3ª CHECAGEM] Circuit breaker acionado para coh3stats.com após %d falhas consecutivas: %s",
+                        self.circuit_breaker_threshold,
+                        redact_secrets(err),
+                    )
+                return pid, None, err
+
+        matches_by_pid: dict[int, list[dict[str, Any]]] = {}
+        ok_count = 0
+        fail_count = 0
+        workers = max(1, min(int(max_workers), len(unique_players)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            for pid, rows, err in pool.map(_fetch_one, unique_players):
+                if err is None and rows is not None:
+                    matches_by_pid[pid] = rows
+                    ok_count += 1
+                else:
+                    fail_count += 1
+
+        return matches_by_pid, ok_count, fail_count
 
 
 def format_bound_display_alias(

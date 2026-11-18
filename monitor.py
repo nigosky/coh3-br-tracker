@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v7.5 — Ranking Diário + Patente Veteranos, Limpeza 72h e Segurança Endurecida."""
+"""Monitor automático CoH3 Brasil v7.6 — Tripla Checagem (Relic Direta × coh3stats.com), Ranking Diário, Limpeza 72h e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from database import MatchDatabase, PENDING_DISCORD_MARKER, SEEDED_DISCORD_MARKE
 from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
     CORE_BR_ROSTER,
+    Coh3StatsAPIClient,
     RelicAPIClient,
     build_roster_lookup_maps,
     build_top_tracked_players,
@@ -692,6 +693,270 @@ def maybe_refresh_top_rankings(
     return changed, exported_rankings
 
 
+def _merge_match_records(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
+    """Combina metadados mais completos (ELO, replay, SteamID, país) quando Relic Direta e coh3stats retornam a mesma partida."""
+    merged = dict(primary)
+    if merged.get("old_elo") is None and secondary.get("old_elo") is not None:
+        merged["old_elo"] = secondary["old_elo"]
+    if merged.get("new_elo") is None and secondary.get("new_elo") is not None:
+        merged["new_elo"] = secondary["new_elo"]
+    if not merged.get("tracked_steam_id") and secondary.get("tracked_steam_id"):
+        merged["tracked_steam_id"] = secondary["tracked_steam_id"]
+    if not merged.get("has_replay") and secondary.get("has_replay"):
+        merged["has_replay"] = True
+    if int(merged.get("duration_sec", 0) or 0) <= 0 and int(secondary.get("duration_sec", 0) or 0) > 0:
+        merged["start_time"] = secondary["start_time"]
+        merged["duration_sec"] = secondary["duration_sec"]
+
+    for side in ("allies", "opponents"):
+        prim_list = merged.get(side) or []
+        sec_list = secondary.get(side) or []
+        if not prim_list and sec_list:
+            merged[side] = [dict(p) for p in sec_list]
+            continue
+        sec_by_pid = {
+            int(p.get("profile_id", 0) or 0): p
+            for p in sec_list
+            if isinstance(p, dict) and int(p.get("profile_id", 0) or 0) > 0
+        }
+        enriched_side: list[dict[str, Any]] = []
+        for p in prim_list:
+            if not isinstance(p, dict):
+                continue
+            p_copy = dict(p)
+            sp = sec_by_pid.get(int(p_copy.get("profile_id", 0) or 0))
+            if sp:
+                if not p_copy.get("steam_id") and sp.get("steam_id"):
+                    p_copy["steam_id"] = sp["steam_id"]
+                if (not p_copy.get("country") or p_copy.get("country") == "un") and sp.get("country") and sp.get("country") != "un":
+                    p_copy["country"] = sp["country"]
+                if p_copy.get("old_elo") is None and sp.get("old_elo") is not None:
+                    p_copy["old_elo"] = sp["old_elo"]
+                if p_copy.get("new_elo") is None and sp.get("new_elo") is not None:
+                    p_copy["new_elo"] = sp["new_elo"]
+                if p_copy.get("elo") is None and p_copy.get("new_elo") is not None:
+                    p_copy["elo"] = p_copy["new_elo"]
+                if p_copy.get("elo_delta") is None and p_copy.get("old_elo") is not None and p_copy.get("new_elo") is not None:
+                    p_copy["elo_delta"] = int(p_copy["new_elo"]) - int(p_copy["old_elo"])
+                cur_alias = str(p_copy.get("alias") or "")
+                sec_alias = str(sp.get("alias") or "")
+                if (cur_alias.startswith("Player ") or cur_alias.startswith("ID ")) and sec_alias and not (sec_alias.startswith("Player ") or sec_alias.startswith("ID ")):
+                    p_copy["alias"] = sec_alias
+            enriched_side.append(p_copy)
+        merged[side] = enriched_side
+
+    return merged
+
+
+def run_third_cross_check(
+    db: MatchDatabase,
+    relic: RelicAPIClient,
+    coh3stats: Coh3StatsAPIClient | None,
+    synced_players: list[dict[str, Any]],
+    newly_finished: list[dict[str, Any]],
+    only_automatch: bool,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    recovery_min_completion_ts: int,
+    live_marker: str | None,
+    pending_max_age_sec: int = 21600,
+) -> dict[str, int]:
+    """
+    3ª Checagem Cruzada (API CoH3 Direta da Relic em lote × site oficial coh3stats.com).
+    Cruza as duas fontes independentes contra o SQLite e recupera qualquer partida recente
+    dentro da janela ativa que não foi postada no Discord — sem jamais duplicar cards já
+    confirmados (Snowflake) nem reenviar partidas PRUNED ou SEEDED.
+    """
+    stats: dict[str, int] = {
+        "relic_direct_unique": 0,
+        "relic_direct_failed_batches": 0,
+        "coh3stats_unique": 0,
+        "coh3stats_ok_players": 0,
+        "coh3stats_total_players": len(synced_players),
+        "cross_confirmed": 0,
+        "recovered_unique": 0,
+        "recovered_rows": 0,
+        "recovered_from_both": 0,
+        "recovered_from_relic_only": 0,
+        "recovered_from_coh3stats_only": 0,
+        "requeued_undelivered": 0,
+        "synced_siblings": 0,
+    }
+    if not synced_players:
+        return stats
+
+    relic_by_pid: dict[int, list[dict[str, Any]]] = {}
+    if callable(getattr(relic, "fetch_recent_matches_direct_batch", None)):
+        try:
+            relic_by_pid, failed_batches = relic.fetch_recent_matches_direct_batch(
+                players=synced_players,
+                only_automatch=only_automatch,
+                roster_maps=roster_maps,
+                batch_size=10,
+            )
+            stats["relic_direct_failed_batches"] = failed_batches
+        except Exception as exc:
+            logger.warning(
+                "[3ª CHECAGEM] Consulta direta em lote à Relic API falhou (seguindo com coh3stats): %s",
+                redact_secrets(exc),
+            )
+
+    coh3stats_by_pid: dict[int, list[dict[str, Any]]] = {}
+    if coh3stats is not None and callable(getattr(coh3stats, "fetch_players_recent_matches_batch", None)):
+        try:
+            coh3stats_by_pid, c3s_ok, _c3s_fail = coh3stats.fetch_players_recent_matches_batch(
+                players=synced_players,
+                only_automatch=only_automatch,
+                roster_maps=roster_maps,
+                races=getattr(relic, "races", None) or None,
+                match_types=getattr(relic, "match_types", None) or None,
+                max_workers=4,
+            )
+            stats["coh3stats_ok_players"] = c3s_ok
+        except Exception as exc:
+            logger.warning(
+                "[3ª CHECAGEM] Consulta cruzada ao coh3stats.com falhou (seguindo com Relic Direta): %s",
+                redact_secrets(exc),
+            )
+
+    relic_pairs: dict[tuple[int, int], dict[str, Any]] = {}
+    for pid, rows in relic_by_pid.items():
+        for m in rows:
+            mid = int(m.get("match_id", 0) or 0)
+            comp_ts = int(m.get("completion_time", 0) or 0)
+            if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                relic_pairs[(mid, int(pid))] = m
+
+    coh3stats_pairs: dict[tuple[int, int], dict[str, Any]] = {}
+    for pid, rows in coh3stats_by_pid.items():
+        for m in rows:
+            mid = int(m.get("match_id", 0) or 0)
+            comp_ts = int(m.get("completion_time", 0) or 0)
+            if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                coh3stats_pairs[(mid, int(pid))] = m
+
+    relic_mids = {mid for mid, _ in relic_pairs}
+    c3s_mids = {mid for mid, _ in coh3stats_pairs}
+    stats["relic_direct_unique"] = len(relic_mids)
+    stats["coh3stats_unique"] = len(c3s_mids)
+    stats["cross_confirmed"] = len(relic_mids & c3s_mids)
+
+    combined_pairs: dict[tuple[int, int], tuple[dict[str, Any], str]] = {}
+    for key in relic_pairs.keys() | coh3stats_pairs.keys():
+        r_rec = relic_pairs.get(key)
+        c_rec = coh3stats_pairs.get(key)
+        if r_rec is not None and c_rec is not None:
+            combined_pairs[key] = (_merge_match_records(r_rec, c_rec), "Relic+coh3stats")
+        elif r_rec is not None:
+            combined_pairs[key] = (r_rec, "Relic Direta")
+        elif c_rec is not None:
+            combined_pairs[key] = (c_rec, "coh3stats")
+
+    if combined_pairs:
+        all_candidate_mids = sorted({mid for mid, _ in combined_pairs})
+        delivery_map = db.get_match_delivery_map(all_candidate_mids)
+        now_ts = int(time.time())
+        existing_new_keys = {(int(m["match_id"]), int(m["tracked_profile_id"])) for m in newly_finished}
+        recovered_match_sources: dict[int, set[str]] = {}
+        requeued_mids: set[int] = set()
+
+        ordered_items = sorted(
+            combined_pairs.items(),
+            key=lambda kv: (int(kv[1][0].get("completion_time", 0)), kv[0][0], kv[0][1]),
+        )
+
+        for (mid, pid), (match_obj, source_tag) in ordered_items:
+            info = delivery_map.get(mid)
+            if info is not None:
+                if info["handled_non_live"]:
+                    continue
+
+                existing_snowflake = info["snowflake"]
+                if existing_snowflake:
+                    if pid not in info["rows"]:
+                        if db.insert_match(match_obj, discord_message_id=existing_snowflake):
+                            stats["synced_siblings"] += 1
+                    continue
+
+                if pid in info["rows"]:
+                    cur_msg_id, cur_rec_at = info["rows"][pid]
+                    if cur_msg_id == PENDING_DISCORD_MARKER and (now_ts - cur_rec_at) < pending_max_age_sec:
+                        continue
+                    if (
+                        live_marker == PENDING_DISCORD_MARKER
+                        and mid not in requeued_mids
+                        and db.requeue_undelivered_match(mid)
+                    ):
+                        requeued_mids.add(mid)
+                        stats["requeued_undelivered"] += 1
+                        stats["recovered_rows"] += 1
+                        recovered_match_sources.setdefault(mid, set()).add(source_tag)
+                        if (mid, pid) not in existing_new_keys:
+                            newly_finished.append(match_obj)
+                            existing_new_keys.add((mid, pid))
+                        logger.info(
+                            "[3ª CHECAGEM - REENFILEIRADA (%s)] %s (%s) -> %s em %s (%s) [#%d]",
+                            source_tag,
+                            match_obj["tracked_alias"],
+                            match_obj["tracked_faction_short"],
+                            "VITÓRIA" if match_obj["win"] else "DERROTA",
+                            match_obj["map_clean"],
+                            match_obj["mode"],
+                            mid,
+                        )
+                    continue
+
+                has_active_pending = any(
+                    msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
+                    for msg_id, rec_at in info["rows"].values()
+                )
+            else:
+                has_active_pending = False
+
+            if db.insert_match(match_obj, discord_message_id=live_marker):
+                if (mid, pid) not in existing_new_keys:
+                    newly_finished.append(match_obj)
+                    existing_new_keys.add((mid, pid))
+                if has_active_pending:
+                    stats["synced_siblings"] += 1
+                else:
+                    stats["recovered_rows"] += 1
+                    recovered_match_sources.setdefault(mid, set()).add(source_tag)
+                    logger.info(
+                        "[3ª CHECAGEM - RECUPERADA (%s)] %s (%s) -> %s em %s (%s) [#%d]",
+                        source_tag,
+                        match_obj["tracked_alias"],
+                        match_obj["tracked_faction_short"],
+                        "VITÓRIA" if match_obj["win"] else "DERROTA",
+                        match_obj["map_clean"],
+                        match_obj["mode"],
+                        mid,
+                    )
+
+        stats["recovered_unique"] = len(recovered_match_sources)
+        for sources in recovered_match_sources.values():
+            if "Relic+coh3stats" in sources or ("Relic Direta" in sources and "coh3stats" in sources):
+                stats["recovered_from_both"] += 1
+            elif "coh3stats" in sources:
+                stats["recovered_from_coh3stats_only"] += 1
+            else:
+                stats["recovered_from_relic_only"] += 1
+
+    logger.info(
+        "[3ª CHECAGEM CRUZADA] Relic Direta: %d partida(s) | coh3stats: %d partida(s) (%d/%d perfis OK) | Cruzadas: %d | Recuperadas p/ Discord: %d (Ambas: %d, Relic: %d, coh3stats: %d, Reenfileiradas: %d)",
+        stats["relic_direct_unique"],
+        stats["coh3stats_unique"],
+        stats["coh3stats_ok_players"],
+        stats["coh3stats_total_players"],
+        stats["cross_confirmed"],
+        stats["recovered_unique"],
+        stats["recovered_from_both"],
+        stats["recovered_from_relic_only"],
+        stats["recovered_from_coh3stats_only"],
+        stats["requeued_undelivered"],
+    )
+    return stats
+
+
 def run_cycle(
     config_path: Path,
     relic: RelicAPIClient,
@@ -699,8 +964,10 @@ def run_cycle(
     is_oneshot: bool = False,
     verify_discord: bool = False,
     reset_discord_channel: bool = False,
+    coh3stats: Coh3StatsAPIClient | None = None,
+    enable_third_check: bool = True,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo com dupla checagem de API Relic, fila PENDING e entrega confirmada no Discord."""
+    """Executa um ciclo completo com tripla checagem (Relic + Relic Direta em lote × coh3stats.com), fila PENDING e entrega confirmada no Discord."""
     cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -762,11 +1029,15 @@ def run_cycle(
         seed_limit = int(cfg.get("initial_seed_per_player", 3))
         summary_size = int(cfg.get("summary_list_size", 15))
         top_n = int(cfg.get("top_n_per_mode", 20))
+        cleanup_hours = max(0, int(cfg.get("discord_cleanup_hours", DEFAULT_DISCORD_CLEANUP_HOURS)))
+        window_sec = cleanup_hours * 3600 if cleanup_hours > 0 else 86400
+        pending_max_age_sec = max(21600, window_sec)
 
         if not active_players:
             logger.warning("Nenhum jogador brasileiro selecionado em %s.", config_path.name)
             return 0, 0
 
+        pre_synced_pids = {int(pl["profile_id"]) for pl in active_players if bool(pl.get("baseline_synced"))}
         newly_finished: list[dict[str, Any]] = []
         seeded_count = 0
         players_changed = False
@@ -865,13 +1136,40 @@ def run_cycle(
                     db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
                     players_changed = True
 
+        # 3ª Checagem Cruzada: API Direta da Relic em lote (getRecentMatchHistory) × coh3stats.com
+        third_check_stats: dict[str, int] = {
+            "recovered_unique": 0,
+            "cross_confirmed": 0,
+            "coh3stats_ok_players": 0,
+            "coh3stats_total_players": 0,
+        }
+        if enable_third_check and pre_synced_pids:
+            refreshed_active = db.get_active_players()
+            synced_for_audit = [pl for pl in refreshed_active if int(pl["profile_id"]) in pre_synced_pids]
+            display_since_raw = db.get_state("display_since_ts") or "0"
+            display_since_ts = int(display_since_raw) if display_since_raw.isdigit() else 0
+            recovery_min_completion_ts = max(now_ts - window_sec, display_since_ts)
+            c3s_client = coh3stats if coh3stats is not None else Coh3StatsAPIClient()
+            third_check_stats = run_third_cross_check(
+                db=db,
+                relic=relic,
+                coh3stats=c3s_client,
+                synced_players=synced_for_audit,
+                newly_finished=newly_finished,
+                only_automatch=only_automatch,
+                roster_maps=roster_maps,
+                recovery_min_completion_ts=recovery_min_completion_ts,
+                live_marker=live_marker,
+                pending_max_age_sec=pending_max_age_sec,
+            )
+
         newly_finished.sort(key=lambda x: x["completion_time"])
         grouped_new_matches = group_matches_by_id(newly_finished)
         cards_confirmed = 0
 
         if discord.is_configured:
-            # Recupera novas partidas + eventuais pendentes de falhas transitórias anteriores (sem duplicar)
-            pending_records = db.get_pending_matches(max_age_sec=21600, limit=60)
+            # Recupera novas partidas + recuperadas na 3ª checagem + pendentes de falhas transitórias anteriores (sem duplicar)
+            pending_records = db.get_pending_matches(max_age_sec=pending_max_age_sec, limit=100)
             grouped_to_send = group_matches_by_id(pending_records)
             new_match_ids = {int(g["match_id"]) for g in grouped_new_matches}
             retried_from_prev = sum(1 for g in grouped_to_send if int(g["match_id"]) not in new_match_ids)
@@ -943,7 +1241,6 @@ def run_cycle(
                 logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", redact_secrets(exc))
 
         if discord.is_configured:
-            cleanup_hours = max(0, int(cfg.get("discord_cleanup_hours", DEFAULT_DISCORD_CLEANUP_HOURS)))
             pruned_count = prune_old_discord_messages(db, discord, retention_hours=cleanup_hours)
 
             if cards_confirmed > 0 or newly_finished or players_changed or rankings_changed:
@@ -1006,11 +1303,14 @@ def run_cycle(
                     panel_status = "pendente (retentará no próximo ciclo)"
                     logger.error("Falha ao atualizar Mensagem Fixada após dupla checagem; marcada para retentativa.")
 
-            remaining_pending = db.count_pending_matches(max_age_sec=21600)
+            remaining_pending = db.count_pending_matches(max_age_sec=pending_max_age_sec)
             logger.info(
-                "[DUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[TRIPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic×coh3stats): +%d recuperada(s) (%d/%d coh3stats OK) | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
+                third_check_stats.get("recovered_unique", 0),
+                third_check_stats.get("coh3stats_ok_players", 0),
+                third_check_stats.get("coh3stats_total_players", 0),
                 cards_confirmed,
                 remaining_pending,
                 cleanup_hours,
@@ -1024,7 +1324,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.5 -> SQLite + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.6 -> SQLite + Tripla Checagem + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1059,7 +1359,8 @@ def main() -> int:
     signal.signal(signal.SIGTERM, _handle_sig)
 
     relic = RelicAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.5 usando %s...", args.config)
+    coh3stats = Coh3StatsAPIClient()
+    logger.info("Iniciando CoH3 Brasil Monitor v7.6 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -1072,6 +1373,7 @@ def main() -> int:
                 is_oneshot=bool(args.once),
                 verify_discord=(bool(args.verify_discord) and first_iter),
                 reset_discord_channel=(bool(args.reset_discord_channel) and first_iter),
+                coh3stats=coh3stats,
             )
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)
