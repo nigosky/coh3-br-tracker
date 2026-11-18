@@ -1,11 +1,22 @@
 name: CoH3 Brasil Monitor (Hardened)
 on:
   schedule:
+    # Roda a cada 25 minutos (~1.728 execucoes/mes), mantendo 100% GRATIS em Repositorio PRIVADO (< 2.000 min/mes do GitHub Free)
     - cron: "*/25 * * * *"
   workflow_dispatch:
     inputs:
+      add_custom_player:
+        description: "➕ Adicionar jogador extra fora do Top 20 (cole ID ou link do coh3stats.com)"
+        required: false
+        default: ""
+        type: string
+      remove_custom_player:
+        description: "➖ Remover jogador extra (cole ID ou link do coh3stats.com)"
+        required: false
+        default: ""
+        type: string
       send_initial_test:
-        description: "Enviar Lista Resumo inicial + 1 Card de teste agora?"
+        description: "Enviar/atualizar Painel Fixado + 1 Card de exemplo agora?"
         required: false
         default: false
         type: boolean
@@ -29,9 +40,19 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 1
+      - name: Preparar renderizador grafico seguro (pacotes oficiais Ubuntu)
+        run: |
+          set -euo pipefail
+          if ! python3 -c "import PIL" >/dev/null 2>&1 || [ ! -d "/usr/share/fonts/opentype/noto" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends python3-pil fonts-dejavu-core fonts-noto-cjk
+            sudo apt-get install -y --no-install-recommends fonts-roboto-unhinted 2>/dev/null || sudo apt-get install -y --no-install-recommends fonts-roboto 2>/dev/null || true
+          fi
       - name: Executar ciclo seguro de monitoramento CoH3 -> Discord
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          INPUT_ADD_PLAYER: ${{ inputs.add_custom_player }}
+          INPUT_REMOVE_PLAYER: ${{ inputs.remove_custom_player }}
           INPUT_SEND_TEST: ${{ inputs.send_initial_test }}
           INPUT_FORCE_RANK: ${{ inputs.force_rank_scan }}
         run: |
@@ -47,6 +68,13 @@ jobs:
           if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
             echo "::error::O Secret DISCORD_WEBHOOK_URL ainda nao foi configurado em Settings -> Secrets and variables -> Actions."
             exit 1
+          fi
+          # Valores repassados com seguranca via argv para validacao numerica estrita no Python (zero shell eval)
+          if [ -n "${INPUT_ADD_PLAYER:-}" ]; then
+            python3 manage.py add-player -- "${INPUT_ADD_PLAYER}"
+          fi
+          if [ -n "${INPUT_REMOVE_PLAYER:-}" ]; then
+            python3 manage.py remove-player -- "${INPUT_REMOVE_PLAYER}"
           fi
           if [ "${INPUT_SEND_TEST:-false}" = "true" ]; then
             python3 manage.py test-discord
@@ -76,6 +104,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(state): atualizar catalogo de partidas CoH3 BR [skip ci]"
+          git commit -m "chore(state): atualizar catalogo e ranking CoH3 BR [skip ci]"
           git pull --rebase origin HEAD
           git push origin HEAD
