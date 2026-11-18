@@ -111,7 +111,7 @@ jobs:
             python3 manage.py remove-player -- "${INPUT_REMOVE_PLAYER}"
           fi
 
-          if [ "${INPUT_FORCE_RANK:-false}" = "true" ] || [ "${EVENT_NAME:-}" = "push" ]; then
+          if [ "${INPUT_FORCE_RANK:-false}" = "true" ]; then
             python3 monitor.py --once --verify-discord --force-rank-scan
           else
             python3 monitor.py --once --verify-discord

@@ -194,43 +194,19 @@ def build_match_embed_payload(
     bot_username: str = "CoH3 Brasil Monitor",
     attachment_filename: str | None = None,
 ) -> dict[str, Any]:
-    """Monta mensagem PT-BR com cabeçalho clicável (Detalhes / Replay com <url> sem preview extra)."""
+    """Monta payload limpo sem cabeçalho redundante: exibe apenas o Card gráfico PNG da partida."""
     _ = attachment_filename
     grp_obj = _normalize_match_group(match_or_group)
-    records = grp_obj["records"]
     primary = grp_obj["primary"]
 
-    safe_url = build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
-    ts = int(primary["completion_time"])
-
-    winners = [r for r in records if bool(r["win"])]
-    losers = [r for r in records if not bool(r["win"])]
-    safe_map = sanitize_discord_text(primary.get("map_clean"), max_len=40)
-    mode_badge = compact_mode(primary.get("mode"))
-
-    if winners and losers:
-        w_names = " & ".join(list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 28) for r in winners))[:3])
-        l_names = " & ".join(list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 28) for r in losers))[:3])
-        headline = f"⚔️ **DUELO BR — {w_names} vs {l_names}** (`{mode_badge}` • **{safe_map}**)"
-    else:
-        win = bool(primary["win"])
-        names = " & ".join(list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 28) for r in records))[:4])
-        res_lbl = "VITÓRIA" if win else "DERROTA"
-        badge = "🔵" if win else "🔴"
-        headline = f"{badge} **{res_lbl} — {names}** (`{mode_badge}` • **{safe_map}**)"
-
-    content = (
-        f"{headline}\n"
-        f"🕒 <t:{ts}:R>   •   "
-        f"[👁️ **Detalhes** (Ficha Completa) ↗](<{safe_url}>)   •   "
-        f"[⬇️ **Replay** (Baixar) ↗](<{safe_url}>)"
-    )
+    # Validação defensiva dos IDs mesmo sem texto no cabeçalho
+    build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
 
     return {
         "username": sanitize_discord_text(bot_username, max_len=80),
         "avatar_url": BOT_AVATAR_URL,
         "allowed_mentions": SAFE_ALLOWED_MENTIONS,
-        "content": content[:2000],
+        "content": "",
         "embeds": [],
     }
 
@@ -487,7 +463,7 @@ class DiscordWebhookClient:
             raise ValueError("URL de destino bloqueada pela política estrita do DiscordWebhookClient.")
 
         method_upper = method.upper()
-        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.1", "Accept-Encoding": "gzip"}
+        headers = {"User-Agent": "CoH3-BR-Discord-Tracker/7.2", "Accept-Encoding": "gzip"}
         if method_upper in ("GET", "DELETE"):
             body = None
         elif files:
@@ -543,6 +519,21 @@ class DiscordWebhookClient:
             "channel_id": str(data.get("channel_id", "")),
             "name": strip_unsafe_chars(data.get("name", ""))[:60],
         }
+
+    def delete_message(self, message_id: str, protected_message_id: str | None = None) -> bool:
+        """Apaga uma mensagem antiga do próprio Webhook no Discord, protegendo sempre o Painel Fixado."""
+        if not self.is_configured:
+            return False
+        clean_id = (message_id or "").strip()
+        if not clean_id or not SNOWFLAKE_ID_RE.fullmatch(clean_id):
+            return False
+        if protected_message_id and clean_id == protected_message_id.strip():
+            logger.warning("Bloqueio de segurança: tentativa de remover o Painel Fixado (%s) ignorada.", clean_id)
+            return False
+        parsed = urllib.parse.urlparse(self._webhook_url)
+        msg_url = urllib.parse.urlunparse(parsed._replace(path=f"{parsed.path.rstrip('/')}/messages/{clean_id}"))
+        status, _ = self._request("DELETE", msg_url)
+        return status in (200, 204, 404)
 
     @staticmethod
     def _append_wait_param(base_url: str) -> str:
