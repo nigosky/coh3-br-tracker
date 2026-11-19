@@ -962,14 +962,32 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
     return axis_players, allies_players
 
 
-def _compute_match_result_style(
+def _is_br_veteranos_duel(
     recs: list[dict[str, Any]],
-    primary: dict[str, Any],
-) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]:
+    axis_p: list[dict[str, Any]] | None = None,
+    allies_p: list[dict[str, Any]] | None = None,
+) -> bool:
+    """Detecta confronto direto entre brasileiros monitorados dos dois lados da partida (Eixo vs Aliados)."""
     has_winner = any(bool(r.get("win")) for r in recs)
     has_loser = any(not bool(r.get("win")) for r in recs)
     if has_winner and has_loser:
-        return (234, 179, 8, 255), (217, 119, 6, 255), "DUELO BR"
+        return True
+    if axis_p is not None and allies_p is not None:
+        axis_has_vet = any(bool(p.get("is_tracked")) or bool(p.get("is_br_roster")) for p in axis_p)
+        allies_has_vet = any(bool(p.get("is_tracked")) or bool(p.get("is_br_roster")) for p in allies_p)
+        if axis_has_vet and allies_has_vet:
+            return True
+    return False
+
+
+def _compute_match_result_style(
+    recs: list[dict[str, Any]],
+    primary: dict[str, Any],
+    axis_p: list[dict[str, Any]] | None = None,
+    allies_p: list[dict[str, Any]] | None = None,
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]:
+    if _is_br_veteranos_duel(recs, axis_p, allies_p):
+        return (245, 184, 46, 255), (217, 119, 6, 255), "DUELO BR"
 
     old_e, new_e = primary.get("old_elo"), primary.get("new_elo")
     suffix = ""
@@ -994,16 +1012,20 @@ def _draw_two_team_columns(
     allies_p: list[dict[str, Any]],
     avatar_provider: SteamAvatarProvider,
     show_delta: bool = True,
+    is_duel: bool = False,
 ) -> None:
     """Desenha as duas colunas amplas (JOGADORES DO EIXO vs JOGADORES ALIADOS) em PT-BR."""
-    draw.rectangle((8, top_bar_h, width, top_bar_h + col_hdr_h), fill=(22, 24, 30, 255))
-    draw.line([(8, top_bar_h + col_hdr_h - 1), (width, top_bar_h + col_hdr_h - 1)], fill=(46, 50, 62, 255), width=1)
+    hdr_bg = (30, 26, 18, 255) if is_duel else (22, 24, 30, 255)
+    sep_col = (96, 78, 34, 255) if is_duel else (46, 50, 62, 255)
+    draw.rectangle((8, top_bar_h, width, top_bar_h + col_hdr_h), fill=hdr_bg)
+    draw.line([(8, top_bar_h + col_hdr_h - 1), (width, top_bar_h + col_hdr_h - 1)], fill=sep_col, width=1)
     mid_x = width // 2 + 3
-    draw.line([(mid_x, top_bar_h), (mid_x, total_h)], fill=(46, 50, 62, 255), width=1)
+    draw.line([(mid_x, top_bar_h), (mid_x, total_h)], fill=sep_col, width=1)
 
+    ch_col = (253, 224, 71, 255) if is_duel else (235, 238, 244, 255)
     ch_fnt = pick_font("JOGADORES DO EIXO", size=16, bold=True, condensed=True)
-    draw.text((22, top_bar_h + 10), "JOGADORES DO EIXO", font=ch_fnt, fill=(235, 238, 244, 255))
-    draw.text((mid_x + 16, top_bar_h + 10), "JOGADORES ALIADOS", font=ch_fnt, fill=(235, 238, 244, 255))
+    draw.text((22, top_bar_h + 10), "JOGADORES DO EIXO", font=ch_fnt, fill=ch_col)
+    draw.text((mid_x + 16, top_bar_h + 10), "JOGADORES ALIADOS", font=ch_fnt, fill=ch_col)
 
     base_py = top_bar_h + col_hdr_h + 11
     for col_start_x, col_limit_x, team_list in (
@@ -1038,10 +1060,15 @@ def _draw_two_team_columns(
             img.paste(flag_im, (flag_x, py + 13), flag_im)
 
             name_x = flag_x + 30
-            is_br = country == "br" or bool(pl.get("is_tracked")) or bool(pl.get("is_br_roster"))
+            is_tracked = bool(pl.get("is_tracked"))
+            is_veterano = is_tracked or bool(pl.get("is_br_roster"))
+            is_br = country == "br" or is_veterano
 
             if is_br:
-                ring = (56, 189, 248, 250) if pl.get("is_tracked") else (34, 197, 94, 230)
+                if is_duel and is_veterano:
+                    ring = (245, 184, 46, 255)
+                else:
+                    ring = (56, 189, 248, 250) if is_tracked else (34, 197, 94, 230)
                 av_im = avatar_provider.get_circular_avatar(
                     size=40,
                     profile_id=int(pl.get("profile_id", 0)),
@@ -1052,8 +1079,6 @@ def _draw_two_team_columns(
                 img.paste(av_im, (name_x, py + 1), av_im)
                 name_x += 46
 
-            is_tracked = bool(pl.get("is_tracked"))
-            is_veterano = is_tracked or bool(pl.get("is_br_roster"))
             badge_sz = 22
             badge_reserve = (badge_sz + 8) if is_veterano else 0
             disp_alias, a_fnt = truncate_to_px(
@@ -1063,7 +1088,10 @@ def _draw_two_team_columns(
                 size=20,
                 bold=True,
             )
-            alias_color = (56, 189, 248, 255) if is_tracked else (130, 186, 254, 255)
+            if is_duel and is_veterano:
+                alias_color = (253, 230, 138, 255)
+            else:
+                alias_color = (56, 189, 248, 255) if is_tracked else (130, 186, 254, 255)
             draw.text((name_x, py + 10), disp_alias, font=a_fnt, fill=alias_color)
             if is_veterano:
                 vet_ic = get_veteranos_badge_icon(size=badge_sz)
@@ -1082,25 +1110,46 @@ def render_single_match_card_png(
     recs = grp.get("records") or [grp.get("primary") or grp]
     primary = recs[0]
     axis_p, allies_p = extract_axis_and_allies_players(grp)
+    is_duel = _is_br_veteranos_duel(recs, axis_p, allies_p)
 
+    duel_banner_h = 34 if is_duel else 0
     max_team = max(len(axis_p), len(allies_p), 1)
     top_bar_h = 90
     col_hdr_h = 38
     row_pitch = 52
-    total_h = top_bar_h + col_hdr_h + max_team * row_pitch + 22
+    total_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 22
 
-    img = Image.new("RGBA", (width, total_h), (26, 28, 34, 255))
+    bg_fill = (28, 25, 20, 255) if is_duel else (26, 28, 34, 255)
+    img = Image.new("RGBA", (width, total_h), bg_fill)
     draw = ImageDraw.Draw(img)
-    accent_col, pill_col, pill_text = _compute_match_result_style(recs, primary)
+    accent_col, pill_col, pill_text = _compute_match_result_style(recs, primary, axis_p, allies_p)
 
-    draw.rectangle((0, 0, width, top_bar_h), fill=(19, 21, 26, 255))
-    draw.line([(0, top_bar_h - 1), (width, top_bar_h - 1)], fill=(52, 56, 68, 255), width=2)
+    if is_duel:
+        draw.rectangle((0, 0, width, duel_banner_h), fill=(44, 34, 12, 255))
+        draw.line([(0, duel_banner_h - 1), (width, duel_banner_h - 1)], fill=(245, 184, 46, 230), width=2)
+        banner_txt = "CONFRONTO ENTRE VETERANOS BR  •  CLÁSSICO BRASILEIRO"
+        b_fnt = pick_font(banner_txt, size=15, bold=True, condensed=True)
+        btw = text_width(draw, banner_txt, b_fnt)
+        vet_hdr = get_veteranos_badge_icon(size=20)
+        total_bw = btw + 56
+        bx0 = int((width - total_bw) / 2)
+        img.paste(vet_hdr, (bx0, 7), vet_hdr)
+        draw.text((bx0 + 28, 8), banner_txt, font=b_fnt, fill=(253, 224, 71, 255))
+        img.paste(vet_hdr, (int(bx0 + 28 + btw + 8), 7), vet_hdr)
+
+    y_top = duel_banner_h
+    draw.rectangle((0, y_top, width, y_top + top_bar_h), fill=(24, 21, 16, 255) if is_duel else (19, 21, 26, 255))
+    draw.line(
+        [(0, y_top + top_bar_h - 1), (width, y_top + top_bar_h - 1)],
+        fill=(120, 92, 28, 255) if is_duel else (52, 56, 68, 255),
+        width=2,
+    )
     draw.rectangle((0, 0, 8, total_h), fill=accent_col)
 
     fac_icon = get_faction_icon(str(primary.get("tracked_faction", "Wehrmacht")), size=60)
-    img.paste(fac_icon, (22, 15), fac_icon)
+    img.paste(fac_icon, (22, y_top + 15), fac_icon)
 
-    pill_w, pill_h, pill_x, pill_y = 204, 42, 96, 14
+    pill_w, pill_h, pill_x, pill_y = 204, 42, 96, y_top + 14
     draw.rounded_rectangle((pill_x, pill_y, pill_x + pill_w, pill_y + pill_h), radius=21, fill=pill_col)
     pill_fnt = pick_font(pill_text, size=20, bold=True)
     ptw = text_width(draw, pill_text, pill_fnt)
@@ -1109,11 +1158,11 @@ def render_single_match_card_png(
     now_ts = int(datetime.now(tz=timezone.utc).timestamp())
     played_str = f"Data: {format_relative_played(int(primary.get('completion_time', 0)), now_ts=now_ts, live_label=True)}"
     pl_fnt = pick_font(played_str, size=15, bold=True)
-    draw.text((100, 62), played_str, font=pl_fnt, fill=(195, 202, 214, 255))
+    draw.text((100, y_top + 62), played_str, font=pl_fnt, fill=(224, 212, 182, 255) if is_duel else (195, 202, 214, 255))
 
     m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=64)
     thumb_x = width - 84
-    img.paste(m_thumb, (thumb_x, 13), m_thumb)
+    img.paste(m_thumb, (thumb_x, y_top + 13), m_thumb)
 
     map_label, m_fnt = truncate_to_px(
         draw,
@@ -1123,18 +1172,18 @@ def render_single_match_card_png(
         bold=True,
     )
     mw = text_width(draw, map_label, m_fnt)
-    draw.text((thumb_x - 16 - mw, 17), map_label, font=m_fnt, fill=(243, 244, 246, 255))
+    draw.text((thumb_x - 16 - mw, y_top + 17), map_label, font=m_fnt, fill=(253, 230, 138, 255) if is_duel else (243, 244, 246, 255))
 
     mode_dur_str = f"{format_mode_vs(str(primary.get('mode') or ''))}   •   {format_mm_ss(int(primary.get('duration_sec', 0)))}"
     md_fnt = pick_font(mode_dur_str, size=17, bold=True)
     mdw = text_width(draw, mode_dur_str, md_fnt)
-    draw.text((thumb_x - 16 - mdw, 49), mode_dur_str, font=md_fnt, fill=(176, 184, 196, 255))
+    draw.text((thumb_x - 16 - mdw, y_top + 49), mode_dur_str, font=md_fnt, fill=(214, 198, 160, 255) if is_duel else (176, 184, 196, 255))
 
     _draw_two_team_columns(
         img=img,
         draw=draw,
         width=width,
-        top_bar_h=top_bar_h,
+        top_bar_h=y_top + top_bar_h,
         col_hdr_h=col_hdr_h,
         row_pitch=row_pitch,
         total_h=total_h,
@@ -1142,9 +1191,13 @@ def render_single_match_card_png(
         allies_p=allies_p,
         avatar_provider=avatar_provider,
         show_delta=True,
+        is_duel=is_duel,
     )
 
-    draw.rectangle((0, 0, width - 1, total_h - 1), outline=(48, 52, 64, 255), width=1)
+    if is_duel:
+        draw.rectangle((0, 0, width - 1, total_h - 1), outline=(245, 184, 46, 255), width=2)
+    else:
+        draw.rectangle((0, 0, width - 1, total_h - 1), outline=(48, 52, 64, 255), width=1)
     return _encode_rgb_png(img)
 
 
@@ -1208,11 +1261,20 @@ def render_matches_table_png(
         recs = row["records"]
         primary = row["primary"]
 
-        bg_col = (30, 32, 38, 255) if idx % 2 == 0 else (25, 27, 33, 255)
+        is_row_duel = _is_br_veteranos_duel(recs, row["axis"], row["allies"])
+        bg_col = (
+            (38, 33, 21, 255)
+            if is_row_duel
+            else ((30, 32, 38, 255) if idx % 2 == 0 else (25, 27, 33, 255))
+        )
         draw.rectangle((0, y, width, y + rh), fill=bg_col)
-        draw.line([(0, y + rh - 1), (width, y + rh - 1)], fill=(46, 49, 58, 255), width=1)
+        draw.line(
+            [(0, y + rh - 1), (width, y + rh - 1)],
+            fill=(82, 66, 28, 255) if is_row_duel else (46, 49, 58, 255),
+            width=1,
+        )
 
-        accent_col, pill_col, pill_text = _compute_match_result_style(recs, primary)
+        accent_col, pill_col, pill_text = _compute_match_result_style(recs, primary, row["axis"], row["allies"])
         draw.rectangle((0, y + 5, 6, y + rh - 5), fill=accent_col)
 
         fac_icon = get_faction_icon(str(primary.get("tracked_faction", "Wehrmacht")), size=50)
@@ -1259,10 +1321,16 @@ def render_matches_table_png(
                 img.paste(flag_im, (col_x + 104, py + 8), flag_im)
 
                 name_x = col_x + 130
-                is_br = country == "br" or bool(pl.get("is_tracked")) or bool(pl.get("is_br_roster"))
+                is_tracked = bool(pl.get("is_tracked"))
+                is_veterano = is_tracked or bool(pl.get("is_br_roster"))
+                is_br = country == "br" or is_veterano
 
                 if is_br:
-                    ring = (56, 189, 248, 245) if pl.get("is_tracked") else (34, 197, 94, 220)
+                    ring = (
+                        (245, 184, 46, 250)
+                        if (is_row_duel and is_veterano)
+                        else ((56, 189, 248, 245) if is_tracked else (34, 197, 94, 220))
+                    )
                     av_im = avatar_provider.get_circular_avatar(
                         size=27,
                         profile_id=int(pl.get("profile_id", 0)),
@@ -1273,8 +1341,6 @@ def render_matches_table_png(
                     img.paste(av_im, (name_x, py + 1), av_im)
                     name_x += 32
 
-                is_tracked = bool(pl.get("is_tracked"))
-                is_veterano = is_tracked or bool(pl.get("is_br_roster"))
                 badge_sz = 17
                 badge_reserve = (badge_sz + 6) if is_veterano else 0
                 disp_alias, a_fnt = truncate_to_px(
@@ -1284,7 +1350,11 @@ def render_matches_table_png(
                     size=15,
                     bold=True,
                 )
-                alias_color = (56, 189, 248, 255) if is_tracked else (112, 172, 250, 255)
+                alias_color = (
+                    (253, 230, 138, 255)
+                    if (is_row_duel and is_veterano)
+                    else ((56, 189, 248, 255) if is_tracked else (112, 172, 250, 255))
+                )
                 draw.text((name_x, py + 5), disp_alias, font=a_fnt, fill=alias_color)
                 if is_veterano:
                     vet_ic = get_veteranos_badge_icon(size=badge_sz)
@@ -1568,3 +1638,276 @@ def render_ranking_movement_card_png(
 
     draw.rectangle((0, 0, width - 1, total_h - 1), outline=(56, 52, 42, 255), width=1)
     return _encode_rgb_png(img)
+
+
+# ---------------------------------------------------------------------------
+# RENDERIZADOR 4: Card Tático de Resumo Semanal dos Veteranos BR (PT-BR, 860px)
+# ---------------------------------------------------------------------------
+def render_weekly_summary_card_png(
+    weekly_stats: dict[str, Any],
+    avatar_provider: SteamAvatarProvider,
+    max_rows: int = 8,
+) -> bytes:
+    width = 860
+    header_h = 62
+    kpi_grid_h = 166
+    col_hdr_h = 34
+    row_h = 40
+
+    leaderboard = list(weekly_stats.get("leaderboard") or [])[:max_rows]
+    total_h = header_h + kpi_grid_h + col_hdr_h + max(1, len(leaderboard)) * row_h + 10
+
+    img = Image.new("RGBA", (width, total_h), (18, 20, 25, 255))
+    draw = ImageDraw.Draw(img)
+
+    # Cabeçalho tático dourado
+    draw.rectangle((0, 0, width, header_h), fill=(26, 22, 16, 255))
+    draw.rectangle((0, 0, 8, total_h), fill=(245, 184, 46, 255))
+    draw.line([(0, header_h - 1), (width, header_h - 1)], fill=(234, 179, 8, 230), width=2)
+
+    hdr_vet = get_veteranos_badge_icon(size=28)
+    img.paste(hdr_vet, (22, 17), hdr_vet)
+
+    title_str = "RESUMO SEMANAL  •  VETERANOS COH3 BRASIL"
+    t_fnt = pick_font(title_str, size=20, bold=True, condensed=True)
+    draw.text((58, 10), title_str, font=t_fnt, fill=(245, 184, 46, 255))
+
+    since_ts = int(weekly_stats.get("since_ts") or 0)
+    until_ts = int(weekly_stats.get("until_ts") or int(time.time()))
+    d_start = datetime.fromtimestamp(since_ts, tz=BRT_TZ).strftime("%d/%m") if since_ts > 0 else "—"
+    d_end = datetime.fromtimestamp(until_ts, tz=BRT_TZ).strftime("%d/%m/%Y")
+    uniq_games = int(weekly_stats.get("unique_matches_count", 0))
+    active_cnt = int(weekly_stats.get("active_players_with_games", 0))
+    duels_cnt = int(weekly_stats.get("br_duels_count", 0))
+
+    sub_str = (
+        f"Período: {d_start} a {d_end}  •  {uniq_games} partidas únicas  •  "
+        f"{active_cnt} monitorados em ação  •  {duels_cnt} clássico(s) BR"
+    )
+    sub_fnt = pick_font(sub_str, size=13, bold=True)
+    draw.text((58, 36), sub_str, font=sub_fnt, fill=(208, 200, 184, 255))
+
+    # Grade 2x2 de Destaques da Semana (KPI Boxes)
+    most_active = weekly_stats.get("most_active_player")
+    top_climber = weekly_stats.get("top_elo_climber")
+    top_streak = weekly_stats.get("top_streak_player")
+    top_wr = weekly_stats.get("top_winrate_player")
+    top_map = weekly_stats.get("top_map")
+    top_fac = weekly_stats.get("top_faction")
+
+    def _draw_kpi_box(
+        bx: int,
+        by: int,
+        bw: int,
+        bh: int,
+        kicker: str,
+        main_txt: str,
+        detail_txt: str,
+        accent_rgb: tuple[int, int, int, int],
+        player_obj: dict[str, Any] | None = None,
+    ) -> None:
+        draw.rounded_rectangle((bx, by, bx + bw, by + bh), radius=8, fill=(25, 28, 35, 255), outline=(52, 56, 68, 255), width=1)
+        draw.rectangle((bx, by + 8, bx + 4, by + bh - 8), fill=accent_rgb)
+        k_fnt = pick_font(kicker, size=12, bold=True, condensed=True)
+        draw.text((bx + 14, by + 7), kicker, font=k_fnt, fill=accent_rgb)
+
+        tx = bx + 14
+        if player_obj:
+            av = avatar_provider.get_circular_avatar(
+                size=34,
+                profile_id=int(player_obj.get("profile_id", 0)),
+                steam_id=str(player_obj.get("steam_id") or ""),
+                alias=str(player_obj.get("alias") or "BR"),
+                ring_color=accent_rgb,
+            )
+            img.paste(av, (tx, by + 26), av)
+            tx += 42
+
+        badge_w = 22 if player_obj else 0
+        m_disp, m_fnt = truncate_to_px(draw, main_txt, max_px=max(60, (bx + bw - 12) - tx - badge_w), size=17, bold=True)
+        draw.text((tx, by + 26), m_disp, font=m_fnt, fill=(243, 244, 246, 255))
+        if player_obj:
+            vet_sm = get_veteranos_badge_icon(size=17)
+            img.paste(vet_sm, (int(tx + text_width(draw, m_disp, m_fnt) + 5), by + 27), vet_sm)
+
+        d_disp, d_fnt = truncate_to_px(draw, detail_txt, max_px=max(60, (bx + bw - 12) - tx), size=13, bold=True)
+        draw.text((tx, by + 48), d_disp, font=d_fnt, fill=(182, 190, 204, 255))
+
+    box_w = 402
+    box_h = 68
+    left_x = 22
+    right_x = 438
+    row1_y = header_h + 10
+    row2_y = row1_y + box_h + 10
+
+    if most_active:
+        _draw_kpi_box(
+            left_x,
+            row1_y,
+            box_w,
+            box_h,
+            "MAIS ATIVO DA SEMANA",
+            str(most_active["alias"]),
+            f"{most_active['games']} jogos  •  {most_active['wins']}V - {most_active['losses']}D ({int(round(most_active['win_rate']))}%)",
+            (56, 189, 248, 255),
+            player_obj=most_active,
+        )
+    else:
+        _draw_kpi_box(left_x, row1_y, box_w, box_h, "MAIS ATIVO DA SEMANA", "Sem jogos", "Aguardando partidas", (56, 189, 248, 255))
+
+    if top_climber:
+        _draw_kpi_box(
+            right_x,
+            row1_y,
+            box_w,
+            box_h,
+            "MAIOR SUBIDA DE ELO (SALDO 7 DIAS)",
+            str(top_climber["alias"]),
+            f"+{top_climber['net_elo_delta']} ELO líquido  •  Pico {top_climber['peak_new_elo']} ELO",
+            (74, 222, 128, 255),
+            player_obj=top_climber,
+        )
+    else:
+        _draw_kpi_box(right_x, row1_y, box_w, box_h, "MAIOR SUBIDA DE ELO (SALDO 7 DIAS)", "Estável", "Sem saldo positivo registrado", (74, 222, 128, 255))
+
+    if top_streak:
+        _draw_kpi_box(
+            left_x,
+            row2_y,
+            box_w,
+            box_h,
+            "MAIOR SEQUÊNCIA DE VITÓRIAS",
+            str(top_streak["alias"]),
+            f"{top_streak['best_win_streak']} vitórias seguidas  •  {int(round(top_streak['win_rate']))}% de taxa",
+            (245, 184, 46, 255),
+            player_obj=top_streak,
+        )
+    elif top_wr:
+        _draw_kpi_box(
+            left_x,
+            row2_y,
+            box_w,
+            box_h,
+            "MELHOR APROVEITAMENTO (MÍN. 5 JOGOS)",
+            str(top_wr["alias"]),
+            f"{int(round(top_wr['win_rate']))}% de vitórias ({top_wr['wins']}V - {top_wr['losses']}D)",
+            (245, 184, 46, 255),
+            player_obj=top_wr,
+        )
+    else:
+        _draw_kpi_box(left_x, row2_y, box_w, box_h, "SEQUÊNCIA DE VITÓRIAS", "Em disputa", "Mínimo de 2 vitórias seguidas", (245, 184, 46, 255))
+
+    map_txt = f"{top_map['map_clean']} ({top_map['games']}x)" if top_map else "Sem mapa dominante"
+    fac_txt = (
+        f"Facção favorita: {top_faction_pt(top_fac['faction_short'])} ({top_fac['picks']}x • {top_fac['win_rate']}% vit.)"
+        if top_fac
+        else f"Clássicos BR na semana: {duels_cnt}"
+    )
+    _draw_kpi_box(
+        right_x,
+        row2_y,
+        box_w,
+        box_h,
+        "MAPA MAIS JOGADO  •  META BR",
+        map_txt,
+        fac_txt,
+        (251, 146, 60, 255),
+        player_obj=None,
+    )
+
+    # Cabeçalho da Tabela Top Jogadores da Semana
+    y_tbl = header_h + kpi_grid_h
+    draw.rectangle((8, y_tbl, width, y_tbl + col_hdr_h), fill=(24, 22, 18, 255))
+    draw.line([(8, y_tbl), (width, y_tbl)], fill=(52, 56, 68, 255), width=1)
+    draw.line([(14, y_tbl + col_hdr_h - 1), (width - 14, y_tbl + col_hdr_h - 1)], fill=(234, 179, 8, 230), width=2)
+
+    hdr_fnt = pick_font("JOGADOR MONITORADO", size=14, bold=True, condensed=True)
+    gold_col = (245, 184, 46, 255)
+    for lbl, cx, align in (
+        ("#", 38, "center"),
+        ("TOP ATIVIDADE (7 DIAS)", 68, "left"),
+        ("JOGOS", 464, "right"),
+        ("VIT. / DER.", 578, "right"),
+        ("TAXA", 654, "right"),
+        ("SEQ.", 734, "right"),
+        ("SALDO ELO", 842, "right"),
+    ):
+        lw = text_width(draw, lbl, hdr_fnt)
+        tx = (cx - lw / 2) if align == "center" else ((cx - lw) if align == "right" else cx)
+        draw.text((tx, y_tbl + 8), lbl, font=hdr_fnt, fill=gold_col)
+
+    y = y_tbl + col_hdr_h
+    if not leaderboard:
+        efnt = pick_font("Nenhuma partida registrada nos últimos 7 dias.", size=15, bold=False)
+        draw.text((250, y + 10), "Nenhuma partida registrada nos últimos 7 dias.", font=efnt, fill=(156, 163, 175, 255))
+    else:
+        num_fnt = pick_font("100%", size=16, bold=True, condensed=True)
+        row_vet = get_veteranos_badge_icon(size=18)
+        flag_br = get_country_flag("br", w=20, h=14)
+        for idx, pl in enumerate(leaderboard, start=1):
+            r_bg = (20, 23, 29, 255) if idx % 2 == 1 else (25, 28, 36, 255)
+            draw.rectangle((8, y, width, y + row_h), fill=r_bg)
+            draw.line([(16, y + row_h - 1), (width - 14, y + row_h - 1)], fill=(34, 38, 46, 255), width=1)
+
+            rk_col = (250, 204, 21, 255) if idx == 1 else (229, 231, 235, 255)
+            rk_str = str(idx)
+            rkw = text_width(draw, rk_str, num_fnt)
+            draw.text((38 - rkw / 2, y + 10), rk_str, font=num_fnt, fill=rk_col)
+
+            av_im = avatar_provider.get_circular_avatar(
+                size=30,
+                profile_id=int(pl.get("profile_id", 0)),
+                steam_id=str(pl.get("steam_id") or ""),
+                alias=str(pl.get("alias") or "BR"),
+                ring_color=(245, 184, 46, 245),
+            )
+            img.paste(av_im, (68, y + 5), av_im)
+            img.paste(flag_br, (104, y + 13), flag_br)
+
+            disp_alias, a_fnt = truncate_to_px(draw, str(pl.get("alias") or ""), max_px=258, size=16, bold=True)
+            draw.text((130, y + 10), disp_alias, font=a_fnt, fill=(253, 230, 138, 255))
+            bx = int(130 + text_width(draw, disp_alias, a_fnt) + 6)
+            img.paste(row_vet, (bx, y + 10), row_vet)
+
+            games_s = str(int(pl.get("games", 0)))
+            wl_s = f"{int(pl.get('wins', 0))}V - {int(pl.get('losses', 0))}D"
+            wr_s = f"{int(round(float(pl.get('win_rate', 0.0))))}%"
+            st_val = int(pl.get("best_win_streak", 0))
+            st_s = f"+{st_val}" if st_val > 0 else "0"
+
+            net_d = int(pl.get("net_elo_delta", 0))
+            has_rk = int(pl.get("ranked_games", 0)) > 0
+            if not has_rk:
+                d_s, d_col = "S/R", (156, 163, 175, 255)
+            elif net_d > 0:
+                d_s, d_col = f"+{net_d}", (74, 222, 128, 255)
+            elif net_d < 0:
+                d_s, d_col = f"{net_d}", (248, 113, 113, 255)
+            else:
+                d_s, d_col = "0", (209, 213, 219, 255)
+
+            for val_txt, rx, col in (
+                (games_s, 464, (243, 244, 246, 255)),
+                (wl_s, 578, (229, 231, 235, 255)),
+                (wr_s, 654, (243, 244, 246, 255)),
+                (st_s, 734, (74, 222, 128, 255) if st_val >= 2 else (209, 213, 219, 255)),
+                (d_s, 842, d_col),
+            ):
+                vw = text_width(draw, val_txt, num_fnt)
+                draw.text((rx - vw, y + 10), val_txt, font=num_fnt, fill=col)
+
+            y += row_h
+
+    draw.rectangle((0, 0, width - 1, total_h - 1), outline=(92, 74, 30, 255), width=2)
+    return _encode_rgb_png(img)
+
+
+def top_faction_pt(short_code: str) -> str:
+    mapping = {
+        "Wehr": "Wehrmacht",
+        "DAK": "Afrikakorps",
+        "USF": "Forças dos EUA",
+        "UKF": "Forças Britânicas",
+    }
+    return mapping.get(short_code, short_code or "N/D")
+

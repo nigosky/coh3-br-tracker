@@ -19,6 +19,7 @@ from card_renderer import (
     render_matches_table_png,
     render_ranking_movement_card_png,
     render_ranking_table_png,
+    render_weekly_summary_card_png,
 )
 from security import (
     ALLOWED_DISCORD_HOSTS,
@@ -65,6 +66,7 @@ __all__ = [
     "build_ranking_movement_payload",
     "build_safe_coh3stats_match_url",
     "build_summary_list_payload",
+    "build_weekly_summary_payload",
     "compact_mode",
     "format_duration",
     "format_elo_compact",
@@ -250,6 +252,21 @@ def build_ranking_movement_payload(
         "avatar_url": BOT_AVATAR_URL,
         "allowed_mentions": SAFE_ALLOWED_MENTIONS,
         "content": content[:2000],
+        "embeds": [],
+    }
+
+
+def build_weekly_summary_payload(
+    weekly_stats: dict[str, Any],
+    bot_username: str = "CoH3 Brasil Monitor",
+) -> dict[str, Any]:
+    """Monta payload limpo sem texto redundante: o Card gráfico PNG carrega todos os destaques semanais."""
+    _ = weekly_stats
+    return {
+        "username": sanitize_discord_text(bot_username, max_len=80),
+        "avatar_url": BOT_AVATAR_URL,
+        "allowed_mentions": SAFE_ALLOWED_MENTIONS,
+        "content": "",
         "embeds": [],
     }
 
@@ -563,6 +580,15 @@ class DiscordWebhookClient:
         fname = f"ranking_move_{int(time.time())}.png"
         png_bytes = render_ranking_movement_card_png(movements_by_mode, avatar_provider=self.get_avatar_provider())
         payload = build_ranking_movement_payload(movements_by_mode, bot_username=self.bot_username)
+        _, data = self._request("POST", self._append_wait_param(self._webhook_url), payload, files=[(fname, png_bytes, "image/png")])
+        return self._extract_snowflake(data)
+
+    def send_weekly_summary_card(self, weekly_stats: dict[str, Any]) -> str | None:
+        if not self.is_configured or int((weekly_stats or {}).get("unique_matches_count", 0)) <= 0:
+            return None
+        fname = f"weekly_summary_{int(time.time())}.png"
+        png_bytes = render_weekly_summary_card_png(weekly_stats, avatar_provider=self.get_avatar_provider())
+        payload = build_weekly_summary_payload(weekly_stats, bot_username=self.bot_username)
         _, data = self._request("POST", self._append_wait_param(self._webhook_url), payload, files=[(fname, png_bytes, "image/png")])
         return self._extract_snowflake(data)
 

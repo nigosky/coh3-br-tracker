@@ -41,6 +41,11 @@ on:
         required: false
         default: false
         type: boolean
+      force_weekly_summary:
+        description: "Publicar Card de Resumo Semanal dos Veteranos BR agora?"
+        required: false
+        default: false
+        type: boolean
       reset_discord_channel:
         description: "Limpar mensagens antigas do bot no canal Discord e recomecar do zero?"
         required: false
@@ -91,6 +96,7 @@ jobs:
           INPUT_REMOVE_PLAYER: ${{ inputs.remove_custom_player }}
           INPUT_SEND_TEST: ${{ inputs.send_initial_test }}
           INPUT_FORCE_RANK: ${{ inputs.force_rank_scan }}
+          INPUT_FORCE_WEEKLY: ${{ inputs.force_weekly_summary }}
           INPUT_RESET_DISCORD: ${{ inputs.reset_discord_channel }}
         run: |
           set -euo pipefail
@@ -121,6 +127,9 @@ jobs:
           MONITOR_ARGS=(--once --verify-discord)
           if [ "${INPUT_FORCE_RANK:-false}" = "true" ]; then
             MONITOR_ARGS+=(--force-rank-scan)
+          fi
+          if [ "${INPUT_FORCE_WEEKLY:-false}" = "true" ]; then
+            MONITOR_ARGS+=(--force-weekly-summary)
           fi
           if [ "${INPUT_RESET_DISCORD:-false}" = "true" ]; then
             MONITOR_ARGS+=(--reset-discord-channel)

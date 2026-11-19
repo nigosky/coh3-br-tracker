@@ -759,3 +759,254 @@ class MatchDatabase:
                 """,
                 (key, value),
             )
+
+    def get_weekly_summary_stats(
+        self,
+        now_ts: int | None = None,
+        window_days: int = 7,
+        merged_map: dict[int, int] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Agrega estatísticas dos últimos `window_days` dias (padrão 7 dias) dos jogadores monitorados ativos,
+        fundindo contas secundárias vinculadas (ex.: gabe44arg -> É o Gabe) para o Resumo Semanal.
+        """
+        now = int(now_ts) if now_ts is not None else int(time.time())
+        days = max(1, min(int(window_days), 30))
+        since_ts = now - days * 86400
+        merge_lookup = {int(k): int(v) for k, v in (merged_map or {}).items() if int(k) > 0 and int(v) > 0}
+
+        conn = self._connect()
+        player_meta_rows = conn.execute(
+            "SELECT profile_id, alias, original_alias, steam_id FROM tracked_players WHERE active = 1"
+        ).fetchall()
+        meta_by_pid: dict[int, dict[str, Any]] = {
+            int(r["profile_id"]): {
+                "profile_id": int(r["profile_id"]),
+                "alias": str(r["alias"] or r["original_alias"] or f"Jogador {r['profile_id']}"),
+                "steam_id": str(r["steam_id"] or ""),
+            }
+            for r in player_meta_rows
+        }
+
+        rows = conn.execute(
+            """
+            SELECT rm.match_id, rm.tracked_profile_id, rm.tracked_alias, rm.tracked_steam_id,
+                   rm.tracked_faction_short, rm.win, rm.mode, rm.map_clean,
+                   rm.completion_time, rm.duration_sec, rm.old_elo, rm.new_elo,
+                   COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_alias,
+                   COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.completion_time >= ?
+              AND rm.completion_time <= ?
+            ORDER BY rm.completion_time ASC, rm.match_id ASC
+            """,
+            (since_ts, now + 3600),
+        ).fetchall()
+
+        unique_matches: set[int] = set()
+        match_sides_seen: dict[int, set[bool]] = {}
+        map_counts: dict[str, list[int]] = {}       # map_clean -> [unique_games, wins]
+        faction_counts: dict[str, list[int]] = {}   # faction_short -> [rows, wins]
+        per_player: dict[int, dict[str, Any]] = {}
+        seen_canonical_match: set[tuple[int, int]] = set()
+        seen_map_match: set[tuple[str, int]] = set()
+
+        for r in rows:
+            mid = int(r["match_id"])
+            raw_pid = int(r["tracked_profile_id"])
+            canon_pid = merge_lookup.get(raw_pid, raw_pid)
+            win_bool = bool(r["win"])
+
+            unique_matches.add(mid)
+            match_sides_seen.setdefault(mid, set()).add(win_bool)
+
+            fac = str(r["tracked_faction_short"] or "N/D")
+            f_slot = faction_counts.setdefault(fac, [0, 0])
+            f_slot[0] += 1
+            if win_bool:
+                f_slot[1] += 1
+
+            m_clean = str(r["map_clean"] or "Mapa Desconhecido")
+            m_slot = map_counts.setdefault(m_clean, [0, 0])
+            if (m_clean, mid) not in seen_map_match:
+                seen_map_match.add((m_clean, mid))
+                m_slot[0] += 1
+            if win_bool:
+                m_slot[1] += 1
+
+            if (canon_pid, mid) in seen_canonical_match:
+                continue
+            seen_canonical_match.add((canon_pid, mid))
+
+            meta = meta_by_pid.get(canon_pid) or {
+                "profile_id": canon_pid,
+                "alias": str(r["resolved_alias"] or f"Jogador {canon_pid}"),
+                "steam_id": str(r["resolved_steam_id"] or ""),
+            }
+            rec = per_player.setdefault(
+                canon_pid,
+                {
+                    "profile_id": canon_pid,
+                    "alias": meta["alias"],
+                    "steam_id": meta["steam_id"],
+                    "games": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "net_elo_delta": 0,
+                    "ranked_games": 0,
+                    "cur_streak": 0,
+                    "best_win_streak": 0,
+                    "peak_new_elo": 0,
+                },
+            )
+            rec["games"] += 1
+            if win_bool:
+                rec["wins"] += 1
+                rec["cur_streak"] += 1
+                if rec["cur_streak"] > rec["best_win_streak"]:
+                    rec["best_win_streak"] = rec["cur_streak"]
+            else:
+                rec["losses"] += 1
+                rec["cur_streak"] = 0
+
+            old_e = r["old_elo"]
+            new_e = r["new_elo"]
+            if old_e is not None and new_e is not None and int(old_e) > 0 and int(new_e) > 0:
+                rec["net_elo_delta"] += int(new_e) - int(old_e)
+                rec["ranked_games"] += 1
+                if int(new_e) > rec["peak_new_elo"]:
+                    rec["peak_new_elo"] = int(new_e)
+
+        players_list: list[dict[str, Any]] = []
+        for p in per_player.values():
+            g = int(p["games"])
+            w = int(p["wins"])
+            p["win_rate"] = round((w * 100.0) / g, 1) if g > 0 else 0.0
+            players_list.append(p)
+
+        players_by_activity = sorted(
+            players_list,
+            key=lambda x: (-x["games"], -x["wins"], -x["net_elo_delta"], x["alias"].lower()),
+        )
+
+        elo_climbers = sorted(
+            [p for p in players_list if p["ranked_games"] > 0 and p["net_elo_delta"] > 0],
+            key=lambda x: (-x["net_elo_delta"], -x["wins"], -x["win_rate"]),
+        )
+        top_elo_climber = elo_climbers[0] if elo_climbers else None
+
+        streak_leaders = sorted(
+            [p for p in players_list if p["best_win_streak"] >= 2],
+            key=lambda x: (-x["best_win_streak"], -x["wins"], -x["win_rate"]),
+        )
+        top_streak_player = streak_leaders[0] if streak_leaders else None
+
+        winrate_leaders = sorted(
+            [p for p in players_list if p["games"] >= 5],
+            key=lambda x: (-x["win_rate"], -x["wins"], -x["net_elo_delta"]),
+        )
+        top_winrate_player = winrate_leaders[0] if winrate_leaders else None
+
+        top_map = None
+        if map_counts:
+            best_m_name, best_m_vals = max(map_counts.items(), key=lambda kv: (kv[1][0], kv[1][1]))
+            top_map = {"map_clean": best_m_name, "games": best_m_vals[0], "br_wins": best_m_vals[1]}
+
+        top_faction = None
+        if faction_counts:
+            best_f_name, best_f_vals = max(faction_counts.items(), key=lambda kv: (kv[1][0], kv[1][1]))
+            f_wr = int(round((best_f_vals[1] * 100.0) / best_f_vals[0])) if best_f_vals[0] > 0 else 0
+            top_faction = {
+                "faction_short": best_f_name,
+                "picks": best_f_vals[0],
+                "wins": best_f_vals[1],
+                "win_rate": f_wr,
+            }
+
+        br_duels_count = sum(1 for sides in match_sides_seen.values() if True in sides and False in sides)
+
+        return {
+            "since_ts": since_ts,
+            "until_ts": now,
+            "window_days": days,
+            "unique_matches_count": len(unique_matches),
+            "active_players_with_games": len(players_list),
+            "br_duels_count": br_duels_count,
+            "most_active_player": players_by_activity[0] if players_by_activity else None,
+            "top_elo_climber": top_elo_climber,
+            "top_streak_player": top_streak_player,
+            "top_winrate_player": top_winrate_player,
+            "top_map": top_map,
+            "top_faction": top_faction,
+            "leaderboard": players_by_activity[:10],
+        }
+
+    def run_periodic_maintenance(
+        self,
+        now_ts: int | None = None,
+        json_retention_days: int = 30,
+        ephemeral_retention_days: int = 30,
+        avatar_retention_days: int = 30,
+    ) -> dict[str, int]:
+        """
+        Compactação inteligente e segura do SQLite (preservando 100% da deduplicação `match_id` por anos):
+        1. Esvazia `allies_json`, `opponents_json` e `counters_json` de partidas já encerradas há mais de `json_retention_days`
+           que não estejam `PENDING` (mantém todos os IDs, resultados, ELOs e timestamps intactos para estatísticas e anti-duplicação).
+        2. Remove avatares expirados e registros efêmeros antigos já podados.
+        3. Executa `VACUUM` + `PRAGMA optimize` desfragmentando o arquivo `.db` versionado no Git.
+        """
+        now = int(now_ts) if now_ts is not None else int(time.time())
+        json_cutoff = now - max(14, int(json_retention_days)) * 86400
+        eph_cutoff = now - max(7, int(ephemeral_retention_days)) * 86400
+
+        size_before = self.db_path.stat().st_size if self.db_path.is_file() else 0
+        conn = self._connect()
+
+        with conn:
+            cur_json = conn.execute(
+                """
+                UPDATE recorded_matches
+                SET allies_json = '[]',
+                    opponents_json = '[]',
+                    counters_json = '{}'
+                WHERE completion_time < ?
+                  AND COALESCE(discord_message_id, '') != ?
+                  AND (allies_json != '[]' OR opponents_json != '[]' OR counters_json != '{}')
+                """,
+                (json_cutoff, PENDING_DISCORD_MARKER),
+            )
+            compacted_rows = int(cur_json.rowcount or 0)
+
+            cur_eph = conn.execute(
+                """
+                DELETE FROM discord_ephemeral_messages
+                WHERE pruned_at IS NOT NULL
+                  AND pruned_at < ?
+                """,
+                (eph_cutoff,),
+            )
+            purged_ephemeral = int(cur_eph.rowcount or 0)
+
+        purged_avatars = int(self.prune_expired_avatars(max_age_sec=max(7, int(avatar_retention_days)) * 86400) or 0)
+
+        # VACUUM exige estar fora de transação explícita em SQLite
+        old_iso = conn.isolation_level
+        try:
+            conn.isolation_level = None
+            conn.execute("VACUUM")
+            conn.execute("PRAGMA optimize")
+        finally:
+            conn.isolation_level = old_iso
+
+        size_after = self.db_path.stat().st_size if self.db_path.is_file() else 0
+        return {
+            "compacted_match_rows": compacted_rows,
+            "purged_ephemeral_rows": purged_ephemeral,
+            "purged_avatars": purged_avatars,
+            "bytes_before": size_before,
+            "bytes_after": size_after,
+            "bytes_saved": max(0, size_before - size_after),
+        }
+
