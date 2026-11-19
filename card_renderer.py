@@ -763,17 +763,28 @@ def get_veteranos_badge_icon(size: int = 20) -> Image.Image:
 # ---------------------------------------------------------------------------
 # Utilitários de formatação de tempo, modo e equipes (Axis vs Allies)
 # ---------------------------------------------------------------------------
+PT_BR_MONTH_ABBR: dict[int, str] = {
+    1: "jan",
+    2: "fev",
+    3: "mar",
+    4: "abr",
+    5: "mai",
+    6: "jun",
+    7: "jul",
+    8: "ago",
+    9: "set",
+    10: "out",
+    11: "nov",
+    12: "dez",
+}
+
+
 def format_relative_played(ts: int, now_ts: int | None = None, live_label: bool = False) -> str:
     now = now_ts or int(datetime.now(tz=timezone.utc).timestamp())
     if live_label:
-        dt = datetime.fromtimestamp(ts, tz=BRT_TZ)
-        now_brt = datetime.fromtimestamp(now, tz=BRT_TZ)
-        day_diff = (now_brt.date() - dt.date()).days
-        if day_diff == 0:
-            return f"Hoje às {dt.strftime('%H:%M')}"
-        if day_diff == 1:
-            return f"Ontem às {dt.strftime('%H:%M')}"
-        return f"{dt.strftime('%d/%m')} às {dt.strftime('%H:%M')}"
+        dt = datetime.fromtimestamp(int(ts), tz=BRT_TZ)
+        day_month = f"{dt.day:02d}{PT_BR_MONTH_ABBR[dt.month]}"
+        return f"{day_month} às {dt.strftime('%H:%M')}"
 
     diff = max(0, now - int(ts))
     if diff < 3600:
