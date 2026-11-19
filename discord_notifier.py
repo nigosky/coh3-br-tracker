@@ -21,6 +21,7 @@ from card_renderer import (
     render_ranking_table_png,
     render_weekly_summary_card_png,
 )
+from relic_api import clean_map_name
 from security import (
     ALLOWED_DISCORD_HOSTS,
     build_no_redirect_https_opener,
@@ -343,7 +344,9 @@ def build_summary_list_payload(
         safe_url = build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
         uniq_names = list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 20) for r in recs))[:2]
         names = " + ".join(uniq_names)
-        safe_map = sanitize_discord_text(primary.get("map_clean"), 22)
+        raw_map = str(primary.get("map_raw") or "").strip()
+        disp_map = clean_map_name(raw_map) if raw_map else str(primary.get("map_clean") or "")
+        safe_map = sanitize_discord_text(disp_map, 26)
         quick_links.append(f"`#{row_idx}` **{names}** ({safe_map}) ➔ [👁️ Detalhes / ⬇️ Replay ↗]({safe_url})")
 
     links_desc = (

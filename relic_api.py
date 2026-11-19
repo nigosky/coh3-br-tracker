@@ -129,8 +129,97 @@ STUDY_MODE_GROUPS: dict[str, tuple[str, ...]] = {
     "Team Games": ("3v3", "4v4"),
 }
 
+MAP_PLAYER_PREFIX_RE = re.compile(r"^\s*\(\d+\)\s*")
 MAP_SIZE_SUFFIX_RE = re.compile(r"_(2p|4p|6p|8p)(?=_|$)", re.IGNORECASE)
-MAP_MK_SUFFIX_RE = re.compile(r"_(mkii|mkiii|mkv)(?=_|$)", re.IGNORECASE)
+MAP_MK_SUFFIX_RE = re.compile(r"_(mkii|mkiii|mkiv|mkv|redux|mm)(?=_|$)", re.IGNORECASE)
+_MAP_LOWERCASE_WORDS: frozenset[str] = frozenset({"in", "the", "of", "to", "and", "el", "della", "de", "da", "do", "du"})
+
+# Nomes oficiais localizados dos mapas do Company of Heroes 3 (fonte: coh3stats.com / cohstats/coh3-data Patch 3.0.0)
+OFFICIAL_COH3_MAP_NAMES: dict[str, str] = {
+    "across_the_rhine_6p": "Across the Savio",
+    "alamein_4p": "El Alamein",
+    "ancona_railyard_2p": "Ancona Railyard",
+    "angoville_farms_2p": "Angoville Farms",
+    "benghazi_6p": "Benghazi",
+    "black_gold_8p": "Black Gold",
+    "bologna_2p": "Bologna",
+    "butcher_and_bolt_2p": "Butcher & Bolt",
+    "castello_8p": "Castello della Nebbia",
+    "catania_crossing_6p": "Catania Crossing",
+    "cliff_crossing_2p": "Taranto Coastline",
+    "crossing_in_the_woods_2p": "Crossing in the Woods",
+    "crossing_in_the_woods_4p": "Crossing in the Woods",
+    "day_101_4p": "Day 101",
+    "desert_airfield_6p_mkii": "Gazala Landing Ground",
+    "desert_village_2p_mkiii": "Road to Tunis",
+    "djebel_2p": "Djebel Pass",
+    "djebel_4p": "Djebel Pass",
+    "egletons_2p": "Égletons",
+    "eindhoven": "Operation Eindhoven",
+    "elst_outskirts_4p": "Elst Outskirts",
+    "faymonville": "Faymonville",
+    "foggia_airfield_winter_6p": "Foggia Airfield",
+    "gabes_gap_6p": "Gabès Gap",
+    "gardens_2p": "Gardens",
+    "gardens_2p_mm": "Gardens",
+    "gothic_line_8p": "The Gothic Line",
+    "halfa_8p": "Alam el Halfa",
+    "hill_400_8p": "Hill 400",
+    "hoff_dam": "Dam Busters",
+    "hoff_desert": "Qattara Depression",
+    "hoff_forest": "The Alpine Wall",
+    "hoff_gela_outskirts": "Gela Beachhead",
+    "hoff_sousse_wetlands": "Fall of Sousse",
+    "hoff_torrente": "Torrente Ruins",
+    "industrial_railyard_6p_mkii": "L'Aquila",
+    "langres_2p": "Langres",
+    "langres_winter_2p": "Langres Winter",
+    "longstop_hill_6p": "Longstop Hill",
+    "lorraine_4p": "Lorraine",
+    "mammut_8p": "Radarstation Mammut",
+    "mignano_6p": "Mignano Summit",
+    "mignano_6p_redux": "Mignano Summit",
+    "monte_cavo_8p": "Monte Cavo",
+    "montherme_6p": "Montherme",
+    "mountain_ruins_6p": "Mignano Summit",
+    "mountain_ruins_8p_mkii": "Mignano Gap",
+    "oasis_depot_8p": "Oasis Depot",
+    "oliveto_citra_8p": "Oliveto Citra",
+    "pachino_2p": "Pachino Stalemate",
+    "pisa_centrale_4p": "Pisa Centrale",
+    "powderkeg_8p": "Powderkeg",
+    "primosole_4p": "Road to Primosole",
+    "primosole_6p": "Road to Primosole",
+    "rails_and_sand_4p": "Campbell's Convoy",
+    "rapido_river_8p": "Rapido River Crossing",
+    "rapido_river_8p_redux": "Rapido River Crossing",
+    "red_ball_express_8p": "Red Ball Express",
+    "rural_castle_4p": "Aere Perennius",
+    "rural_castle_winter_4p": "Aere Perennius Winter",
+    "rural_town_2p_mkii": "Pachino Farmlands",
+    "rural_town_4p": "Pachino Farmlands",
+    "sangro_river_crossing_6p": "Sangro River Crossing",
+    "santuario_4p": "Santuario",
+    "sedjenane_6p": "Sedjenane Marshes",
+    "semois_2p": "Semois",
+    "semois_4p": "Semois",
+    "sousse_stronghold_8p": "Sousse Stronghold",
+    "sousse_wetlands_8p": "Sousse Wetlands",
+    "steppe_8p": "Steppes",
+    "torrente_4p_mkiii": "Torrente",
+    "turin_8p": "Turin Steelworks",
+    "tuscan_vineyard_2p": "Tuscan Vineyards",
+    "twin_beach_2p_mkii": "Twin Beaches",
+    "villa_fiore_2p_mkii": "Villa Fiore",
+    "vire_river_valley_4p": "Vire River Valley",
+    "wadi_darnah_4p": "Wadi Darnah",
+    "winter_line_8p_mkii": "Winter Line",
+}
+
+_OFFICIAL_MAP_BASE_LOOKUP: dict[str, str] = {
+    MAP_MK_SUFFIX_RE.sub("", k): v for k, v in OFFICIAL_COH3_MAP_NAMES.items()
+}
+
 STEAM_ID64_VALID_RE = re.compile(r"^7656119\d{10}$")
 STEAM_URL_EXTRACT_RE = re.compile(r"steamcommunity\.com/profiles/(7656119\d{10})", re.IGNORECASE)
 COH3STATS_PLAYER_URL_RE = re.compile(
@@ -227,13 +316,40 @@ def _extract_steam_id(raw_name: Any) -> str:
 
 
 def clean_map_name(raw_map: str) -> str:
-    """Formata nomes internos de mapas (ex: 'twin_beaches_2p_mkii' -> 'Twin Beaches')."""
-    if not raw_map:
+    """Resolve o nome oficial do mapa no CoH3 (ex: 'rural_town_4p' -> 'Pachino Farmlands')."""
+    raw = str(raw_map or "").strip()
+    if not raw:
         return "Mapa Desconhecido"
-    cleaned = MAP_SIZE_SUFFIX_RE.sub("", raw_map)
+
+    key = raw.lower()
+    official = OFFICIAL_COH3_MAP_NAMES.get(key)
+    if official:
+        return official
+
+    # Compatibilidade automática para futuras revisões (_mkiv/_redux/_mm) de mapas oficiais
+    base_key = MAP_MK_SUFFIX_RE.sub("", key)
+    official_base = _OFFICIAL_MAP_BASE_LOOKUP.get(base_key)
+    if official_base:
+        return official_base
+
+    # Fallback limpo para mapas customizados / Steam Workshop (ex: '(4) duclair' -> 'Duclair')
+    cleaned = MAP_PLAYER_PREFIX_RE.sub("", raw)
+    cleaned = MAP_SIZE_SUFFIX_RE.sub("", cleaned)
     cleaned = MAP_MK_SUFFIX_RE.sub("", cleaned)
-    cleaned = cleaned.replace("_", " ").strip()
-    return cleaned.title() if cleaned else raw_map
+    cleaned = re.sub(r"[_]+", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned:
+        return raw
+
+    words = cleaned.split(" ")
+    formatted: list[str] = []
+    for idx, word in enumerate(words):
+        lw = word.lower()
+        if idx > 0 and lw in _MAP_LOWERCASE_WORDS:
+            formatted.append(lw)
+        else:
+            formatted.append(word.capitalize() if word.islower() or word.isupper() else word)
+    return " ".join(formatted)
 
 
 def normalize_mode_name(matchtype_id: int, raw_name: str | None = None) -> str:

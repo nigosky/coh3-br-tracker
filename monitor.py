@@ -46,7 +46,8 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_11_roster_43_br_players"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_12_allies_left_official_maps_and_thumbs"
+CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
@@ -1150,6 +1151,12 @@ def run_cycle(
         cfg_upgraded = ensure_core_roster_in_config(cfg)
         if cfg_upgraded:
             save_config_file(config_path, cfg)
+
+        if db.get_state("map_names_version") != CURRENT_MAP_NAMES_VERSION:
+            migrated_maps = db.refresh_recorded_map_names()
+            db.set_state("map_names_version", CURRENT_MAP_NAMES_VERSION)
+            if migrated_maps > 0:
+                logger.info("Nomes oficiais de mapas atualizados no catálogo SQLite (%d registro(s)).", migrated_maps)
 
         layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
         fresh_rankings: dict[str, list[dict[str, Any]]] | None = None
