@@ -1025,7 +1025,7 @@ def _draw_two_team_columns(
     show_delta: bool = True,
     is_duel: bool = False,
 ) -> None:
-    """Desenha as duas colunas amplas (JOGADORES DO EIXO vs JOGADORES ALIADOS) em PT-BR."""
+    """Desenha as duas colunas amplas (Axis vs Allies) destacando apenas brasileiros monitorados."""
     hdr_bg = (30, 26, 18, 255) if is_duel else (22, 24, 30, 255)
     sep_col = (96, 78, 34, 255) if is_duel else (46, 50, 62, 255)
     draw.rectangle((8, top_bar_h, width, top_bar_h + col_hdr_h), fill=hdr_bg)
@@ -1034,9 +1034,9 @@ def _draw_two_team_columns(
     draw.line([(mid_x, top_bar_h), (mid_x, total_h)], fill=sep_col, width=1)
 
     ch_col = (253, 224, 71, 255) if is_duel else (235, 238, 244, 255)
-    ch_fnt = pick_font("JOGADORES DO EIXO", size=16, bold=True, condensed=True)
-    draw.text((22, top_bar_h + 10), "JOGADORES DO EIXO", font=ch_fnt, fill=ch_col)
-    draw.text((mid_x + 16, top_bar_h + 10), "JOGADORES ALIADOS", font=ch_fnt, fill=ch_col)
+    ch_fnt = pick_font("Axis", size=17, bold=True, condensed=True)
+    draw.text((22, top_bar_h + 9), "Axis", font=ch_fnt, fill=ch_col)
+    draw.text((mid_x + 16, top_bar_h + 9), "Allies", font=ch_fnt, fill=ch_col)
 
     base_py = top_bar_h + col_hdr_h + 11
     for col_start_x, col_limit_x, team_list in (
@@ -1073,13 +1073,9 @@ def _draw_two_team_columns(
             name_x = flag_x + 30
             is_tracked = bool(pl.get("is_tracked"))
             is_veterano = is_tracked or bool(pl.get("is_br_roster"))
-            is_br = country == "br" or is_veterano
 
-            if is_br:
-                if is_duel and is_veterano:
-                    ring = (245, 184, 46, 255)
-                else:
-                    ring = (56, 189, 248, 250) if is_tracked else (34, 197, 94, 230)
+            if is_veterano:
+                ring = (245, 184, 46, 255) if is_duel else (56, 189, 248, 255)
                 av_im = avatar_provider.get_circular_avatar(
                     size=40,
                     profile_id=int(pl.get("profile_id", 0)),
@@ -1096,14 +1092,16 @@ def _draw_two_team_columns(
                 draw,
                 str(pl.get("alias") or ""),
                 max_px=max(56, col_limit_x - name_x - badge_reserve),
-                size=20,
-                bold=True,
+                size=21 if is_veterano else 19,
+                bold=is_veterano,
             )
-            if is_duel and is_veterano:
-                alias_color = (253, 230, 138, 255)
+            if is_veterano:
+                alias_color = (253, 230, 138, 255) if is_duel else (125, 211, 252, 255)
+                alias_y = py + 9
             else:
-                alias_color = (56, 189, 248, 255) if is_tracked else (130, 186, 254, 255)
-            draw.text((name_x, py + 10), disp_alias, font=a_fnt, fill=alias_color)
+                alias_color = (176, 184, 198, 255)
+                alias_y = py + 11
+            draw.text((name_x, alias_y), disp_alias, font=a_fnt, fill=alias_color)
             if is_veterano:
                 vet_ic = get_veteranos_badge_icon(size=badge_sz)
                 bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 6)
@@ -1254,8 +1252,8 @@ def render_matches_table_png(
     for hx, hlbl in (
         (22, "DATA ↓"),
         (126, "RESULTADO"),
-        (258, "JOGADORES DO EIXO"),
-        (572, "JOGADORES ALIADOS"),
+        (258, "Axis"),
+        (572, "Allies"),
         (902, "MAPA / MODO"),
     ):
         draw.text((hx, 13), hlbl, font=hdr_font, fill=hdr_color)
@@ -1334,14 +1332,9 @@ def render_matches_table_png(
                 name_x = col_x + 130
                 is_tracked = bool(pl.get("is_tracked"))
                 is_veterano = is_tracked or bool(pl.get("is_br_roster"))
-                is_br = country == "br" or is_veterano
 
-                if is_br:
-                    ring = (
-                        (245, 184, 46, 250)
-                        if (is_row_duel and is_veterano)
-                        else ((56, 189, 248, 245) if is_tracked else (34, 197, 94, 220))
-                    )
+                if is_veterano:
+                    ring = (245, 184, 46, 250) if is_row_duel else (56, 189, 248, 250)
                     av_im = avatar_provider.get_circular_avatar(
                         size=27,
                         profile_id=int(pl.get("profile_id", 0)),
@@ -1358,15 +1351,16 @@ def render_matches_table_png(
                     draw,
                     str(pl.get("alias") or ""),
                     max_px=max(44, (col_x + 306) - name_x - badge_reserve),
-                    size=15,
-                    bold=True,
+                    size=16 if is_veterano else 14,
+                    bold=is_veterano,
                 )
-                alias_color = (
-                    (253, 230, 138, 255)
-                    if (is_row_duel and is_veterano)
-                    else ((56, 189, 248, 255) if is_tracked else (112, 172, 250, 255))
-                )
-                draw.text((name_x, py + 5), disp_alias, font=a_fnt, fill=alias_color)
+                if is_veterano:
+                    alias_color = (253, 230, 138, 255) if is_row_duel else (125, 211, 252, 255)
+                    alias_y = py + 5
+                else:
+                    alias_color = (176, 184, 198, 255)
+                    alias_y = py + 6
+                draw.text((name_x, alias_y), disp_alias, font=a_fnt, fill=alias_color)
                 if is_veterano:
                     vet_ic = get_veteranos_badge_icon(size=badge_sz)
                     bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 5)
