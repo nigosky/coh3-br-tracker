@@ -36,11 +36,6 @@ on:
         required: false
         default: false
         type: boolean
-      force_rank_scan:
-        description: "Forcar revarredura imediata do Ranking (Top 20 + monitorados) nas leaderboards?"
-        required: false
-        default: false
-        type: boolean
       force_weekly_summary:
         description: "Publicar Card de Resumo Semanal dos Veteranos BR agora?"
         required: false
@@ -101,7 +96,6 @@ jobs:
           INPUT_ADD_PLAYER: ${{ inputs.add_custom_player }}
           INPUT_REMOVE_PLAYER: ${{ inputs.remove_custom_player }}
           INPUT_SEND_TEST: ${{ inputs.send_initial_test }}
-          INPUT_FORCE_RANK: ${{ inputs.force_rank_scan }}
           INPUT_FORCE_WEEKLY: ${{ inputs.force_weekly_summary }}
           INPUT_RESET_DISCORD: ${{ inputs.reset_discord_channel }}
         run: |
@@ -131,9 +125,6 @@ jobs:
           fi
 
           MONITOR_ARGS=(--once --verify-discord)
-          if [ "${INPUT_FORCE_RANK:-false}" = "true" ]; then
-            MONITOR_ARGS+=(--force-rank-scan)
-          fi
           if [ "${INPUT_FORCE_WEEKLY:-false}" = "true" ]; then
             MONITOR_ARGS+=(--force-weekly-summary)
           fi
@@ -166,7 +157,7 @@ jobs:
             exit 1
           fi
 
-          STATE_FILES=(coh3_br_matches.db config.json top20_br_por_modo.csv top20_br_por_modo.json jogadores_br_steam.csv jogadores_br_steam.json)
+          STATE_FILES=(coh3_br_matches.db config.json)
           for state_file in "${STATE_FILES[@]}"; do
             if [ -f "${state_file}" ]; then
               git add -- "${state_file}"
@@ -189,7 +180,7 @@ jobs:
             BRANCH_NAME="${TARGET_BRANCH:-main}"
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -m "chore(state): atualizar catalogo e ranking CoH3 BR [skip ci]"
+            git commit -m "chore(state): atualizar catalogo de partidas CoH3 BR [skip ci]"
 
             PUSHED=false
             for attempt in 1 2 3; do

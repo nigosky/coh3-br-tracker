@@ -46,7 +46,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_13_roster_44_br_players"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_14_matches_only_panel"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
@@ -1149,7 +1149,32 @@ def run_cycle(
             reset_and_clean_discord_channel(db, discord)
 
         cfg_upgraded = ensure_core_roster_in_config(cfg)
-        if cfg_upgraded:
+        custom_players = list(cfg.get("custom_players") or [])
+        tracked_existing = list(cfg.get("tracked_players") or [])
+        existing_by_pid = {int(p["profile_id"]): p for p in tracked_existing if int(p.get("profile_id", 0)) > 0}
+        synced_tracked: list[dict[str, Any]] = []
+        seen_t_pids: set[int] = set()
+        for cp in custom_players:
+            pid = int(cp.get("profile_id", 0) or 0)
+            if pid <= 0 or pid in seen_t_pids:
+                continue
+            seen_t_pids.add(pid)
+            prev_tp = existing_by_pid.get(pid) or {}
+            rec_tp: dict[str, Any] = {
+                "profile_id": pid,
+                "alias": str(cp.get("alias") or prev_tp.get("alias") or cp.get("original_alias") or f"Player {pid}"),
+                "original_alias": str(cp.get("original_alias") or prev_tp.get("original_alias") or cp.get("alias") or f"Player {pid}"),
+                "steam_id": str(cp.get("steam_id") or prev_tp.get("steam_id") or ""),
+                "placements": list(prev_tp.get("placements") or ["⭐ Monitorado BR"]),
+                "is_custom": True,
+            }
+            if cp.get("merged_into_profile_id"):
+                rec_tp["merged_into_profile_id"] = int(cp["merged_into_profile_id"])
+            synced_tracked.append(rec_tp)
+
+        tracked_changed = cfg_upgraded or ({int(p["profile_id"]) for p in synced_tracked} != set(existing_by_pid.keys()))
+        if tracked_changed:
+            cfg["tracked_players"] = synced_tracked
             save_config_file(config_path, cfg)
 
         if db.get_state("map_names_version") != CURRENT_MAP_NAMES_VERSION:
@@ -1159,27 +1184,6 @@ def run_cycle(
                 logger.info("Nomes oficiais de mapas atualizados no catálogo SQLite (%d registro(s)).", migrated_maps)
 
         layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
-        fresh_rankings: dict[str, list[dict[str, Any]]] | None = None
-        rankings_changed = False
-        already_scanned_rankings = False
-
-        # Em instalação inicial sem tracked_players ou quando novo integrante entra no elenco fixo, atualiza ranking antes para já monitorá-lo neste ciclo
-        if not cfg.get("tracked_players") or cfg_upgraded:
-            try:
-                rankings_changed, fresh_rankings = maybe_refresh_top_rankings(
-                    config_path=config_path,
-                    cfg=cfg,
-                    db=db,
-                    relic=relic,
-                    discord=discord,
-                    force=True,
-                    is_oneshot=is_oneshot,
-                )
-                already_scanned_rankings = True
-            except Exception as exc:
-                logger.error("Falha ao popular lista inicial de jogadores Top BR: %s", redact_secrets(exc))
-
-        custom_players = cfg.get("custom_players", [])
         roster_maps = build_roster_lookup_maps(custom_players)
 
         db.sync_tracked_players(cfg.get("tracked_players", []))
@@ -1384,39 +1388,22 @@ def run_cycle(
                             redact_secrets(exc),
                         )
 
-        # Atualiza Ranking Top BR apenas 1x ao dia após 00:01 BRT (ou quando forçado manualmente)
-        if not already_scanned_rankings:
-            should_force_rank = force_rank_scan or layout_needs_upgrade or cfg_upgraded
-            try:
-                rankings_changed, fresh_rankings = maybe_refresh_top_rankings(
-                    config_path=config_path,
-                    cfg=cfg,
-                    db=db,
-                    relic=relic,
-                    discord=discord,
-                    force=should_force_rank,
-                    is_oneshot=is_oneshot,
-                )
-                if fresh_rankings is not None:
-                    custom_players = cfg.get("custom_players", [])
-                    db.sync_tracked_players(cfg.get("tracked_players", []))
-            except Exception as exc:
-                logger.error("Falha ao revarrer leaderboards Top BR (seguindo com lista atual): %s", redact_secrets(exc))
+        if force_rank_scan:
+            logger.info("Aviso: o Ranking Unificado BR foi migrado para o projeto dedicado nigosky/coh3-br-ranking.")
 
         if discord.is_configured:
             pruned_count = prune_old_discord_messages(db, discord, retention_hours=cleanup_hours)
 
-            if cards_confirmed > 0 or newly_finished or players_changed or rankings_changed:
+            if cards_confirmed > 0 or newly_finished or players_changed or tracked_changed:
                 db.set_state("summary_needs_refresh", "1")
 
             summary_msg_id = db.get_state("summary_message_id")
             layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
             content_needs_refresh = db.get_state("summary_content_version") != CURRENT_SUMMARY_CONTENT_VERSION
-            rankings_updated = db.get_state("rankings_updated_flag") == "1"
             summary_needs_refresh = db.get_state("summary_needs_refresh") == "1"
             panel_status = "inalterado"
 
-            if summary_needs_refresh or rankings_updated or not summary_msg_id or layout_needs_upgrade or content_needs_refresh:
+            if summary_needs_refresh or not summary_msg_id or layout_needs_upgrade or content_needs_refresh:
                 display_since_raw = db.get_state("display_since_ts") or "0"
                 display_since_ts = int(display_since_raw) if display_since_raw.isdigit() else 0
                 latest_catalog = db.get_recent_recorded_matches(
@@ -1425,7 +1412,6 @@ def run_cycle(
                     min_recorded_at=display_since_ts,
                 )
                 updated_players = db.get_active_players()
-                rankings_for_panel = fresh_rankings or load_cached_rankings(config_path.parent, top_n=top_n)
                 panel_ok = False
 
                 for attempt in (1, 2):
@@ -1434,7 +1420,7 @@ def run_cycle(
                             matches=latest_catalog,
                             tracked_players=updated_players,
                             existing_message_id=summary_msg_id,
-                            rankings_by_mode=rankings_for_panel,
+                            rankings_by_mode=None,
                             custom_players=custom_players,
                             top_n=top_n,
                             recreate_message=layout_needs_upgrade,
@@ -1444,7 +1430,7 @@ def run_cycle(
                                 db.set_state("summary_message_id", new_summary_id)
                                 logger.info("Painel Resumo publicado no Discord (ID %s).", new_summary_id)
                             else:
-                                logger.info("Painel Fixado (Ranking + Partidas) atualizado automaticamente no Discord.")
+                                logger.info("Painel Fixado (Últimas Partidas) atualizado automaticamente no Discord.")
                             db.set_state("summary_layout_version", CURRENT_SUMMARY_LAYOUT_VERSION)
                             db.set_state("summary_content_version", CURRENT_SUMMARY_CONTENT_VERSION)
                             db.set_state("rankings_updated_flag", "0")
