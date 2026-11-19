@@ -61,7 +61,7 @@
       "original_alias": "Alekel",
       "steam_id": "76561198053226112",
       "placements": [
-        "#100 1v1 (média 954.5) ⭐",
+        "#101 1v1 (média 954.5) ⭐",
         "#162 2v2 (média 1219.2) ⭐",
         "#5 Jogos em Equipe (média 1524.5)"
       ],
@@ -75,7 +75,7 @@
       "placements": [
         "#86 1v1 (média 1137.0) ⭐",
         "#4 2v2 (média 1497.0)",
-        "#7 Jogos em Equipe (média 1503.5)"
+        "#7 Jogos em Equipe (média 1497.0)"
       ],
       "is_custom": true
     },
@@ -241,7 +241,7 @@
       "original_alias": "Maiti",
       "steam_id": "76561197981615184",
       "placements": [
-        "#103 1v1 (média 948.0) ⭐",
+        "#104 1v1 (média 948.0) ⭐",
         "#34 2v2 (média 1212.0) ⭐",
         "#79 Jogos em Equipe (média 1116.8) ⭐"
       ],
@@ -253,7 +253,7 @@
       "original_alias": "twitch.tv/luck22ai",
       "steam_id": "76561198058548575",
       "placements": [
-        "#99 1v1 (média 958.0) ⭐",
+        "#100 1v1 (média 958.0) ⭐",
         "#164 2v2 (média 1084.0) ⭐",
         "#53 Jogos em Equipe (média 1199.6) ⭐"
       ],
@@ -265,7 +265,7 @@
       "original_alias": "gaules",
       "steam_id": "76561198264285149",
       "placements": [
-        "#102 1v1 (média 950.0) ⭐",
+        "#103 1v1 (média 950.0) ⭐",
         "#39 2v2 (média 1183.5) ⭐",
         "#63 Jogos em Equipe (média 1165.8) ⭐"
       ],
@@ -291,7 +291,7 @@
       "placements": [
         "#27 1v1 (média 1113.0) ⭐",
         "#44 2v2 (média 1171.0) ⭐",
-        "#65 Jogos em Equipe (média 1149.0) ⭐"
+        "#68 Jogos em Equipe (média 1146.8) ⭐"
       ],
       "is_custom": true
     },
@@ -302,7 +302,7 @@
       "steam_id": "76561198372757032",
       "placements": [
         "#48 1v1 (média 945.5) ⭐",
-        "#58 2v2 (média 1098.5) ⭐",
+        "#59 2v2 (média 1098.5) ⭐",
         "#62 Jogos em Equipe (média 1166.9) ⭐"
       ],
       "is_custom": true
@@ -315,7 +315,7 @@
       "placements": [
         "#45 1v1 (média 978.0) ⭐",
         "#77 2v2 (média 1009.0) ⭐",
-        "#66 Jogos em Equipe (média 1148.0) ⭐"
+        "#65 Jogos em Equipe (média 1148.0) ⭐"
       ],
       "is_custom": true
     },
@@ -337,9 +337,9 @@
       "original_alias": "Liquid",
       "steam_id": "76561198054318813",
       "placements": [
-        "#97 1v1 (média 994.0) ⭐",
+        "#98 1v1 (média 994.0) ⭐",
         "#166 2v2 (média 1031.5) ⭐",
-        "#67 Jogos em Equipe (média 1147.5) ⭐"
+        "#66 Jogos em Equipe (média 1147.5) ⭐"
       ],
       "is_custom": true
     },
@@ -361,7 +361,7 @@
       "original_alias": "Lupus Alba",
       "steam_id": "76561198140782132",
       "placements": [
-        "#101 1v1 (média 951.5) ⭐",
+        "#102 1v1 (média 951.5) ⭐",
         "#96 2v2 (média 945.0) ⭐",
         "#81 Jogos em Equipe (média 1113.6) ⭐"
       ],
@@ -408,9 +408,9 @@
       "original_alias": "The Dog",
       "steam_id": "76561198205052385",
       "placements": [
-        "#96 1v1 (média 996.2) ⭐",
+        "#97 1v1 (média 996.2) ⭐",
         "#60 2v2 (média 1080.0) ⭐",
-        "#145 Jogos em Equipe (média 990.2) ⭐"
+        "#146 Jogos em Equipe (média 990.2) ⭐"
       ],
       "is_custom": true
     },
@@ -420,7 +420,7 @@
       "original_alias": "Nargoth",
       "steam_id": "76561198028378060",
       "placements": [
-        "#95 1v1 (média 1000.0) ⭐",
+        "#96 1v1 (média 1000.0) ⭐",
         "#170 2v2 (média 1000.0) ⭐",
         "#396 Jogos em Equipe (média 1071.0) ⭐"
       ],
@@ -439,13 +439,25 @@
       "is_custom": true
     },
     {
+      "profile_id": 975688,
+      "alias": "Kefbr",
+      "original_alias": "Kefbr",
+      "steam_id": "76561197994245218",
+      "placements": [
+        "#95 1v1 (média 1000.5) ⭐",
+        "#172 2v2 (média 958.0) ⭐",
+        "#398 Jogos em Equipe (média 1038.9) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
       "profile_id": 737235,
       "alias": "meuqsaco",
       "original_alias": "meuqsaco",
       "steam_id": "76561198026394732",
       "placements": [
         "#168 2v2 (média 1014.7) ⭐",
-        "#398 Jogos em Equipe (média 1036.1) ⭐"
+        "#399 Jogos em Equipe (média 1036.1) ⭐"
       ],
       "is_custom": true
     },
@@ -455,9 +467,9 @@
       "original_alias": "INFIEL",
       "steam_id": "76561197993922195",
       "placements": [
-        "#98 1v1 (média 959.0) ⭐",
+        "#99 1v1 (média 959.0) ⭐",
         "#169 2v2 (média 1012.7) ⭐",
-        "#399 Jogos em Equipe (média 1017.7) ⭐"
+        "#400 Jogos em Equipe (média 1017.7) ⭐"
       ],
       "is_custom": true
     },
@@ -467,9 +479,9 @@
       "original_alias": "TJBR",
       "steam_id": "76561198076576055",
       "placements": [
-        "#105 1v1 (média 866.0) ⭐",
-        "#172 2v2 (média 952.0) ⭐",
-        "#400 Jogos em Equipe (média 1002.3) ⭐"
+        "#106 1v1 (média 866.0) ⭐",
+        "#173 2v2 (média 952.0) ⭐",
+        "#401 Jogos em Equipe (média 1002.3) ⭐"
       ],
       "is_custom": true
     },
@@ -479,8 +491,8 @@
       "original_alias": "ACB",
       "steam_id": "76561198009056438",
       "placements": [
-        "#173 2v2 (média 933.8) ⭐",
-        "#401 Jogos em Equipe (média 999.4) ⭐"
+        "#174 2v2 (média 933.8) ⭐",
+        "#402 Jogos em Equipe (média 999.4) ⭐"
       ],
       "is_custom": true
     },
@@ -490,8 +502,8 @@
       "original_alias": "7 DIVISAO PHANTOM",
       "steam_id": "76561198284234077",
       "placements": [
-        "#104 1v1 (média 936.3) ⭐",
-        "#175 2v2 (média 835.8) ⭐",
+        "#105 1v1 (média 936.3) ⭐",
+        "#176 2v2 (média 835.8) ⭐",
         "#248 Jogos em Equipe (média 861.8) ⭐"
       ],
       "is_custom": true
@@ -502,7 +514,7 @@
       "original_alias": "MonteiroBR",
       "steam_id": "76561198021071716",
       "placements": [
-        "#174 2v2 (média 905.0) ⭐"
+        "#175 2v2 (média 905.0) ⭐"
       ],
       "is_custom": true
     },
@@ -512,7 +524,7 @@
       "original_alias": "Winter Animal",
       "steam_id": "76561199498421192",
       "placements": [
-        "#106 1v1 (média 811.3) ⭐",
+        "#107 1v1 (média 811.3) ⭐",
         "#153 2v2 (média 614.0) ⭐",
         "#359 Jogos em Equipe (média 658.0) ⭐"
       ],
@@ -862,6 +874,13 @@
         "Superior Culture",
         "Winter Animal"
       ]
+    },
+    {
+      "profile_id": 975688,
+      "steam_id": "76561197994245218",
+      "original_alias": "Kefbr",
+      "alias": "Kefbr",
+      "is_core_roster": true
     }
   ],
   "monitor_only_custom_matches": true
