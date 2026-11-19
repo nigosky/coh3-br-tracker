@@ -103,65 +103,38 @@ def _clamp_int(value: int, minimum: int, maximum: int) -> int:
 
 
 def _rebuild_rankings_and_config(cfg: dict[str, Any], relic: RelicAPIClient, reset_top: bool = False) -> None:
+    """Sincroniza tracked_players diretamente a partir do elenco monitorado (Ranking Unificado agora roda em nigosky/coh3-br-ranking)."""
+    del relic, reset_top
     ensure_core_roster_in_config(cfg)
-    top_n = _clamp_int(int(cfg.get("top_n_per_mode", 20)), 1, 100)
-    only_custom = bool(cfg.get("monitor_only_custom_matches", True))
-    custom_players: list[dict[str, Any]] = cfg.get("custom_players", [])
+    custom_players: list[dict[str, Any]] = list(cfg.get("custom_players") or [])
 
-    players_json_path, players_csv_path = _data_paths()
-    base_players = load_br_catalog()
-    if not base_players:
-        base_players = relic.fetch_brazilian_players()
-        export_players_files(base_players, players_json_path, players_csv_path)
-
-    merged_players = merge_catalog_with_custom_players(base_players, custom_players, relic)
-    custom_ids = {int(cp["profile_id"]) for cp in custom_players if int(cp.get("profile_id", 0)) > 0}
-    custom_sids = {str(cp["steam_id"]) for cp in custom_players if cp.get("steam_id")}
-
-    rankings = compute_merged_mode_rankings(
-        merged_players,
-        custom_ids=custom_ids,
-        custom_steam_ids=custom_sids,
-    )
-
-    data_dir = resolve_data_dir(BASE_DIR)
-    json_out = data_dir / f"top{top_n}_br_por_modo.json"
-    csv_out = data_dir / f"top{top_n}_br_por_modo.csv"
-    export_merged_top_rankings(rankings, top_n, json_out, csv_out, custom_players=custom_players)
-
-    monitored_list = build_top_tracked_players(
-        rankings,
-        top_n=top_n,
-        custom_players=custom_players,
-        only_custom=only_custom,
-    )
-    if only_custom or reset_top:
-        merged_by_id: dict[int, dict[str, Any]] = {}
-    else:
-        merged_by_id = {int(p["profile_id"]): p for p in cfg.get("tracked_players", []) if "profile_id" in p}
-
-    for p in monitored_list:
-        pid = int(p["profile_id"])
+    synced_tracked: list[dict[str, Any]] = []
+    seen_pids: set[int] = set()
+    for cp in custom_players:
+        pid = int(cp.get("profile_id", 0) or 0)
+        if pid <= 0 or pid in seen_pids:
+            continue
+        seen_pids.add(pid)
         rec_p: dict[str, Any] = {
             "profile_id": pid,
-            "alias": p["alias"],
-            "original_alias": str(p.get("original_alias") or p["alias"]),
-            "steam_id": str(p.get("steam_id") or merged_by_id.get(pid, {}).get("steam_id") or ""),
-            "placements": p["placements"],
-            "is_custom": bool(p.get("is_custom")) or (pid in custom_ids),
+            "alias": str(cp.get("alias") or cp.get("original_alias") or f"Player {pid}"),
+            "original_alias": str(cp.get("original_alias") or cp.get("alias") or f"Player {pid}"),
+            "steam_id": str(cp.get("steam_id") or ""),
+            "placements": ["⭐ Monitorado BR"],
+            "is_custom": True,
         }
-        if p.get("merged_into_profile_id"):
-            rec_p["merged_into_profile_id"] = int(p["merged_into_profile_id"])
-        merged_by_id[pid] = rec_p
+        if cp.get("merged_into_profile_id"):
+            rec_p["merged_into_profile_id"] = int(cp["merged_into_profile_id"])
+        synced_tracked.append(rec_p)
 
     cfg["custom_players"] = custom_players
-    cfg["tracked_players"] = list(merged_by_id.values())
+    cfg["tracked_players"] = synced_tracked
     save_config(cfg)
 
     db_path = resolve_safe_db_path(BASE_DIR, cfg.get("sqlite_db_path"))
     with MatchDatabase(db_path) as db:
         db.sync_tracked_players(cfg["tracked_players"])
-        db.set_state("rankings_updated_flag", "1")
+        db.set_state("summary_needs_refresh", "1")
 
 
 def cmd_refresh_br(_args: argparse.Namespace) -> int:
@@ -443,13 +416,14 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
             matches,
             tracked,
             cfg.get("bot_username", "CoH3 Brasil Monitor"),
-            rankings_by_mode=cached_rankings,
+            rankings_by_mode=None,
             custom_players=custom_players,
+            has_ranking_images=False,
         )
         card_payload = build_match_embed_payload(sample_group, cfg.get("bot_username", "CoH3 Brasil Monitor"))
 
         if args.dry_run:
-            print("=== PAYLOAD 1: PAINEL FIXADO PT-BR (RANKING + PARTIDAS) ===")
+            print("=== PAYLOAD 1: PAINEL FIXADO PT-BR (ÚLTIMAS PARTIDAS) ===")
             print(json.dumps(summary_payload, ensure_ascii=False, indent=2))
             print("\n=== PAYLOAD 2: CARD PARTIDA PT-BR ===")
             print(json.dumps(card_payload, ensure_ascii=False, indent=2))
@@ -470,7 +444,7 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
             matches,
             tracked,
             summary_id,
-            rankings_by_mode=cached_rankings,
+            rankings_by_mode=None,
             custom_players=custom_players,
             top_n=top_n,
         )

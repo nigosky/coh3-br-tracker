@@ -355,15 +355,18 @@ def build_summary_list_payload(
         else f"_Aguardando novas partidas dos {unique_roster_count} jogadores monitorados._"
     )
 
+    footer_txt = (
+        f"Atualizado automaticamente via API Relic • Últimas {len(grouped)} partidas únicas exibidas"
+        if (rankings_by_mode and has_ranking_images)
+        else f"Atualizado automaticamente via API Relic • Últimas {len(grouped)} partidas únicas • Ranking Unificado BR em canal dedicado"
+    )
     embeds_list.append(
         {
             "title": f"📌 ÚLTIMAS PARTIDAS DOS {unique_roster_count} MONITORADOS — COH3 BRASIL",
             "description": links_desc[:4000],
             "color": COLOR_SUMMARY,
             "image": {"url": "attachment://recent_matches.png"},
-            "footer": {
-                "text": f"Atualizado automaticamente via API Relic • Últimas {len(grouped)} partidas únicas exibidas"
-            },
+            "footer": {"text": footer_txt},
             "timestamp": now_iso,
         }
     )
