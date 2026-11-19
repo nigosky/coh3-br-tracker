@@ -138,7 +138,7 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa dos 32 jogadores brasileiros únicos monitorados (33 contas Steam vinculadas por SteamID64 imutável)
+# Lista fixa dos 43 jogadores brasileiros únicos monitorados (44 contas Steam vinculadas por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
@@ -185,6 +185,27 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
     {"profile_id": 1005730, "steam_id": "76561199791811246", "original_alias": "arc"},
     {"profile_id": 31145, "steam_id": "76561197985268629", "original_alias": "vonMises"},
+    {"profile_id": 58737, "steam_id": "76561197993922195", "original_alias": "INFIEL"},
+    {"profile_id": 431802, "steam_id": "76561198000099422", "original_alias": "Conflict.BR"},
+    {"profile_id": 59864, "steam_id": "76561198123446420", "original_alias": "Lion Heart"},
+    {"profile_id": 84821, "steam_id": "76561198076576055", "original_alias": "TJBR"},
+    {"profile_id": 99722, "steam_id": "76561198021071716", "original_alias": "MonteiroBR"},
+    {"profile_id": 31061, "steam_id": "76561198009056438", "original_alias": "ACB"},
+    {"profile_id": 81751, "steam_id": "76561198080023560", "original_alias": "Razi"},
+    {"profile_id": 28937, "steam_id": "76561198089948995", "original_alias": "Mjr Bruno"},
+    {"profile_id": 737235, "steam_id": "76561198026394732", "original_alias": "meuqsaco"},
+    {
+        "profile_id": 23250,
+        "steam_id": "76561198028378060",
+        "original_alias": "Nargoth",
+        "known_aliases": ["Nargoth de Bebbanburg", "Nargoth"],
+    },
+    {
+        "profile_id": 1097608,
+        "steam_id": "76561199498421192",
+        "original_alias": "Winter Animal",
+        "known_aliases": ["Superior Culture", "Winter Animal"],
+    },
 ]
 
 _THREAD_LOCAL = threading.local()
