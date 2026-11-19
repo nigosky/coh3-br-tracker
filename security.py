@@ -7,6 +7,7 @@ import os
 import re
 import ssl
 import stat
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -275,17 +276,42 @@ def resolve_data_dir(base_dir: Path) -> Path:
 
 
 def atomic_write_text(target_path: Path, content: str) -> None:
-    """Escreve arquivo de texto atomicamente via arquivo temporário, com fallback para bind-mount único."""
+    """Escreve arquivo de texto atomicamente via tempfile.mkstemp (O_CREAT|O_EXCL, anti-CWE-377), com fallback para bind-mount único."""
     if target_path.is_symlink():
         raise RuntimeError(f"Escrita bloqueada em symlink não confiável: {target_path}")
-    tmp_path = target_path.with_name(f".{target_path.name}.{os.getpid()}.tmp")
-    try:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path.write_text(content, encoding="utf-8")
-        os.replace(tmp_path, target_path)
-    except OSError:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_mode: int | None = None
+    if target_path.exists():
         try:
-            tmp_path.unlink(missing_ok=True)
+            existing_mode = stat.S_IMODE(target_path.stat().st_mode) & 0o666
         except OSError:
-            pass
+            existing_mode = None
+
+    tmp_name = ""
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{target_path.name}.",
+            suffix=".tmp",
+            dir=str(target_path.parent),
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        if existing_mode is not None and os.name == "posix":
+            try:
+                os.chmod(tmp_name, existing_mode)
+            except OSError:
+                pass
+        if target_path.is_symlink():
+            raise RuntimeError(f"Escrita bloqueada em symlink não confiável: {target_path}")
+        os.replace(tmp_name, target_path)
+        tmp_name = ""
+    except OSError:
+        if target_path.is_symlink():
+            raise RuntimeError(f"Escrita bloqueada em symlink não confiável: {target_path}") from None
         target_path.write_text(content, encoding="utf-8")
+    finally:
+        if tmp_name and os.path.exists(tmp_name):
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass

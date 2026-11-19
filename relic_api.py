@@ -1448,7 +1448,7 @@ class VeteransRadarClient:
                         active_pids.update(cls._extract_pids_from_sequence(vet_tuple[0]))
                     if len(vet_tuple) >= 3:
                         active_pids.update(cls._extract_pids_from_sequence(vet_tuple[2]))
-            except (ValueError, SyntaxError, TypeError):
+            except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
                 pass
 
         raw_fast_sig = payload.get("last_steam_fast_sig")
@@ -1458,7 +1458,7 @@ class VeteransRadarClient:
                 if isinstance(fast, tuple) and fast:
                     # fast[0] = lista ordenada de SteamID64s atualmente no CoH3 via Steam
                     active_sids.update(cls._extract_steam_ids_from_sequence(fast[0]))
-            except (ValueError, SyntaxError, TypeError):
+            except (ValueError, SyntaxError, TypeError, RecursionError, MemoryError):
                 pass
 
         return active_pids, active_sids, last_sync_ts
