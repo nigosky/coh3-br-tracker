@@ -46,7 +46,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_9_axis_allies_monitored_only_avatar"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_10_cjk_fonts_and_iso_flags"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
