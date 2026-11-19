@@ -1474,12 +1474,22 @@ def enrich_group_with_battlegroups(
         for r in recs
         if int(r.get("tracked_profile_id", 0) or 0) > 0
     ]
+    tracked_set = set(tracked_pids)
+    fallback_pids: list[int] = []
+    for side_key in ("allies", "opponents"):
+        for part in primary.get(side_key) or []:
+            if not isinstance(part, dict):
+                continue
+            ppid = int(part.get("profile_id", 0) or 0)
+            if ppid > 0 and ppid not in tracked_set and ppid not in fallback_pids:
+                fallback_pids.append(ppid)
     map_clean = str(primary.get("map_clean") or "")
     try:
         bg_map = cohdb.fetch_match_battlegroups(
             match_id=match_id,
             tracked_profile_ids=tracked_pids,
             expected_map_clean=map_clean,
+            fallback_profile_ids=fallback_pids,
         )
     except Exception as exc:
         logger.warning(
@@ -1774,16 +1784,22 @@ def run_cycle(
                 )
 
             retry_groups: list[dict[str, Any]] = []
+            posted_missing_bg: list[tuple[dict[str, Any], str]] = []
             for grp in grouped_to_send:
+                checked_ok = False
+                has_bg = False
                 if cohdb_client is not None:
-                    _, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
+                    checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
                     if has_bg:
                         bg_enriched_new += 1
+                is_automatch = str(grp["primary"].get("mode") or "") != "Custom"
                 try:
                     msg_id = discord.send_match_card(grp)
                     if msg_id:
                         db.update_matches_discord_id_batch(grp["records"], msg_id)
                         cards_confirmed += 1
+                        if cohdb_client is not None and is_automatch and not checked_ok:
+                            posted_missing_bg.append((grp, msg_id))
                     else:
                         retry_groups.append(grp)
                     time.sleep(0.4)
@@ -1808,6 +1824,13 @@ def run_cycle(
                         if msg_id:
                             db.update_matches_discord_id_batch(grp["records"], msg_id)
                             cards_confirmed += 1
+                            is_automatch = str(grp["primary"].get("mode") or "") != "Custom"
+                            if (
+                                cohdb_client is not None
+                                and is_automatch
+                                and not bool(grp["primary"].get("battlegroups_checked"))
+                            ):
+                                posted_missing_bg.append((grp, msg_id))
                             logger.info("[DUPLA CHECAGEM] Card #%d confirmado na 2ª tentativa (ID %s).", grp["match_id"], msg_id)
                         else:
                             logger.error("Card #%d sem Snowflake na 2ª tentativa; mantido como PENDING.", grp["match_id"])
@@ -1819,12 +1842,59 @@ def run_cycle(
                             redact_secrets(exc),
                         )
 
+            # Retentativa rápida pós-envio (sem atrasar o card!): aguarda o cohdb indexar partidas recém-encerradas
+            recently_retried_mids: set[int] = set()
+            if cohdb_client is not None and posted_missing_bg and not cohdb_client.is_circuit_open:
+                remaining_missing = list(posted_missing_bg)
+                for attempt_idx, wait_sec in enumerate((35, 40), start=1):
+                    if not remaining_missing or cohdb_client.is_circuit_open:
+                        break
+                    logger.info(
+                        "[COHDB BATTLEGROUPS] Aguardando %ds (retentativa %d/2) para indexação do replay de %d partida(s) recém-postada(s)...",
+                        wait_sec,
+                        attempt_idx,
+                        len(remaining_missing),
+                    )
+                    time.sleep(wait_sec)
+                    cohdb_client.invalidate_player_cache()
+                    still_missing: list[tuple[dict[str, Any], str]] = []
+                    for p_grp, p_msg_id in remaining_missing:
+                        if cohdb_client.is_circuit_open:
+                            still_missing.append((p_grp, p_msg_id))
+                            continue
+                        recently_retried_mids.add(int(p_grp["match_id"]))
+                        checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, p_grp)
+                        if checked_ok:
+                            if has_bg:
+                                try:
+                                    patched = discord.edit_match_card(p_msg_id, p_grp)
+                                    if patched:
+                                        bg_patched_cards += 1
+                                        logger.info(
+                                            "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) na retentativa pós-envio %d/2.",
+                                            p_grp["match_id"],
+                                            patched,
+                                            attempt_idx,
+                                        )
+                                    time.sleep(0.35)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d na retentativa pós-envio: %s",
+                                        p_grp["match_id"],
+                                        redact_secrets(exc),
+                                    )
+                        else:
+                            still_missing.append((p_grp, p_msg_id))
+                    remaining_missing = still_missing
+
             # Enriquecimento retroativo silencioso (PATCH): atualiza cards recentes das últimas 4h assim que o cohdb indexar o replay
             if cohdb_client is not None and not cohdb_client.is_circuit_open:
                 missing_bg_rows = db.get_recent_matches_missing_battlegroups(max_age_sec=14400, limit=5)
                 for m_grp in group_matches_by_id(missing_bg_rows):
                     if cohdb_client.is_circuit_open:
                         break
+                    if int(m_grp["match_id"]) in recently_retried_mids:
+                        continue
                     checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, m_grp)
                     if checked_ok and has_bg:
                         existing_msg_id = next(
