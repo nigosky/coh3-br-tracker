@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v7.8 — Quádrupla Checagem (Relic Direta × coh3stats.com × Radar Veteranos × Discord), Resumo Semanal, Limpeza 72h e Segurança Endurecida."""
+"""Monitor automático CoH3 Brasil v7.9 — Quádrupla Checagem (Relic Direta × coh3stats.com × Radar Veteranos × Discord), Battlegroups (cohdb), Resumo Semanal e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
     CORE_BR_ROSTER,
     Coh3StatsAPIClient,
+    CohDBClient,
     RelicAPIClient,
     VeteransRadarClient,
     build_roster_lookup_maps,
@@ -47,7 +48,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_14_matches_only_panel"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_15_battlegroups_panel"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
@@ -1443,6 +1444,65 @@ def run_fourth_radar_check(
     return stats
 
 
+def enrich_group_with_battlegroups(
+    db: MatchDatabase,
+    cohdb: CohDBClient | None,
+    grp: dict[str, Any],
+) -> tuple[bool, bool]:
+    """
+    Consulta `cohdb.com` (somente-leitura) para obter os Battlegroups de uma partida Automatch.
+    Retorna `(checked_on_cohdb, has_battlegroups)`.
+    """
+    if cohdb is None or cohdb.is_circuit_open:
+        return False, False
+    recs = grp.get("records") or [grp.get("primary") or grp]
+    primary = recs[0]
+    mode_str = str(primary.get("mode") or "")
+    if mode_str == "Custom" or "Personalizada" in mode_str:
+        return False, False
+
+    if any(bool(r.get("battlegroups_checked")) for r in recs):
+        has_bg = any(bool(r.get("battlegroups")) for r in recs)
+        return True, has_bg
+
+    match_id = int(grp.get("match_id") or primary.get("match_id") or 0)
+    if match_id <= 0:
+        return False, False
+
+    tracked_pids = [
+        int(r.get("tracked_profile_id", 0) or 0)
+        for r in recs
+        if int(r.get("tracked_profile_id", 0) or 0) > 0
+    ]
+    map_clean = str(primary.get("map_clean") or "")
+    try:
+        bg_map = cohdb.fetch_match_battlegroups(
+            match_id=match_id,
+            tracked_profile_ids=tracked_pids,
+            expected_map_clean=map_clean,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[COHDB BATTLEGROUPS] Falha ao consultar partida #%d: %s",
+            match_id,
+            redact_secrets(exc),
+        )
+        return False, False
+
+    if bg_map is None:
+        return False, False
+
+    db.update_match_battlegroups(match_id, bg_map)
+    str_map = {str(k): v for k, v in bg_map.items()}
+    for r in recs:
+        r["battlegroups"] = str_map
+        r["battlegroups_checked"] = True
+    if isinstance(grp.get("primary"), dict):
+        grp["primary"]["battlegroups"] = str_map
+        grp["primary"]["battlegroups_checked"] = True
+    return True, bool(str_map)
+
+
 def run_cycle(
     config_path: Path,
     relic: RelicAPIClient,
@@ -1454,9 +1514,11 @@ def run_cycle(
     enable_third_check: bool = True,
     radar: VeteransRadarClient | None = None,
     enable_fourth_check: bool = True,
+    cohdb: CohDBClient | None = None,
+    enable_battlegroups: bool = True,
     force_weekly_summary: bool = False,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo com quádrupla checagem (Relic + Relic Direta × coh3stats.com × Radar Veteranos × Discord), Resumo Semanal e compactação SQLite."""
+    """Executa um ciclo completo com quádrupla checagem (Relic + Relic Direta × coh3stats.com × Radar Veteranos × Discord), Battlegroups (cohdb), Resumo Semanal e compactação SQLite."""
     cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -1695,6 +1757,9 @@ def run_cycle(
         newly_finished.sort(key=lambda x: x["completion_time"])
         grouped_new_matches = group_matches_by_id(newly_finished)
         cards_confirmed = 0
+        bg_enriched_new = 0
+        bg_patched_cards = 0
+        cohdb_client = (cohdb if cohdb is not None else CohDBClient()) if enable_battlegroups else None
 
         if discord.is_configured:
             # Recupera novas partidas + recuperadas na 3ª/4ª checagem + pendentes de falhas transitórias anteriores (sem duplicar)
@@ -1710,6 +1775,10 @@ def run_cycle(
 
             retry_groups: list[dict[str, Any]] = []
             for grp in grouped_to_send:
+                if cohdb_client is not None:
+                    _, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
+                    if has_bg:
+                        bg_enriched_new += 1
                 try:
                     msg_id = discord.send_match_card(grp)
                     if msg_id:
@@ -1750,13 +1819,53 @@ def run_cycle(
                             redact_secrets(exc),
                         )
 
+            # Enriquecimento retroativo silencioso (PATCH): atualiza cards recentes das últimas 4h assim que o cohdb indexar o replay
+            if cohdb_client is not None and not cohdb_client.is_circuit_open:
+                missing_bg_rows = db.get_recent_matches_missing_battlegroups(max_age_sec=14400, limit=5)
+                for m_grp in group_matches_by_id(missing_bg_rows):
+                    if cohdb_client.is_circuit_open:
+                        break
+                    checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, m_grp)
+                    if checked_ok and has_bg:
+                        existing_msg_id = next(
+                            (
+                                str(r.get("discord_message_id") or "").strip()
+                                for r in (m_grp.get("records") or [m_grp.get("primary") or {}])
+                                if str(r.get("discord_message_id") or "").strip().isdigit()
+                            ),
+                            "",
+                        )
+                        if existing_msg_id:
+                            try:
+                                patched = discord.edit_match_card(existing_msg_id, m_grp)
+                                if patched:
+                                    bg_patched_cards += 1
+                                    logger.info(
+                                        "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) com Battlegroups.",
+                                        m_grp["match_id"],
+                                        patched,
+                                    )
+                                time.sleep(0.35)
+                            except Exception as exc:
+                                logger.warning(
+                                    "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d no Discord: %s",
+                                    m_grp["match_id"],
+                                    redact_secrets(exc),
+                                )
+                if bg_enriched_new > 0 or bg_patched_cards > 0:
+                    logger.info(
+                        "[COHDB BATTLEGROUPS] Novos cards com BG: %d | Cards recentes atualizados (PATCH): %d",
+                        bg_enriched_new,
+                        bg_patched_cards,
+                    )
+
         if force_rank_scan:
             logger.info("Aviso: o Ranking Unificado BR foi migrado para o projeto dedicado nigosky/coh3-br-ranking.")
 
         if discord.is_configured:
             pruned_count = prune_old_discord_messages(db, discord, retention_hours=cleanup_hours)
 
-            if cards_confirmed > 0 or newly_finished or players_changed or tracked_changed:
+            if cards_confirmed > 0 or bg_patched_cards > 0 or newly_finished or players_changed or tracked_changed:
                 db.set_state("summary_needs_refresh", "1")
 
             summary_msg_id = db.get_state("summary_message_id")
@@ -1828,7 +1937,7 @@ def run_cycle(
                 radar_final_label = f"{fourth_check_stats.get('confirmed_count', 0)}/{fourth_check_stats.get('flagged_count', 0)} OK"
 
             logger.info(
-                "[QUÁDRUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[QUÁDRUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | Battlegroups (cohdb): +%d novo(s)/%d patch | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
                 third_check_stats.get("relic_direct_ok_accounts", 0),
@@ -1837,6 +1946,8 @@ def run_cycle(
                 third_check_stats.get("recovered_unique", 0),
                 radar_final_label,
                 fourth_check_stats.get("recovered_unique", 0),
+                bg_enriched_new,
+                bg_patched_cards,
                 cards_confirmed,
                 remaining_pending,
                 cleanup_hours,
@@ -1859,7 +1970,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.8 -> SQLite + Quádrupla Checagem (Relic × coh3stats × Radar Veteranos) + Resumo Semanal + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.9 -> SQLite + Quádrupla Checagem (Relic × coh3stats × Radar Veteranos) + Battlegroups (cohdb) + Resumo Semanal + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1901,7 +2012,8 @@ def main() -> int:
     relic = RelicAPIClient()
     coh3stats = Coh3StatsAPIClient()
     radar = VeteransRadarClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.8 usando %s...", args.config)
+    cohdb = CohDBClient()
+    logger.info("Iniciando CoH3 Brasil Monitor v7.9 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -1916,6 +2028,7 @@ def main() -> int:
                 reset_discord_channel=(bool(args.reset_discord_channel) and first_iter),
                 coh3stats=coh3stats,
                 radar=radar,
+                cohdb=cohdb,
                 force_weekly_summary=(bool(args.force_weekly_summary) and first_iter),
             )
             first_iter = False

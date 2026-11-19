@@ -6,6 +6,7 @@ import ast
 import codecs
 import concurrent.futures
 import csv
+import html
 import io
 import json
 import logging
@@ -50,6 +51,53 @@ VETERANOS_RADAR_STATE_URL = "https://raw.githubusercontent.com/nigosky/coh3-br-l
 ALLOWED_RADAR_HOSTS: frozenset[str] = frozenset({"raw.githubusercontent.com"})
 VETERANOS_RADAR_PATH_RE = re.compile(r"^/nigosky/coh3-br-lobby-radar/main/state\.json$")
 MAX_RADAR_STATE_BYTES = 256 * 1024  # 256 KB teto rígido para state.json do Radar
+
+# Consulta somente-leitura de Battlegroups em páginas canônicas públicas do cohdb.com (respeitando robots.txt)
+COHDB_BASE_URL = "https://cohdb.com"
+ALLOWED_COHDB_HOSTS: frozenset[str] = frozenset({"cohdb.com"})
+COHDB_PLAYER_MATCHES_PATH_RE = re.compile(r"^/players/\d{1,12}/matches$")
+COHDB_REPLAY_PATH_RE = re.compile(r"^/replays/\d{1,12}$")
+MAX_COHDB_HTML_BYTES = 512 * 1024  # 512 KB teto rígido por página HTML do cohdb.com
+
+# Catálogo oficial dos 28 Battlegroups do Company of Heroes 3 (Patch 3.0.x)
+OFFICIAL_COH3_BATTLEGROUPS: dict[str, str] = {
+    # US Forces
+    "armored_us": "Armored",
+    "free_french_us": "Free French",
+    "infantry_us": "Advanced Infantry",
+    "italian_partisan_us": "Italian Partisan",
+    "paratroopers_us": "Airborne",
+    "spec_ops_us": "Special Operations",
+    "special_weapons_us": "Heavy Weapons",
+    # British Forces
+    "air_and_sea_uk": "Air and Sea",
+    "armored_uk": "Heavy Armor",
+    "ausdefense_uk": "Australian Defense",
+    "can_shock_uk": "Canadian Shock",
+    "indian_artillery_uk": "Indian Artillery",
+    "polish_cavalry_uk": "Polish Cavalry",
+    "special_services_uk": "Special Service",
+    # Wehrmacht
+    "breakthrough_ger": "Breakthrough",
+    "coastal_ger": "Italian Coastal",
+    "last_stand_ger": "Last Stand",
+    "luftwaffe_ger": "Luftwaffe",
+    "mechanized_ger": "Mechanized",
+    "siege_breaker_ger": "Siege Breaker",
+    "terror_ger": "Terror",
+    # Afrikakorps
+    "armored_ak": "Armored Support",
+    "combined_arms_ak": "Italian Combined Arms",
+    "dak_battlefield_ak": "Battlefield Espionage",
+    "elite_forces_ak": "Elite Forces",
+    "italian_infantry_ak": "Italian Infantry",
+    "kriegsmarine_ak": "Kriegsmarine",
+    "panzerjager_kommand_ak": "Panzerjäger Kommand",
+}
+
+_BG_NAME_TO_KEY: dict[str, str] = {
+    v.casefold(): k for k, v in OFFICIAL_COH3_BATTLEGROUPS.items()
+}
 
 # IDs oficiais das leaderboards Steam usadas pelo coh3stats.com
 STEAM_LEADERBOARDS: dict[str, dict[str, int]] = {
@@ -1535,6 +1583,250 @@ class VeteransRadarClient:
             "active_steam_ids": set(),
             "error": redact_secrets(last_err),
         }
+
+
+def normalize_battlegroup(raw_key: str = "", raw_name: str = "") -> dict[str, str] | None:
+    """Normaliza chave/nome de Battlegroup do CoH3 para o catálogo oficial ({'key': ..., 'name': ...})."""
+    k = re.sub(r"_icon_mipped$", "", str(raw_key or "").strip().lower())
+    k = re.sub(r"[^a-z0-9_]", "", k)
+    clean_name = html.unescape(str(raw_name or "")).strip()
+    clean_name = re.sub(r"\s+Battlegroup$", "", clean_name, flags=re.IGNORECASE).strip()
+
+    if k and k in OFFICIAL_COH3_BATTLEGROUPS:
+        return {"key": k, "name": OFFICIAL_COH3_BATTLEGROUPS[k]}
+
+    if clean_name and clean_name.casefold() in ("none", "n/a", "-", "—", "unknown"):
+        clean_name = ""
+
+    if clean_name:
+        matched_k = _BG_NAME_TO_KEY.get(clean_name.casefold())
+        if matched_k:
+            return {"key": matched_k, "name": OFFICIAL_COH3_BATTLEGROUPS[matched_k]}
+        # Fallback seguro para novos Battlegroups futuros de patches do CoH3
+        return {"key": k, "name": clean_name[:40]}
+
+    if k:
+        pretty = " ".join(w.capitalize() for w in k.split("_") if w not in ("us", "uk", "ger", "ak"))
+        return {"key": k, "name": (pretty or k)[:40]}
+    return None
+
+
+class CohDBClient:
+    """
+    Cliente HTTPS endurecido (somente-leitura, respeitando robots.txt do cohdb.com) para extrair
+    o Battlegroup escolhido por cada jogador a partir das páginas canônicas públicas `/players/<id>/matches`
+    e `/replays/<id>`, com cache por ciclo, rate-limit educado e circuit breaker.
+    """
+
+    _ROW_RE = re.compile(r'<tr[^>]*data-href="/replays/(\d{1,12})"[^>]*>(.*?)</tr>', re.S)
+    _TITLE_MATCH_RE = re.compile(
+        r"<title>\s*cohdb\s*(?:–|&ndash;|&#8211;|-)\s*Match\s+(\d{1,12})\s*</title>",
+        re.IGNORECASE,
+    )
+    _PLAYER_LINK_RE = re.compile(r'href="/players/(\d{1,12})"')
+    _BG_ICON_RE = re.compile(r'/assets/races/[^/"]+/battlegroups/([a-z0-9_]+?)(?:-[0-9a-f]+)?\.webp', re.I)
+    _BG_NAME_RE = re.compile(r"Battlegroup</div>\s*<div[^>]*>([^<]{1,80})</div>", re.I)
+
+    def __init__(
+        self,
+        min_interval_sec: float = 0.35,
+        timeout_sec: float = 8.0,
+        circuit_breaker_threshold: int = 3,
+        max_bytes: int = MAX_COHDB_HTML_BYTES,
+    ) -> None:
+        self.min_interval_sec = max(0.15, float(min_interval_sec))
+        self.timeout_sec = max(2.0, float(timeout_sec))
+        self.circuit_breaker_threshold = max(1, int(circuit_breaker_threshold))
+        self.max_bytes = max(32_768, min(int(max_bytes), 2 * 1024 * 1024))
+        self._rate_lock = threading.Lock()
+        self._next_req_ts = 0.0
+        self._consecutive_errors = 0
+        self._circuit_open = False
+        self._player_matches_cache: dict[int, list[tuple[int, str]]] = {}
+        self._replay_to_match_cache: dict[int, tuple[int, dict[int, dict[str, str]]]] = {}
+        self._match_bg_cache: dict[int, dict[int, dict[str, str]]] = {}
+
+    @property
+    def is_circuit_open(self) -> bool:
+        return self._circuit_open
+
+    def _reserve_rate_slot(self) -> None:
+        with self._rate_lock:
+            now_m = time.monotonic()
+            target = max(now_m, self._next_req_ts)
+            self._next_req_ts = target + self.min_interval_sec
+            wait = target - now_m
+        if wait > 0:
+            time.sleep(wait)
+
+    def _fetch_canonical_html(self, path: str, path_regex: re.Pattern[str]) -> str | None:
+        if self._circuit_open:
+            return None
+        if not path or "?" in path or "#" in path or not path_regex.fullmatch(path):
+            raise ValueError(f"Caminho cohdb não canônico bloqueado: {path!r}")
+        url = f"{COHDB_BASE_URL}{path}"
+        parsed = validate_https_endpoint(
+            url,
+            ALLOWED_COHDB_HOSTS,
+            path_prefix="/",
+            path_regex=path_regex,
+        )
+        if parsed.query or parsed.fragment:
+            raise ValueError("Query string ou fragmento bloqueado para cohdb.com (robots.txt).")
+        opener = _get_thread_opener()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; CoH3-BR-Tracker/7.9)",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Encoding": "gzip",
+        }
+        self._reserve_rate_slot()
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with opener.open(req, timeout=self.timeout_sec) as resp:
+                raw = read_bounded_http_body(resp, self.max_bytes)
+            self._consecutive_errors = 0
+            return raw.decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                self._consecutive_errors = 0
+                return None
+            self._consecutive_errors += 1
+            if exc.code in (403, 429) or self._consecutive_errors >= self.circuit_breaker_threshold:
+                self._circuit_open = True
+                logger.warning(
+                    "[COHDB BATTLEGROUPS] Circuit breaker acionado (HTTP %d em %s); seguindo sem bloquear o tracker.",
+                    exc.code,
+                    path,
+                )
+            return None
+        except (urllib.error.URLError, TimeoutError, OSError, RuntimeError) as exc:
+            self._consecutive_errors += 1
+            if self._consecutive_errors >= self.circuit_breaker_threshold:
+                self._circuit_open = True
+                logger.warning(
+                    "[COHDB BATTLEGROUPS] Circuit breaker acionado após %d falhas (%s).",
+                    self._consecutive_errors,
+                    redact_secrets(exc),
+                )
+            return None
+
+    def _get_player_recent_replay_rows(self, profile_id: int) -> list[tuple[int, str]]:
+        pid = int(profile_id or 0)
+        if pid <= 0:
+            return []
+        if pid in self._player_matches_cache:
+            return self._player_matches_cache[pid]
+
+        html_body = self._fetch_canonical_html(f"/players/{pid}/matches", COHDB_PLAYER_MATCHES_PATH_RE)
+        if not html_body:
+            self._player_matches_cache[pid] = []
+            return []
+
+        rows: list[tuple[int, str]] = []
+        seen_rids: set[int] = set()
+        for rid_str, row_html in self._ROW_RE.findall(html_body):
+            rid = int(rid_str)
+            if rid <= 0 or rid in seen_rids:
+                continue
+            seen_rids.add(rid)
+            plain = html.unescape(re.sub(r"<[^>]+>", " ", row_html)).lower()
+            rows.append((rid, re.sub(r"\s+", " ", plain).strip()))
+            if len(rows) >= 12:
+                break
+
+        self._player_matches_cache[pid] = rows
+        return rows
+
+    @classmethod
+    def _parse_replay_page(cls, html_body: str) -> tuple[int, dict[int, dict[str, str]]]:
+        """Extrai `(relic_match_id, {profile_id: {'key': ..., 'name': ...}})` de uma página `/replays/<id>`."""
+        m_title = cls._TITLE_MATCH_RE.search(html_body)
+        relic_mid = int(m_title.group(1)) if m_title else 0
+        bg_by_pid: dict[int, dict[str, str]] = {}
+
+        cards = html_body.split("<div data-player-card")[1:]
+        for card in cards:
+            pm = cls._PLAYER_LINK_RE.search(card)
+            if not pm:
+                continue
+            pid = int(pm.group(1))
+            if pid <= 0:
+                continue
+            bgm = cls._BG_ICON_RE.search(card)
+            bgn = cls._BG_NAME_RE.search(card)
+            norm = normalize_battlegroup(
+                raw_key=bgm.group(1) if bgm else "",
+                raw_name=bgn.group(1) if bgn else "",
+            )
+            if norm:
+                bg_by_pid[pid] = norm
+
+        return relic_mid, bg_by_pid
+
+    def fetch_match_battlegroups(
+        self,
+        match_id: int,
+        tracked_profile_ids: list[int],
+        expected_map_clean: str = "",
+        max_replay_probes: int = 5,
+    ) -> dict[int, dict[str, str]] | None:
+        """
+        Retorna `{profile_id: {'key': ..., 'name': ...}}` para a partida Relic `match_id` se já indexada
+        no `cohdb.com` (pode ser `{}` caso ninguém tenha escolhido Battlegroup), ou `None` se ainda não indexada.
+        """
+        mid = int(match_id or 0)
+        if mid <= 0:
+            return None
+        if mid in self._match_bg_cache:
+            return dict(self._match_bg_cache[mid])
+        if self._circuit_open:
+            return None
+
+        clean_pids = [int(p) for p in dict.fromkeys(tracked_profile_ids or []) if int(p) > 0]
+        if not clean_pids:
+            return None
+
+        map_probe = str(expected_map_clean or "").strip().lower()
+        # Tenta primeiro o 1º jogador monitorado da partida (se não achar, tenta até o 2º)
+        for pid in clean_pids[:2]:
+            if self._circuit_open:
+                break
+            rows = self._get_player_recent_replay_rows(pid)
+            if not rows:
+                continue
+
+            if map_probe:
+                # Prioriza replays cujo mapa bate com map_clean (reduz para 1 requisição na quase totalidade dos casos)
+                ordered_rids = [rid for rid, txt in rows if map_probe in txt] + [
+                    rid for rid, txt in rows if map_probe not in txt
+                ]
+            else:
+                ordered_rids = [rid for rid, _ in rows]
+
+            probes_done = 0
+            for rid in ordered_rids:
+                if mid in self._match_bg_cache:
+                    return dict(self._match_bg_cache[mid])
+                if rid in self._replay_to_match_cache:
+                    cached_mid, cached_bgs = self._replay_to_match_cache[rid]
+                    if cached_mid == mid:
+                        return dict(cached_bgs)
+                    continue
+                if probes_done >= max(1, int(max_replay_probes)) or self._circuit_open:
+                    break
+                probes_done += 1
+
+                r_html = self._fetch_canonical_html(f"/replays/{rid}", COHDB_REPLAY_PATH_RE)
+                if not r_html:
+                    continue
+                parsed_mid, parsed_bgs = self._parse_replay_page(r_html)
+                self._replay_to_match_cache[rid] = (parsed_mid, parsed_bgs)
+                if parsed_mid > 0:
+                    self._match_bg_cache[parsed_mid] = parsed_bgs
+                    if parsed_mid == mid:
+                        return dict(parsed_bgs)
+
+        return None
 
 
 def format_bound_display_alias(

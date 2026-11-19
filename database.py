@@ -145,6 +145,8 @@ class MatchDatabase:
             }
             if "tracked_steam_id" not in existing_match_cols:
                 conn.execute("ALTER TABLE recorded_matches ADD COLUMN tracked_steam_id TEXT DEFAULT ''")
+            if "battlegroups_json" not in existing_match_cols:
+                conn.execute("ALTER TABLE recorded_matches ADD COLUMN battlegroups_json TEXT DEFAULT ''")
 
             existing_player_cols = {
                 str(r["name"]) for r in conn.execute("PRAGMA table_info(tracked_players)").fetchall()
@@ -270,6 +272,12 @@ class MatchDatabase:
     def insert_match(self, match: dict[str, Any], discord_message_id: str | None = None) -> bool:
         """Grava partida atomicamente com INSERT OR IGNORE (sem race condition). Retorna True se foi inédita."""
         now = int(time.time())
+        bg_raw = match.get("battlegroups")
+        bg_json = (
+            json.dumps({str(k): v for k, v in bg_raw.items()}, ensure_ascii=False, separators=(",", ":"))
+            if isinstance(bg_raw, dict)
+            else ""
+        )
         conn = self._connect()
         with conn:
             cur = conn.execute(
@@ -279,8 +287,8 @@ class MatchDatabase:
                     tracked_faction_short, win, resulttype, mode, matchtype_id,
                     map_raw, map_clean, start_time, completion_time, duration_sec,
                     old_elo, new_elo, allies_json, opponents_json, counters_json,
-                    has_replay, coh3stats_url, discord_message_id, recorded_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    has_replay, coh3stats_url, discord_message_id, recorded_at, battlegroups_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(match["match_id"]),
@@ -307,6 +315,7 @@ class MatchDatabase:
                     str(match["coh3stats_url"]),
                     discord_message_id,
                     now,
+                    bg_json,
                 ),
             )
         return cur.rowcount > 0
@@ -330,6 +339,77 @@ class MatchDatabase:
                 [(str(message_id), int(r["match_id"]), int(r["tracked_profile_id"])) for r in records],
             )
 
+    def update_match_battlegroups(
+        self,
+        match_id: int,
+        battlegroups: dict[int, dict[str, str]] | dict[str, dict[str, str]],
+    ) -> int:
+        """Persiste o mapa `{profile_id: {'key': ..., 'name': ...}}` em todas as linhas da partida."""
+        mid = int(match_id or 0)
+        if mid <= 0:
+            return 0
+        payload = json.dumps(
+            {str(k): v for k, v in (battlegroups or {}).items() if isinstance(v, dict)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        conn = self._connect()
+        with conn:
+            cur = conn.execute(
+                "UPDATE recorded_matches SET battlegroups_json = ? WHERE match_id = ?",
+                (payload, mid),
+            )
+        return int(cur.rowcount or 0)
+
+    def get_recent_matches_missing_battlegroups(
+        self,
+        max_age_sec: int = 10800,
+        limit: int = 6,
+    ) -> list[dict[str, Any]]:
+        """
+        Retorna registros de partidas Automatch recentes já postadas no Discord (Snowflake válido)
+        cujos Battlegroups ainda não foram indexados no cohdb.com, para enriquecimento e PATCH retroativo.
+        """
+        safe_limit = max(1, min(int(limit), 30))
+        cutoff = int(time.time()) - max(600, int(max_age_sec))
+        conn = self._connect()
+        mid_rows = conn.execute(
+            """
+            SELECT rm.match_id, MAX(rm.completion_time) AS latest_ct
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.mode != 'Custom'
+              AND rm.completion_time >= ?
+              AND COALESCE(rm.battlegroups_json, '') = ''
+              AND rm.discord_message_id IS NOT NULL
+              AND length(rm.discord_message_id) >= 15
+              AND rm.discord_message_id NOT GLOB '*[^0-9]*'
+            GROUP BY rm.match_id
+            ORDER BY latest_ct DESC
+            LIMIT ?
+            """,
+            (cutoff, safe_limit),
+        ).fetchall()
+        mids = [int(r["match_id"]) for r in mid_rows]
+        if not mids:
+            return []
+        placeholders = ",".join("?" for _ in mids)
+        rows = conn.execute(
+            f"""
+            SELECT rm.*,
+                   COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
+                   COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.match_id IN ({placeholders})
+            ORDER BY rm.completion_time DESC, rm.match_id DESC
+            """,
+            mids,
+        ).fetchall()
+        return [self._row_to_match_dict(r) for r in rows]
+
     @staticmethod
     def _row_to_match_dict(row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
@@ -341,6 +421,16 @@ class MatchDatabase:
         d["has_replay"] = bool(d["has_replay"])
         d["allies"] = json.loads(d.pop("allies_json") or "[]")
         d["opponents"] = json.loads(d.pop("opponents_json") or "[]")
+        raw_bg = str(d.pop("battlegroups_json", "") or "").strip()
+        d["battlegroups_checked"] = bool(raw_bg != "")
+        if raw_bg:
+            try:
+                parsed_bg = json.loads(raw_bg)
+                d["battlegroups"] = parsed_bg if isinstance(parsed_bg, dict) else {}
+            except Exception:
+                d["battlegroups"] = {}
+        else:
+            d["battlegroups"] = {}
         d.pop("counters_json", None)
         d["counters"] = {}
         return d

@@ -580,6 +580,28 @@ class DiscordWebhookClient:
         _, data = self._request("POST", self._append_wait_param(self._webhook_url), payload, files=[(fname, png_bytes, "image/png")])
         return self._extract_snowflake(data)
 
+    def edit_match_card(
+        self,
+        message_id: str,
+        match_or_group: dict[str, Any] | list[dict[str, Any]],
+    ) -> str | None:
+        """Atualiza silenciosamente (PATCH) o PNG de um Card de partida já postado no Discord (ex.: ao enriquecer Battlegroups)."""
+        if not self.is_configured:
+            return None
+        clean_id = (message_id or "").strip()
+        if not clean_id or not SNOWFLAKE_ID_RE.fullmatch(clean_id):
+            return None
+        grp = _normalize_match_group(match_or_group)
+        fname = f"match_{int(grp['match_id'])}.png"
+        png_bytes = render_matches_table_png([grp], avatar_provider=self.get_avatar_provider(), live_single=True)
+        payload = build_match_embed_payload(grp, bot_username=self.bot_username, attachment_filename=fname)
+        parsed = urllib.parse.urlparse(self._webhook_url)
+        msg_url = urllib.parse.urlunparse(parsed._replace(path=f"{parsed.path.rstrip('/')}/messages/{clean_id}"))
+        status, data = self._request("PATCH", msg_url, payload, files=[(fname, png_bytes, "image/png")])
+        if status == 404:
+            return None
+        return self._extract_snowflake(data)
+
     def send_ranking_movement_card(self, movements_by_mode: dict[str, list[dict[str, Any]]]) -> str | None:
         if not self.is_configured or not any(bool(v) for v in (movements_by_mode or {}).values()):
             return None
