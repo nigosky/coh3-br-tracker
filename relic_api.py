@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import codecs
 import concurrent.futures
 import csv
@@ -43,6 +44,12 @@ COH3STATS_OPEN_DATA_PATH_RE = re.compile(r"^/matches/matches-\d{9,11}\.json$")
 MAX_COH3STATS_WIRE_BYTES = 64 * 1024 * 1024  # 64 MB teto rígido no fio
 MAX_COH3STATS_STREAM_BYTES = 300 * 1024 * 1024  # 300 MB teto rígido no fluxo descomprimido
 MAX_COH3STATS_OBJECT_BUFFER_CHARS = 4 * 1024 * 1024  # 4 MB teto de buffer por partida individual
+
+# Estado público somente-leitura do Radar de Lobby dos Veteranos BR (nigosky/coh3-br-lobby-radar)
+VETERANOS_RADAR_STATE_URL = "https://raw.githubusercontent.com/nigosky/coh3-br-lobby-radar/main/state.json"
+ALLOWED_RADAR_HOSTS: frozenset[str] = frozenset({"raw.githubusercontent.com"})
+VETERANOS_RADAR_PATH_RE = re.compile(r"^/nigosky/coh3-br-lobby-radar/main/state\.json$")
+MAX_RADAR_STATE_BYTES = 256 * 1024  # 256 KB teto rígido para state.json do Radar
 
 # IDs oficiais das leaderboards Steam usadas pelo coh3stats.com
 STEAM_LEADERBOARDS: dict[str, dict[str, int]] = {
@@ -862,6 +869,66 @@ class RelicAPIClient:
             result[pid] = ordered
         return result, failed_batches
 
+    def fetch_players_latest_stat_timestamps(
+        self,
+        players: list[dict[str, Any]],
+    ) -> dict[int, int]:
+        """
+        Consulta `getPersonalStat` em lotes de até 10 contas e retorna `{profile_id: max_lastmatchdate}`
+        considerando todas as leaderboards (inclusive placement/unranked), como sinal auxiliar na 4ª checagem Radar.
+        """
+        clean_pids = sorted(
+            {
+                int(pl.get("profile_id", 0) or 0)
+                for pl in (players or [])
+                if isinstance(pl, dict) and int(pl.get("profile_id", 0) or 0) > 0
+            }
+        )
+        if not clean_pids:
+            return {}
+
+        latest_by_pid: dict[int, int] = {}
+        chunks = [clean_pids[i : i + 10] for i in range(0, len(clean_pids), 10)]
+
+        for chunk in chunks:
+            target_set = set(chunk)
+            encoded_ids = urllib.parse.quote("[" + ",".join(str(p) for p in chunk) + "]")
+            url = f"{BASE_URL}/getPersonalStat?title={TITLE_STEAM}&profile_ids={encoded_ids}"
+            try:
+                data = self._get_json(url, retries=2)
+            except Exception as exc:
+                logger.warning(
+                    "[4ª CHECAGEM RADAR] Falha ao consultar getPersonalStat (%d conta(s)): %s",
+                    len(chunk),
+                    redact_secrets(exc),
+                )
+                continue
+
+            sg_to_pids: dict[int, list[int]] = {}
+            for sg in data.get("statGroups", []):
+                if not isinstance(sg, dict) or "id" not in sg:
+                    continue
+                matched = [
+                    int(m.get("profile_id", 0) or 0)
+                    for m in (sg.get("members") or [])
+                    if isinstance(m, dict) and int(m.get("profile_id", 0) or 0) in target_set
+                ]
+                if matched:
+                    sg_to_pids[int(sg["id"])] = matched
+
+            for st in data.get("leaderboardStats", []):
+                if not isinstance(st, dict):
+                    continue
+                sg_id = int(st.get("statgroup_id", -1))
+                lmd = int(st.get("lastmatchdate", 0) or 0)
+                if lmd <= 0 or sg_id not in sg_to_pids:
+                    continue
+                for pid in sg_to_pids[sg_id]:
+                    if lmd > latest_by_pid.get(pid, 0):
+                        latest_by_pid[pid] = lmd
+
+        return latest_by_pid
+
 
 class Coh3StatsAPIClient:
     """
@@ -1315,6 +1382,159 @@ class Coh3StatsAPIClient:
             for pid, mid_map in combined_by_pid.items()
         }
         return final_by_pid, ok_days, total_scanned, fail_count
+
+
+class VeteransRadarClient:
+    """
+    Cliente HTTPS endurecido (estritamente somente-leitura) para o estado público do Radar de Lobby
+    dos Veteranos BR (`nigosky/coh3-br-lobby-radar/main/state.json`), usado como 4ª checagem cruzada
+    de partidas recentes dos jogadores monitorados.
+    """
+
+    def __init__(
+        self,
+        state_url: str = VETERANOS_RADAR_STATE_URL,
+        timeout_sec: float = 8.0,
+        max_bytes: int = MAX_RADAR_STATE_BYTES,
+    ) -> None:
+        self.state_url = (state_url or VETERANOS_RADAR_STATE_URL).strip()
+        self.timeout_sec = max(2.0, float(timeout_sec))
+        self.max_bytes = max(4096, min(int(max_bytes), 1024 * 1024))
+
+    @staticmethod
+    def _extract_pids_from_sequence(seq: Any) -> set[int]:
+        out: set[int] = set()
+        if not isinstance(seq, (list, tuple, set)):
+            return out
+        for item in seq:
+            candidate = item[0] if isinstance(item, (list, tuple)) and item else item
+            if isinstance(candidate, bool):
+                continue
+            if isinstance(candidate, int) and candidate > 0:
+                out.add(candidate)
+            elif isinstance(candidate, str) and candidate.isdigit() and int(candidate) > 0:
+                out.add(int(candidate))
+        return out
+
+    @staticmethod
+    def _extract_steam_ids_from_sequence(seq: Any) -> set[str]:
+        out: set[str] = set()
+        if not isinstance(seq, (list, tuple, set)):
+            return out
+        for item in seq:
+            candidate = item[0] if isinstance(item, (list, tuple)) and item else item
+            sid = _extract_steam_id(candidate)
+            if sid:
+                out.add(sid)
+        return out
+
+    @classmethod
+    def _parse_radar_state_payload(cls, payload: dict[str, Any]) -> tuple[set[int], set[str], int]:
+        """Extrai profile_ids e SteamID64s dos Veteranos em atividade CoH3 recente do state.json do Radar."""
+        last_sync_ts = int(payload.get("last_sync_ts", 0) or 0)
+        active_pids: set[int] = set()
+        active_sids: set[str] = set()
+
+        active_pids.update(cls._extract_pids_from_sequence(payload.get("last_alert_coh3_pids")))
+
+        raw_digest = payload.get("last_digest")
+        if isinstance(raw_digest, str) and 2 <= len(raw_digest) <= 65536:
+            try:
+                dig = ast.literal_eval(raw_digest)
+                if isinstance(dig, tuple) and dig and isinstance(dig[0], tuple):
+                    vet_tuple = dig[0]
+                    # dig[0] = (vet_in_coh3, vet_online_steam, vet_recent_relic)
+                    if len(vet_tuple) >= 1:
+                        active_pids.update(cls._extract_pids_from_sequence(vet_tuple[0]))
+                    if len(vet_tuple) >= 3:
+                        active_pids.update(cls._extract_pids_from_sequence(vet_tuple[2]))
+            except (ValueError, SyntaxError, TypeError):
+                pass
+
+        raw_fast_sig = payload.get("last_steam_fast_sig")
+        if isinstance(raw_fast_sig, str) and 2 <= len(raw_fast_sig) <= 65536:
+            try:
+                fast = ast.literal_eval(raw_fast_sig)
+                if isinstance(fast, tuple) and fast:
+                    # fast[0] = lista ordenada de SteamID64s atualmente no CoH3 via Steam
+                    active_sids.update(cls._extract_steam_ids_from_sequence(fast[0]))
+            except (ValueError, SyntaxError, TypeError):
+                pass
+
+        return active_pids, active_sids, last_sync_ts
+
+    def fetch_active_veteranos(self, max_age_sec: int = 7200) -> dict[str, Any]:
+        """
+        Busca o estado atual do Radar dos Veteranos (somente-leitura, não-bloqueante).
+        Retorna dict com: ok, stale, last_sync_ts, age_sec, active_pids, active_steam_ids, error.
+        """
+        try:
+            validate_https_endpoint(
+                self.state_url,
+                ALLOWED_RADAR_HOSTS,
+                path_prefix="/nigosky/coh3-br-lobby-radar/",
+                path_regex=VETERANOS_RADAR_PATH_RE,
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "stale": False,
+                "last_sync_ts": 0,
+                "age_sec": -1,
+                "active_pids": set(),
+                "active_steam_ids": set(),
+                "error": redact_secrets(exc),
+            }
+
+        opener = _get_thread_opener()
+        headers = {
+            "User-Agent": "CoH3-BR-Discord-Tracker/7.8",
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "Cache-Control": "no-cache",
+        }
+        last_err: Exception | None = None
+        for attempt in range(2):
+            try:
+                req = urllib.request.Request(self.state_url, headers=headers)
+                with opener.open(req, timeout=self.timeout_sec) as resp:
+                    raw_bytes = read_bounded_http_body(resp, self.max_bytes)
+                payload = json.loads(raw_bytes.decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Formato JSON inesperado no state.json do Radar.")
+                active_pids, active_sids, last_sync_ts = self._parse_radar_state_payload(payload)
+                now_ts = int(time.time())
+                age_sec = max(0, now_ts - last_sync_ts) if last_sync_ts > 0 else -1
+                stale = bool(max_age_sec > 0 and last_sync_ts > 0 and age_sec > max_age_sec)
+                return {
+                    "ok": True,
+                    "stale": stale,
+                    "last_sync_ts": last_sync_ts,
+                    "age_sec": age_sec,
+                    "active_pids": set() if stale else active_pids,
+                    "active_steam_ids": set() if stale else active_sids,
+                    "error": "",
+                }
+            except urllib.error.HTTPError as exc:
+                last_err = exc
+                if exc.code in (400, 401, 403, 404):
+                    break
+                if attempt == 0:
+                    time.sleep(0.6)
+            except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError) as exc:
+                last_err = exc
+                if attempt == 0:
+                    time.sleep(0.6)
+
+        return {
+            "ok": False,
+            "stale": False,
+            "last_sync_ts": 0,
+            "age_sec": -1,
+            "active_pids": set(),
+            "active_steam_ids": set(),
+            "error": redact_secrets(last_err),
+        }
 
 
 def format_bound_display_alias(

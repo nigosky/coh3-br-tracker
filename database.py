@@ -239,6 +239,34 @@ class MatchDatabase:
         ).fetchall()
         return {int(r["match_id"]) for r in rows}
 
+    def get_player_latest_match_info(self, tracked_profile_id: int) -> dict[str, Any] | None:
+        """Retorna metadados resumidos da última partida catalogada para o jogador (uso na 4ª checagem Radar)."""
+        pid = int(tracked_profile_id or 0)
+        if pid <= 0:
+            return None
+        row = self._connect().execute(
+            """
+            SELECT match_id, completion_time, discord_message_id, recorded_at, map_clean, mode
+            FROM recorded_matches
+            WHERE tracked_profile_id = ?
+            ORDER BY completion_time DESC, match_id DESC
+            LIMIT 1
+            """,
+            (pid,),
+        ).fetchone()
+        if not row:
+            return None
+        msg_id = str(row["discord_message_id"] or "").strip()
+        return {
+            "match_id": int(row["match_id"]),
+            "completion_time": int(row["completion_time"] or 0),
+            "discord_message_id": msg_id,
+            "is_delivered_snowflake": len(msg_id) >= 15 and msg_id.isdigit(),
+            "recorded_at": int(row["recorded_at"] or 0),
+            "map_clean": str(row["map_clean"] or ""),
+            "mode": str(row["mode"] or ""),
+        }
+
     def insert_match(self, match: dict[str, Any], discord_message_id: str | None = None) -> bool:
         """Grava partida atomicamente com INSERT OR IGNORE (sem race condition). Retorna True se foi inédita."""
         now = int(time.time())

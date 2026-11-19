@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor automático CoH3 Brasil v7.6 — Tripla Checagem (Relic Direta × coh3stats.com), Ranking Diário, Limpeza 72h e Segurança Endurecida."""
+"""Monitor automático CoH3 Brasil v7.8 — Quádrupla Checagem (Relic Direta × coh3stats.com × Radar Veteranos × Discord), Resumo Semanal, Limpeza 72h e Segurança Endurecida."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from relic_api import (
     CORE_BR_ROSTER,
     Coh3StatsAPIClient,
     RelicAPIClient,
+    VeteransRadarClient,
     build_roster_lookup_maps,
     build_top_tracked_players,
     compute_merged_mode_rankings,
@@ -1110,6 +1111,338 @@ def run_third_cross_check(
     return stats
 
 
+def _load_pid_set_state(db: MatchDatabase, key: str) -> set[int]:
+    raw = (db.get_state(key) or "").strip()
+    if not raw:
+        return set()
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return {
+                int(x)
+                for x in parsed
+                if (isinstance(x, int) and not isinstance(x, bool) and x > 0)
+                or (isinstance(x, str) and x.isdigit() and int(x) > 0)
+            }
+    except Exception:
+        pass
+    return set()
+
+
+def _save_pid_set_state(db: MatchDatabase, key: str, pids: set[int]) -> None:
+    clean = sorted({int(p) for p in pids if int(p) > 0})
+    db.set_state(key, json.dumps(clean, separators=(",", ":")))
+
+
+def run_fourth_radar_check(
+    db: MatchDatabase,
+    relic: RelicAPIClient,
+    radar: VeteransRadarClient | None,
+    synced_players: list[dict[str, Any]],
+    newly_finished: list[dict[str, Any]],
+    only_automatch: bool,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    recovery_min_completion_ts: int,
+    live_marker: str | None,
+    pending_max_age_sec: int = 21600,
+    radar_recent_window_sec: int = 5400,
+    pass1_failed_pids: set[int] | None = None,
+) -> dict[str, Any]:
+    """
+    4ª Checagem Cruzada (somente-leitura) com o Radar de Lobby dos Veteranos (`nigosky/coh3-br-lobby-radar`).
+    Identifica Veteranos atualmente/recentemente no CoH3 (ou que acabaram de sair do Radar), cruza com o SQLite
+    e com `getPersonalStat.lastmatchdate` da Relic, e executa rechecagem prioritária nos dois endpoints de histórico
+    da Relic caso alguma partida recente não tenha sido capturada ou entregue ao Discord.
+    """
+    stats: dict[str, Any] = {
+        "radar_ok": False,
+        "radar_stale": False,
+        "radar_age_min": -1,
+        "flagged_count": 0,
+        "exited_count": 0,
+        "confirmed_count": 0,
+        "rechecked_count": 0,
+        "recovered_unique": 0,
+        "requeued_undelivered": 0,
+        "lagging_count": 0,
+        "synced_siblings": 0,
+    }
+    if radar is None or not synced_players:
+        return stats
+
+    radar_res = radar.fetch_active_veteranos(max_age_sec=7200)
+    if not radar_res.get("ok"):
+        logger.warning(
+            "[4ª CHECAGEM RADAR VETERANOS] Radar temporariamente indisponível (não-bloqueante): %s",
+            radar_res.get("error") or "erro desconhecido",
+        )
+        return stats
+
+    stats["radar_ok"] = True
+    age_sec = int(radar_res.get("age_sec", -1))
+    stats["radar_age_min"] = (age_sec // 60) if age_sec >= 0 else -1
+    if radar_res.get("stale"):
+        stats["radar_stale"] = True
+        logger.info(
+            "[4ª CHECAGEM RADAR VETERANOS] Estado do Radar expirado (sync há %d min); aguardando nova atualização.",
+            stats["radar_age_min"],
+        )
+        return stats
+
+    by_pid = {int(pl["profile_id"]): pl for pl in synced_players if int(pl.get("profile_id", 0) or 0) > 0}
+    by_sid = {
+        str(pl.get("steam_id") or "").strip(): pl
+        for pl in synced_players
+        if str(pl.get("steam_id") or "").strip()
+    }
+
+    curr_radar_pids: set[int] = set()
+    for pid in radar_res.get("active_pids") or set():
+        if int(pid) in by_pid:
+            curr_radar_pids.add(int(pid))
+    for sid in radar_res.get("active_steam_ids") or set():
+        matched_pl = by_sid.get(str(sid).strip())
+        if matched_pl is not None:
+            curr_radar_pids.add(int(matched_pl["profile_id"]))
+
+    prev_radar_pids = _load_pid_set_state(db, "last_radar_active_pids_json") & set(by_pid.keys())
+    prev_lagging_pids = _load_pid_set_state(db, "radar_lagging_pids_json") & set(by_pid.keys())
+    exited_radar_pids = prev_radar_pids - curr_radar_pids
+    target_pids = curr_radar_pids | exited_radar_pids | prev_lagging_pids
+
+    stats["flagged_count"] = len(curr_radar_pids)
+    stats["exited_count"] = len(exited_radar_pids)
+
+    if not target_pids:
+        _save_pid_set_state(db, "last_radar_active_pids_json", curr_radar_pids)
+        _save_pid_set_state(db, "radar_lagging_pids_json", set())
+        age_lbl = f"sync há {stats['radar_age_min']} min" if stats["radar_age_min"] >= 0 else "sync OK"
+        logger.info(
+            "[4ª CHECAGEM RADAR VETERANOS] Radar OK (%s) | Nenhum Veterano em atividade CoH3 recente.",
+            age_lbl,
+        )
+        return stats
+
+    now_ts = int(time.time())
+    radar_sync_ts = int(radar_res.get("last_sync_ts", 0) or 0)
+    ref_ts = min(now_ts, radar_sync_ts) if radar_sync_ts > 0 else now_ts
+    recent_cutoff_ts = ref_ts - max(1800, int(radar_recent_window_sec))
+    failed_set = set(pass1_failed_pids or set())
+
+    target_players = [by_pid[pid] for pid in sorted(target_pids)]
+    stat_lmd_by_pid: dict[int, int] = {}
+    if callable(getattr(relic, "fetch_players_latest_stat_timestamps", None)):
+        try:
+            stat_lmd_by_pid = relic.fetch_players_latest_stat_timestamps(target_players)
+        except Exception as exc:
+            logger.warning(
+                "[4ª CHECAGEM RADAR VETERANOS] Falha ao consultar getPersonalStat: %s",
+                redact_secrets(exc),
+            )
+
+    latest_info_by_pid: dict[int, dict[str, Any] | None] = {}
+    recheck_players: list[dict[str, Any]] = []
+    has_stat_ahead = False
+
+    for pl in target_players:
+        pid = int(pl["profile_id"])
+        latest = db.get_player_latest_match_info(pid)
+        latest_info_by_pid[pid] = latest
+        db_ct = int(latest["completion_time"]) if latest else 0
+        stat_lmd = int(stat_lmd_by_pid.get(pid, 0) or 0)
+
+        stat_ahead = stat_lmd > (db_ct + 10)
+        if stat_ahead:
+            has_stat_ahead = True
+
+        missing_recent = db_ct < recent_cutoff_ts
+        latest_undelivered = False
+        if latest and db_ct >= recent_cutoff_ts:
+            msg_id = str(latest.get("discord_message_id") or "")
+            rec_at = int(latest.get("recorded_at") or 0)
+            is_delivered = bool(latest.get("is_delivered_snowflake"))
+            is_active_pending = msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
+            is_non_live = msg_id in (SEEDED_DISCORD_MARKER, "PRUNED")
+            if not is_delivered and not is_active_pending and not is_non_live:
+                latest_undelivered = True
+
+        if stat_ahead or missing_recent or latest_undelivered or (pid in failed_set) or (pid in exited_radar_pids):
+            recheck_players.append(pl)
+
+    stats["rechecked_count"] = len(recheck_players)
+    if recheck_players:
+        if has_stat_ahead:
+            time.sleep(1.5)
+
+        candidate_pairs: dict[tuple[int, int], dict[str, Any]] = {}
+
+        # Rechecagem prioritária #1: getRecentMatchHistoryByProfileId
+        for pl in recheck_players:
+            pid = int(pl["profile_id"])
+            try:
+                rows = relic.fetch_player_recent_matches(
+                    profile_id=pid,
+                    fallback_alias=str(pl.get("original_alias") or pl["alias"]),
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                )
+                for m in rows:
+                    mid = int(m.get("match_id", 0) or 0)
+                    comp_ts = int(m.get("completion_time", 0) or 0)
+                    if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                        candidate_pairs[(mid, pid)] = m
+            except Exception as exc:
+                logger.warning(
+                    "[4ª CHECAGEM RADAR] Falha na rechecagem primária de %s (#%d): %s",
+                    pl.get("alias", pid),
+                    pid,
+                    redact_secrets(exc),
+                )
+
+        # Rechecagem prioritária #2: getRecentMatchHistory (por SteamID64)
+        if callable(getattr(relic, "fetch_recent_matches_direct_batch", None)):
+            try:
+                direct_map, _ = relic.fetch_recent_matches_direct_batch(
+                    players=recheck_players,
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                    batch_size=1,
+                    max_workers=min(4, len(recheck_players)),
+                )
+                for pid, rows in direct_map.items():
+                    for m in rows:
+                        mid = int(m.get("match_id", 0) or 0)
+                        comp_ts = int(m.get("completion_time", 0) or 0)
+                        if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                            key = (mid, int(pid))
+                            if key in candidate_pairs:
+                                candidate_pairs[key] = _merge_match_records(candidate_pairs[key], m)
+                            else:
+                                candidate_pairs[key] = m
+            except Exception as exc:
+                logger.warning(
+                    "[4ª CHECAGEM RADAR] Falha na rechecagem direta Relic: %s",
+                    redact_secrets(exc),
+                )
+
+        if candidate_pairs:
+            all_mids = sorted({mid for mid, _ in candidate_pairs})
+            delivery_map = db.get_match_delivery_map(all_mids)
+            existing_new_keys = {(int(m["match_id"]), int(m["tracked_profile_id"])) for m in newly_finished}
+            recovered_mids: set[int] = set()
+            requeued_mids: set[int] = set()
+
+            ordered = sorted(
+                candidate_pairs.items(),
+                key=lambda kv: (int(kv[1].get("completion_time", 0)), kv[0][0], kv[0][1]),
+            )
+            for (mid, pid), match_obj in ordered:
+                info = delivery_map.get(mid)
+                if info is not None:
+                    if info["handled_non_live"]:
+                        continue
+                    existing_snowflake = info["snowflake"]
+                    if existing_snowflake:
+                        if pid not in info["rows"]:
+                            if db.insert_match(match_obj, discord_message_id=existing_snowflake):
+                                stats["synced_siblings"] += 1
+                        continue
+                    if pid in info["rows"]:
+                        cur_msg_id, cur_rec_at = info["rows"][pid]
+                        if cur_msg_id == PENDING_DISCORD_MARKER and (now_ts - cur_rec_at) < pending_max_age_sec:
+                            continue
+                        if (
+                            live_marker == PENDING_DISCORD_MARKER
+                            and mid not in requeued_mids
+                            and db.requeue_undelivered_match(mid)
+                        ):
+                            requeued_mids.add(mid)
+                            recovered_mids.add(mid)
+                            stats["requeued_undelivered"] += 1
+                            if (mid, pid) not in existing_new_keys:
+                                newly_finished.append(match_obj)
+                                existing_new_keys.add((mid, pid))
+                            logger.info(
+                                "[4ª CHECAGEM RADAR - REENFILEIRADA] %s (%s) -> %s em %s (%s) [#%d]",
+                                match_obj["tracked_alias"],
+                                match_obj["tracked_faction_short"],
+                                "VITÓRIA" if match_obj["win"] else "DERROTA",
+                                match_obj["map_clean"],
+                                match_obj["mode"],
+                                mid,
+                            )
+                        continue
+                    has_active_pending = any(
+                        msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
+                        for msg_id, rec_at in info["rows"].values()
+                    )
+                else:
+                    has_active_pending = False
+
+                if db.insert_match(match_obj, discord_message_id=live_marker):
+                    if (mid, pid) not in existing_new_keys:
+                        newly_finished.append(match_obj)
+                        existing_new_keys.add((mid, pid))
+                    if has_active_pending:
+                        stats["synced_siblings"] += 1
+                    else:
+                        recovered_mids.add(mid)
+                        logger.info(
+                            "[4ª CHECAGEM RADAR - RECUPERADA] %s (%s) -> %s em %s (%s) [#%d]",
+                            match_obj["tracked_alias"],
+                            match_obj["tracked_faction_short"],
+                            "VITÓRIA" if match_obj["win"] else "DERROTA",
+                            match_obj["map_clean"],
+                            match_obj["mode"],
+                            mid,
+                        )
+
+            stats["recovered_unique"] = len(recovered_mids)
+
+    # Reavalia confirmação pós-checagem e identifica eventual atraso de indexação da Relic
+    new_lagging_pids: set[int] = set()
+    confirmed_count = 0
+    for pid in sorted(target_pids):
+        latest = db.get_player_latest_match_info(pid)
+        db_ct = int(latest["completion_time"]) if latest else 0
+        stat_lmd = int(stat_lmd_by_pid.get(pid, 0) or 0)
+        if pid in curr_radar_pids and latest and db_ct >= recent_cutoff_ts:
+            msg_id = str(latest.get("discord_message_id") or "")
+            if bool(latest.get("is_delivered_snowflake")) or msg_id == PENDING_DISCORD_MARKER:
+                confirmed_count += 1
+        if stat_lmd > (db_ct + 10):
+            new_lagging_pids.add(pid)
+            lmd_brt = datetime.fromtimestamp(stat_lmd, tz=BRT_TZ).strftime("%d/%m %H:%M:%S BRT")
+            logger.warning(
+                "[4ª CHECAGEM RADAR] %s (#%d) possui lastmatchdate Relic mais recente (%s) ainda não indexado no histórico; rechecagem automática no próximo ciclo.",
+                by_pid[pid].get("alias", pid),
+                pid,
+                lmd_brt,
+            )
+
+    stats["confirmed_count"] = confirmed_count
+    stats["lagging_count"] = len(new_lagging_pids)
+    _save_pid_set_state(db, "last_radar_active_pids_json", curr_radar_pids)
+    _save_pid_set_state(db, "radar_lagging_pids_json", new_lagging_pids)
+
+    flagged_aliases = ", ".join(str(by_pid[p].get("alias", p)) for p in sorted(curr_radar_pids)) or "nenhum"
+    exited_part = f" | Saíram: {len(exited_radar_pids)}" if exited_radar_pids else ""
+    age_lbl = f"sync há {stats['radar_age_min']} min" if stats["radar_age_min"] >= 0 else "sync OK"
+    logger.info(
+        "[4ª CHECAGEM RADAR VETERANOS] Radar OK (%s) | Sinalizados: %d (%s)%s | Confirmados no Tracker: %d/%d | Rechecados: %d | Recuperadas p/ Discord: +%d (Reenfileiradas: %d)",
+        age_lbl,
+        stats["flagged_count"],
+        flagged_aliases,
+        exited_part,
+        stats["confirmed_count"],
+        stats["flagged_count"],
+        stats["rechecked_count"],
+        stats["recovered_unique"],
+        stats["requeued_undelivered"],
+    )
+    return stats
+
+
 def run_cycle(
     config_path: Path,
     relic: RelicAPIClient,
@@ -1119,9 +1452,11 @@ def run_cycle(
     reset_discord_channel: bool = False,
     coh3stats: Coh3StatsAPIClient | None = None,
     enable_third_check: bool = True,
+    radar: VeteransRadarClient | None = None,
+    enable_fourth_check: bool = True,
     force_weekly_summary: bool = False,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo com tripla checagem (Relic + Relic Direta em lote × coh3stats.com), Resumo Semanal, compactação SQLite e entrega confirmada no Discord."""
+    """Executa um ciclo completo com quádrupla checagem (Relic + Relic Direta × coh3stats.com × Radar Veteranos × Discord), Resumo Semanal e compactação SQLite."""
     cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -1241,6 +1576,7 @@ def run_cycle(
             ]
 
         fetch_failures_final = 0
+        pass1_failed_pids: set[int] = set()
         live_marker = PENDING_DISCORD_MARKER if discord.is_configured else None
         seed_marker = SEEDED_DISCORD_MARKER if discord.is_configured else None
 
@@ -1251,6 +1587,7 @@ def run_cycle(
 
             if fetch_err is not None or recent_matches is None:
                 fetch_failures_final += 1
+                pass1_failed_pids.add(pid)
                 logger.error("Erro ao buscar partidas de %s (#%d) após dupla checagem: %s", alias, pid, redact_secrets(fetch_err))
                 continue
 
@@ -1309,12 +1646,13 @@ def run_cycle(
             "coh3stats_days_audited": 0,
             "coh3stats_days_pending": 0,
         }
-        if enable_third_check and pre_synced_pids:
-            refreshed_active = db.get_active_players()
-            synced_for_audit = [pl for pl in refreshed_active if int(pl["profile_id"]) in pre_synced_pids]
-            display_since_raw = db.get_state("display_since_ts") or "0"
-            display_since_ts = int(display_since_raw) if display_since_raw.isdigit() else 0
-            recovery_min_completion_ts = max(now_ts - window_sec, display_since_ts)
+        display_since_raw = db.get_state("display_since_ts") or "0"
+        display_since_ts = int(display_since_raw) if display_since_raw.isdigit() else 0
+        recovery_min_completion_ts = max(now_ts - window_sec, display_since_ts)
+        refreshed_active = db.get_active_players() if pre_synced_pids else []
+        synced_for_audit = [pl for pl in refreshed_active if int(pl["profile_id"]) in pre_synced_pids]
+
+        if enable_third_check and synced_for_audit:
             c3s_client = coh3stats if coh3stats is not None else Coh3StatsAPIClient()
             third_check_stats = run_third_cross_check(
                 db=db,
@@ -1330,12 +1668,36 @@ def run_cycle(
                 window_sec=window_sec,
             )
 
+        # 4ª Checagem Cruzada (somente-leitura): Radar de Lobby dos Veteranos × Relic PersonalStat/Histórico
+        fourth_check_stats: dict[str, Any] = {
+            "radar_ok": False,
+            "radar_stale": False,
+            "flagged_count": 0,
+            "confirmed_count": 0,
+            "recovered_unique": 0,
+        }
+        if enable_fourth_check and synced_for_audit:
+            radar_client = radar if radar is not None else VeteransRadarClient()
+            fourth_check_stats = run_fourth_radar_check(
+                db=db,
+                relic=relic,
+                radar=radar_client,
+                synced_players=synced_for_audit,
+                newly_finished=newly_finished,
+                only_automatch=only_automatch,
+                roster_maps=roster_maps,
+                recovery_min_completion_ts=recovery_min_completion_ts,
+                live_marker=live_marker,
+                pending_max_age_sec=pending_max_age_sec,
+                pass1_failed_pids=pass1_failed_pids,
+            )
+
         newly_finished.sort(key=lambda x: x["completion_time"])
         grouped_new_matches = group_matches_by_id(newly_finished)
         cards_confirmed = 0
 
         if discord.is_configured:
-            # Recupera novas partidas + recuperadas na 3ª checagem + pendentes de falhas transitórias anteriores (sem duplicar)
+            # Recupera novas partidas + recuperadas na 3ª/4ª checagem + pendentes de falhas transitórias anteriores (sem duplicar)
             pending_records = db.get_pending_matches(max_age_sec=pending_max_age_sec, limit=100)
             grouped_to_send = group_matches_by_id(pending_records)
             new_match_ids = {int(g["match_id"]) for g in grouped_new_matches}
@@ -1458,14 +1820,23 @@ def run_cycle(
                 if third_check_stats.get("coh3stats_days_pending", 0) == 0
                 else f"{third_check_stats.get('coh3stats_days_audited', 0)}/{third_check_stats.get('coh3stats_days_pending', 0)} dia(s) OK"
             )
+            if not fourth_check_stats.get("radar_ok"):
+                radar_final_label = "indisponível"
+            elif fourth_check_stats.get("radar_stale"):
+                radar_final_label = "expirado"
+            else:
+                radar_final_label = f"{fourth_check_stats.get('confirmed_count', 0)}/{fourth_check_stats.get('flagged_count', 0)} OK"
+
             logger.info(
-                "[TRIPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d recuperada(s) | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[QUÁDRUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
                 third_check_stats.get("relic_direct_ok_accounts", 0),
                 third_check_stats.get("relic_direct_total_accounts", 0),
                 c3s_final_label,
                 third_check_stats.get("recovered_unique", 0),
+                radar_final_label,
+                fourth_check_stats.get("recovered_unique", 0),
                 cards_confirmed,
                 remaining_pending,
                 cleanup_hours,
@@ -1488,7 +1859,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.7 -> SQLite + Tripla Checagem + Resumo Semanal + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.8 -> SQLite + Quádrupla Checagem (Relic × coh3stats × Radar Veteranos) + Resumo Semanal + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1529,7 +1900,8 @@ def main() -> int:
 
     relic = RelicAPIClient()
     coh3stats = Coh3StatsAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.7 usando %s...", args.config)
+    radar = VeteransRadarClient()
+    logger.info("Iniciando CoH3 Brasil Monitor v7.8 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -1543,6 +1915,7 @@ def main() -> int:
                 verify_discord=(bool(args.verify_discord) and first_iter),
                 reset_discord_channel=(bool(args.reset_discord_channel) and first_iter),
                 coh3stats=coh3stats,
+                radar=radar,
                 force_weekly_summary=(bool(args.force_weekly_summary) and first_iter),
             )
             first_iter = False

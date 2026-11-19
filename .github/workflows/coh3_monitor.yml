@@ -88,7 +88,7 @@ jobs:
             sudo apt-get install -y --no-install-recommends "${NEED_PKGS[@]}"
           fi
 
-      - name: Executar ciclo automatico CoH3 -> Discord (tripla checagem Relic Direta x coh3stats)
+      - name: Executar ciclo automatico CoH3 -> Discord (quadrupla checagem Relic x coh3stats x Radar Veteranos)
         env:
           PYTHONDONTWRITEBYTECODE: "1"
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -211,7 +211,7 @@ jobs:
               echo "### CoH3 Brasil Monitor — Resumo da Execução"
               echo "- **Gatilho:** \`${EVENT_NAME:-unknown}\`"
               echo "- **Horário (BRT):** ${BRT_NOW} (${UTC_NOW})"
-              echo "- **Auditoria:** Tripla checagem ativa (Relic Direta × coh3stats.com × Discord)"
+              echo "- **Auditoria:** Quádrupla checagem ativa (Relic Direta × coh3stats.com × Radar Veteranos × Discord)"
               echo "- **Persistência:** ${STATE_STATUS}"
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
