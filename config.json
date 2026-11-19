@@ -63,7 +63,7 @@
       "placements": [
         "#92 1v1 (média 954.5) ⭐",
         "#161 2v2 (média 1219.2) ⭐",
-        "#6 Jogos em Equipe (média 1524.5)"
+        "#5 Jogos em Equipe (média 1524.5)"
       ],
       "is_custom": true
     },
@@ -75,19 +75,7 @@
       "placements": [
         "#83 1v1 (média 1137.0) ⭐",
         "#4 2v2 (média 1497.0)",
-        "#7 Jogos em Equipe (média 1512.0)"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 31145,
-      "alias": "vonMises",
-      "original_alias": "vonMises",
-      "steam_id": "76561197985268629",
-      "placements": [
-        "#19 1v1 (média 1187.5)",
-        "#7 2v2 (média 1431.7)",
-        "#10 Jogos em Equipe (média 1480.0)"
+        "#7 Jogos em Equipe (média 1503.5)"
       ],
       "is_custom": true
     },
@@ -104,12 +92,24 @@
       "is_custom": true
     },
     {
+      "profile_id": 31145,
+      "alias": "vonMises",
+      "original_alias": "vonMises",
+      "steam_id": "76561197985268629",
+      "placements": [
+        "#19 1v1 (média 1187.5)",
+        "#7 2v2 (média 1431.7)",
+        "#11 Jogos em Equipe (média 1431.5)"
+      ],
+      "is_custom": true
+    },
+    {
       "profile_id": 1114404,
       "alias": "Vikitor",
       "original_alias": "Vikitor",
       "steam_id": "76561198024118058",
       "placements": [
-        "#12 1v1 (média 1248.0)",
+        "#14 1v1 (média 1217.0)",
         "#26 2v2 (média 1243.0) ⭐",
         "#17 Jogos em Equipe (média 1364.0)"
       ],
@@ -135,7 +135,7 @@
       "placements": [
         "#8 1v1 (média 1306.3)",
         "#11 2v2 (média 1338.0)",
-        "#56 Jogos em Equipe (média 1187.7) ⭐"
+        "#55 Jogos em Equipe (média 1187.7) ⭐"
       ],
       "is_custom": true
     },
@@ -146,7 +146,7 @@
       "steam_id": "76561197996817129",
       "placements": [
         "#84 1v1 (média 1128.2) ⭐",
-        "#20 2v2 (média 1284.7)",
+        "#20 2v2 (média 1277.0)",
         "#19 Jogos em Equipe (média 1335.2)"
       ],
       "is_custom": true
@@ -164,26 +164,26 @@
       "is_custom": true
     },
     {
-      "profile_id": 6557,
-      "alias": "Dragoness",
-      "original_alias": "Dragoness",
-      "steam_id": "76561198135142137",
-      "placements": [
-        "#86 1v1 (média 1076.0) ⭐",
-        "#30 2v2 (média 1217.0) ⭐",
-        "#22 Jogos em Equipe (média 1305.0) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 900358,
       "alias": "Margheriti",
       "original_alias": "Margheriti",
       "steam_id": "76561198070545853",
       "placements": [
         "#15 1v1 (média 1216.0)",
-        "#17 2v2 (média 1299.0)",
+        "#16 2v2 (média 1309.0)",
         "#48 Jogos em Equipe (média 1217.0) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 6557,
+      "alias": "Dragoness",
+      "original_alias": "Dragoness",
+      "steam_id": "76561198135142137",
+      "placements": [
+        "#86 1v1 (média 1076.0) ⭐",
+        "#28 2v2 (média 1227.0) ⭐",
+        "#22 Jogos em Equipe (média 1305.0) ⭐"
       ],
       "is_custom": true
     },
@@ -218,8 +218,8 @@
       "steam_id": "76561198108568598",
       "placements": [
         "#17 1v1 (média 1200.0)",
-        "#41 2v2 (média 1180.0) ⭐",
-        "#47 Jogos em Equipe (média 1217.7) ⭐"
+        "#41 2v2 (média 1174.2) ⭐",
+        "#45 Jogos em Equipe (média 1221.9) ⭐"
       ],
       "is_custom": true
     },
@@ -231,7 +231,7 @@
       "placements": [
         "#95 1v1 (média 948.0) ⭐",
         "#34 2v2 (média 1212.0) ⭐",
-        "#80 Jogos em Equipe (média 1124.0) ⭐"
+        "#79 Jogos em Equipe (média 1120.8) ⭐"
       ],
       "is_custom": true
     },
@@ -243,7 +243,7 @@
       "placements": [
         "#91 1v1 (média 958.0) ⭐",
         "#163 2v2 (média 1084.0) ⭐",
-        "#52 Jogos em Equipe (média 1199.6) ⭐"
+        "#53 Jogos em Equipe (média 1199.6) ⭐"
       ],
       "is_custom": true
     },
@@ -255,19 +255,7 @@
       "placements": [
         "#94 1v1 (média 950.0) ⭐",
         "#39 2v2 (média 1183.5) ⭐",
-        "#59 Jogos em Equipe (média 1180.4) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 648514,
-      "alias": "Halokoo",
-      "original_alias": "Halokoo",
-      "steam_id": "76561198372757032",
-      "placements": [
-        "#48 1v1 (média 936.5) ⭐",
-        "#53 2v2 (média 1110.0) ⭐",
-        "#63 Jogos em Equipe (média 1171.3) ⭐"
+        "#63 Jogos em Equipe (média 1165.8) ⭐"
       ],
       "is_custom": true
     },
@@ -278,8 +266,20 @@
       "steam_id": "76561198062871244",
       "placements": [
         "#27 1v1 (média 1113.0) ⭐",
-        "#43 2v2 (média 1171.0) ⭐",
-        "#65 Jogos em Equipe (média 1151.8) ⭐"
+        "#44 2v2 (média 1171.0) ⭐",
+        "#65 Jogos em Equipe (média 1149.0) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 648514,
+      "alias": "Halokoo",
+      "original_alias": "Halokoo",
+      "steam_id": "76561198372757032",
+      "placements": [
+        "#47 1v1 (média 945.5) ⭐",
+        "#58 2v2 (média 1098.5) ⭐",
+        "#62 Jogos em Equipe (média 1166.9) ⭐"
       ],
       "is_custom": true
     },
@@ -290,7 +290,7 @@
       "steam_id": "76561198105073246",
       "placements": [
         "#43 1v1 (média 978.0) ⭐",
-        "#78 2v2 (média 1009.0) ⭐",
+        "#77 2v2 (média 1009.0) ⭐",
         "#66 Jogos em Equipe (média 1148.0) ⭐"
       ],
       "is_custom": true
@@ -301,9 +301,9 @@
       "original_alias": "Jimmy Duelista",
       "steam_id": "76561198034510845",
       "placements": [
-        "#20 1v1 (média 1147.5)",
+        "#21 1v1 (média 1147.5) ⭐",
         "#62 2v2 (média 1071.5) ⭐",
-        "#101 Jogos em Equipe (média 1074.0) ⭐"
+        "#103 Jogos em Equipe (média 1074.0) ⭐"
       ],
       "is_custom": true
     },
@@ -325,20 +325,9 @@
       "original_alias": "Bineto",
       "steam_id": "76561198024839791",
       "placements": [
-        "#21 1v1 (média 1145.0) ⭐",
+        "#22 1v1 (média 1145.0) ⭐",
         "#51 2v2 (média 1123.0) ⭐",
-        "#390 Jogos em Equipe (média 1077.6) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 944488,
-      "alias": "gbytes™",
-      "original_alias": "gbytes™",
-      "steam_id": "76561198063124280",
-      "placements": [
-        "#165 2v2 (média 1028.2) ⭐",
-        "#77 Jogos em Equipe (média 1128.2) ⭐"
+        "#394 Jogos em Equipe (média 1077.6) ⭐"
       ],
       "is_custom": true
     },
@@ -350,7 +339,18 @@
       "placements": [
         "#93 1v1 (média 951.5) ⭐",
         "#96 2v2 (média 945.0) ⭐",
-        "#84 Jogos em Equipe (média 1113.6) ⭐"
+        "#81 Jogos em Equipe (média 1113.6) ⭐"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 944488,
+      "alias": "gbytes™",
+      "original_alias": "gbytes™",
+      "steam_id": "76561198063124280",
+      "placements": [
+        "#165 2v2 (média 1028.2) ⭐",
+        "#86 Jogos em Equipe (média 1103.8) ⭐"
       ],
       "is_custom": true
     },
@@ -361,8 +361,8 @@
       "steam_id": "76561198028644178",
       "placements": [
         "#34 1v1 (média 1076.0) ⭐",
-        "#72 2v2 (média 1028.5) ⭐",
-        "#94 Jogos em Equipe (média 1085.8) ⭐"
+        "#71 2v2 (média 1028.5) ⭐",
+        "#95 Jogos em Equipe (média 1085.8) ⭐"
       ],
       "is_custom": true
     },
@@ -374,7 +374,7 @@
       "placements": [
         "#89 1v1 (média 996.2) ⭐",
         "#59 2v2 (média 1080.0) ⭐",
-        "#136 Jogos em Equipe (média 1003.5) ⭐"
+        "#142 Jogos em Equipe (média 993.9) ⭐"
       ],
       "is_custom": true
     },
@@ -386,7 +386,7 @@
       "placements": [
         "#96 1v1 (média 936.3) ⭐",
         "#166 2v2 (média 835.8) ⭐",
-        "#249 Jogos em Equipe (média 858.0) ⭐"
+        "#248 Jogos em Equipe (média 861.8) ⭐"
       ],
       "is_custom": true
     },
