@@ -24,11 +24,13 @@ from relic_api import (
     BASE_URL as RELIC_BASE_URL,
     CORE_BR_ROSTER,
     MAP_MK_SUFFIX_RE,
+    OFFICIAL_COH3_BATTLEGROUPS,
     OFFICIAL_COH3_MAP_NAMES,
     STEAM_ID64_VALID_RE,
     build_roster_lookup_maps,
     clean_map_name,
     format_bound_display_alias,
+    normalize_battlegroup,
 )
 from security import (
     build_no_redirect_https_opener,
@@ -48,6 +50,7 @@ BASE_DIR = Path(__file__).resolve().parent
 FACTIONS_DIR = BASE_DIR / "assets" / "factions"
 FLAGS_DIR = BASE_DIR / "assets" / "flags"
 MAPS_DIR = BASE_DIR / "assets" / "maps"
+BATTLEGROUPS_DIR = BASE_DIR / "assets" / "battlegroups"
 VETERANOS_BADGE_PATH = BASE_DIR / "assets" / "discord_veteranos_patente.png"
 BRT_TZ = timezone(timedelta(hours=-3))
 
@@ -55,6 +58,8 @@ SAFE_FLAG_CODE_RE = re.compile(r"^[a-z]{2}$")
 MAX_FLAG_ASSET_BYTES = 65_536      # 64 KB
 SAFE_MAP_KEY_RE = re.compile(r"^[a-z0-9_]{2,64}$")
 MAX_MAP_ASSET_BYTES = 262_144      # 256 KB
+SAFE_BG_KEY_RE = re.compile(r"^[a-z0-9_]{2,48}$")
+MAX_BG_ASSET_BYTES = 65_536        # 64 KB
 
 STEAM_XML_AVATAR_MEDIUM_RE = re.compile(
     r"<avatarMedium>\s*<!\[CDATA\[(https://[^\s\]]+)\]\]>\s*</avatarMedium>",
@@ -165,6 +170,24 @@ FONT_CANDIDATES: dict[str, list[str]] = {
         "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     ],
+    "bg_italic": [
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoCondensed-Italic.ttf",
+        "/usr/share/fonts/truetype/roboto/hinted/RobotoCondensed-Italic.ttf",
+        "/usr/share/fonts/truetype/roboto/RobotoCondensed-Italic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Italic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf",
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Italic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ],
+    "bg_italic_bold": [
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoCondensed-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/roboto/hinted/RobotoCondensed-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/roboto/RobotoCondensed-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSansNarrow-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-BoldItalic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ],
     "unicode_regular": ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
     "unicode_bold": ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
     "cjk_regular": [
@@ -265,12 +288,15 @@ def pick_font(
     size: int,
     bold: bool = False,
     condensed: bool = False,
+    italic: bool = False,
 ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Seleciona automaticamente a fonte ideal (Roboto, DejaVu ou Noto CJK)."""
+    """Seleciona automaticamente a fonte ideal (Roboto, DejaVu, Noto CJK ou Condensada Itálica para Battlegroups)."""
     if HAS_CJK_RE.search(text):
         return _get_font_by_role("cjk_bold" if bold else "cjk_regular", size)
     if NEEDS_DEJAVU_RE.search(text):
         return _get_font_by_role("unicode_bold" if bold else "unicode_regular", size)
+    if italic:
+        return _get_font_by_role("bg_italic_bold" if bold else "bg_italic", size)
     if condensed:
         return _get_font_by_role("condensed_bold", size)
     return _get_font_by_role("bold" if bold else "regular", size)
@@ -297,13 +323,14 @@ def truncate_to_px(
     max_px: int,
     size: int,
     bold: bool = False,
+    italic: bool = False,
 ) -> tuple[str, Any]:
     txt = strip_unsafe_chars(text) or "Desconhecido"
-    for try_sz in (size, max(12, size - 2), max(11, size - 4)):
-        fnt = pick_font(txt, size=try_sz, bold=bold)
+    for try_sz in (size, max(11, size - 2), max(10, size - 3)):
+        fnt = pick_font(txt, size=try_sz, bold=bold, italic=italic)
         if text_width(draw, txt, fnt) <= max_px:
             return txt, fnt
-    fnt = pick_font(txt, size=max(11, size - 3), bold=bold)
+    fnt = pick_font(txt, size=max(10, size - 2), bold=bold, italic=italic)
     while len(txt) > 2 and text_width(draw, txt + "…", fnt) > max_px:
         txt = txt[:-1]
     return txt + "…", fnt
@@ -975,6 +1002,56 @@ def get_veteranos_badge_icon(size: int = 20) -> Image.Image:
     return loaded
 
 
+_BG_BASE_CACHE: dict[str, Image.Image | None] = {}
+_BG_ICON_CACHE: dict[tuple[str, int], Image.Image | None] = {}
+
+
+def _load_battlegroup_asset(bg_key: str) -> Image.Image | None:
+    """Carrega com segurança o ícone oficial PNG do Battlegroup em assets/battlegroups/<key>.png."""
+    clean_key = re.sub(r"_icon_mipped$", "", str(bg_key or "").strip().lower())
+    if not SAFE_BG_KEY_RE.fullmatch(clean_key):
+        return None
+    if clean_key in _BG_BASE_CACHE:
+        return _BG_BASE_CACHE[clean_key]
+
+    base: Image.Image | None = None
+    png_path = BATTLEGROUPS_DIR / f"{clean_key}.png"
+    try:
+        bg_root = BATTLEGROUPS_DIR.resolve()
+        if (
+            png_path.is_file()
+            and not png_path.is_symlink()
+            and png_path.resolve().parent == bg_root
+            and png_path.stat().st_size <= MAX_BG_ASSET_BYTES
+        ):
+            with Image.open(png_path, formats=["PNG"]) as raw_im:
+                raw_im.load()
+                base = raw_im.convert("RGBA")
+    except Exception:
+        base = None
+
+    _BG_BASE_CACHE[clean_key] = base
+    return base
+
+
+def get_battlegroup_icon(bg_key: str, size: int = 18) -> Image.Image | None:
+    """Retorna ícone RGBA redimensionado do Battlegroup oficial (ou None se ausente)."""
+    clean_key = re.sub(r"_icon_mipped$", "", str(bg_key or "").strip().lower())
+    if not clean_key:
+        return None
+    sz = max(12, min(int(size), 64))
+    ck = (clean_key, sz)
+    if ck in _BG_ICON_CACHE:
+        return _BG_ICON_CACHE[ck]
+
+    base = _load_battlegroup_asset(clean_key)
+    out = base.resize((sz, sz), Image.Resampling.LANCZOS) if base is not None else None
+    if len(_BG_ICON_CACHE) >= 128:
+        _BG_ICON_CACHE.clear()
+    _BG_ICON_CACHE[ck] = out
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Utilitários de formatação de tempo, modo e equipes (Axis vs Allies)
 # ---------------------------------------------------------------------------
@@ -1118,12 +1195,44 @@ def _build_side_participant(
     }
 
 
+def _resolve_participant_battlegroup(
+    pid: int,
+    bg_map: dict[str, Any],
+    raw_part: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """Resolve `(bg_key, bg_name)` a partir do mapa da partida ou de metadados embutidos no participante."""
+    entry = bg_map.get(str(pid)) or bg_map.get(pid)  # type: ignore[arg-type]
+    raw_k = ""
+    raw_n = ""
+    if isinstance(entry, dict):
+        raw_k = str(entry.get("key") or "")
+        raw_n = str(entry.get("name") or "")
+    elif isinstance(entry, str):
+        raw_n = entry
+    if not raw_k and not raw_n and isinstance(raw_part, dict):
+        raw_k = str(raw_part.get("battlegroup_key") or "")
+        raw_n = str(raw_part.get("battlegroup_name") or "")
+    norm = normalize_battlegroup(raw_key=raw_k, raw_name=raw_n)
+    if norm:
+        return norm["key"], norm["name"]
+    return "", ""
+
+
 def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Reconstrói todos os jogadores únicos da partida e separa em (Eixo, Aliados)."""
+    """Reconstrói todos os jogadores únicos da partida e separa em (Eixo, Aliados), incluindo Battlegroups."""
     steam_map, pid_map = _DEFAULT_ROSTER_MAPS
     records = group.get("records") or [group.get("primary") or group]
     primary = records[0]
     tracked_by_pid: dict[int, dict[str, Any]] = {}
+
+    bg_map: dict[str, Any] = {}
+    for rec in records:
+        rec_bg = rec.get("battlegroups")
+        if isinstance(rec_bg, dict) and rec_bg:
+            bg_map = rec_bg
+            break
+    if not bg_map and isinstance(group.get("battlegroups"), dict):
+        bg_map = group["battlegroups"]
 
     for rec in records:
         pid = int(rec["tracked_profile_id"])
@@ -1139,6 +1248,7 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
             steam_map,
             pid_map,
         )
+        bg_key, bg_name = _resolve_participant_battlegroup(pid, bg_map, rec)
         tracked_by_pid[pid] = {
             "profile_id": pid,
             "alias": disp_alias,
@@ -1150,6 +1260,8 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
             "elo_delta": delta,
             "is_tracked": True,
             "is_br_roster": is_br_ros,
+            "battlegroup_key": bg_key,
+            "battlegroup_name": bg_name,
         }
 
     primary_pid = int(primary["tracked_profile_id"])
@@ -1161,11 +1273,12 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
         if apid in seen_pids:
             continue
         seen_pids.add(apid)
-        team_a.append(
-            tracked_by_pid[apid]
-            if apid in tracked_by_pid
-            else _build_side_participant(ally, "Wehrmacht", steam_map, pid_map)
-        )
+        if apid in tracked_by_pid:
+            team_a.append(tracked_by_pid[apid])
+        else:
+            part = _build_side_participant(ally, "Wehrmacht", steam_map, pid_map)
+            part["battlegroup_key"], part["battlegroup_name"] = _resolve_participant_battlegroup(apid, bg_map, ally)
+            team_a.append(part)
 
     team_b: list[dict[str, Any]] = []
     for opp in primary.get("opponents", []):
@@ -1173,11 +1286,12 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
         if opid in seen_pids:
             continue
         seen_pids.add(opid)
-        team_b.append(
-            tracked_by_pid[opid]
-            if opid in tracked_by_pid
-            else _build_side_participant(opp, "US Forces", steam_map, pid_map)
-        )
+        if opid in tracked_by_pid:
+            team_b.append(tracked_by_pid[opid])
+        else:
+            part = _build_side_participant(opp, "US Forces", steam_map, pid_map)
+            part["battlegroup_key"], part["battlegroup_name"] = _resolve_participant_battlegroup(opid, bg_map, opp)
+            team_b.append(part)
 
     all_participants = team_a + team_b
     axis_players = [p for p in all_participants if str(p["faction"]) in AXIS_FACTIONS]
@@ -1242,10 +1356,12 @@ def _draw_two_team_columns(
     avatar_provider: SteamAvatarProvider,
     show_delta: bool = True,
     is_duel: bool = False,
+    has_any_bg: bool = False,
 ) -> None:
-    """Desenha as duas colunas amplas (Allies à esquerda, Axis à direita) destacando apenas brasileiros monitorados."""
+    """Desenha as duas colunas amplas (Allies à esquerda, Axis à direita) com Battlegroup tático sob o nick."""
     hdr_bg = (30, 26, 18, 255) if is_duel else (22, 24, 30, 255)
     sep_col = (96, 78, 34, 255) if is_duel else (46, 50, 62, 255)
+    row_sep_col = (54, 46, 26, 255) if is_duel else (37, 40, 49, 255)
     draw.rectangle((8, top_bar_h, width, top_bar_h + col_hdr_h), fill=hdr_bg)
     draw.line([(8, top_bar_h + col_hdr_h - 1), (width, top_bar_h + col_hdr_h - 1)], fill=sep_col, width=1)
     mid_x = width // 2 + 3
@@ -1256,24 +1372,37 @@ def _draw_two_team_columns(
     draw.text((22, top_bar_h + 9), "Allies", font=ch_fnt, fill=ch_col)
     draw.text((mid_x + 16, top_bar_h + 9), "Axis", font=ch_fnt, fill=ch_col)
 
-    base_py = top_bar_h + col_hdr_h + 11
+    base_py = top_bar_h + col_hdr_h + (10 if has_any_bg else 11)
+    max_rows = max(len(allies_p), len(axis_p))
+    if has_any_bg and max_rows > 1:
+        for ridx in range(1, max_rows):
+            ly = base_py + ridx * row_pitch - 4
+            draw.line([(16, ly), (mid_x - 8, ly)], fill=row_sep_col, width=1)
+            draw.line([(mid_x + 8, ly), (width - 10, ly)], fill=row_sep_col, width=1)
+
     for col_start_x, col_limit_x, team_list in (
         (18, mid_x - 10, allies_p),
         (mid_x + 14, width - 12, axis_p),
     ):
         for pidx, pl in enumerate(team_list):
             py = base_py + pidx * row_pitch
+            bg_key = str(pl.get("battlegroup_key") or "").strip()
+            bg_name = str(pl.get("battlegroup_name") or "").strip()
+            has_bg = bool(bg_name or bg_key)
 
-            mini_fac = get_faction_icon(str(pl["faction"]), size=32)
-            img.paste(mini_fac, (col_start_x, py + 5), mini_fac)
+            fac_sz = 34 if has_any_bg else 32
+            fac_y = py + (12 if has_any_bg else 5)
+            mini_fac = get_faction_icon(str(pl["faction"]), size=fac_sz)
+            img.paste(mini_fac, (col_start_x, fac_y), mini_fac)
 
             elo_val = pl.get("old_elo") or pl.get("new_elo")
             elo_txt = str(elo_val) if elo_val else "S/R"
             elo_fnt = pick_font(elo_txt, size=20, bold=True, condensed=True)
             ew = text_width(draw, elo_txt, elo_fnt)
             elo_col = (243, 244, 246, 255) if elo_val else (156, 163, 175, 255)
-            elo_right_x = col_start_x + (84 if show_delta else 96)
-            draw.text((elo_right_x - ew, py + 10), elo_txt, font=elo_fnt, fill=elo_col)
+            elo_right_x = col_start_x + (86 if show_delta else 98)
+            elo_y = py + (17 if has_any_bg else 10)
+            draw.text((elo_right_x - ew, elo_y), elo_txt, font=elo_fnt, fill=elo_col)
 
             delta = pl.get("elo_delta") if show_delta else None
             if delta is not None:
@@ -1281,12 +1410,12 @@ def _draw_two_team_columns(
                 d_col = (74, 222, 128, 255) if delta >= 0 else (248, 113, 113, 255)
                 d_fnt = pick_font(d_txt, size=18, bold=True, condensed=True)
                 dw = text_width(draw, d_txt, d_fnt)
-                draw.text((col_start_x + 126 - dw, py + 11), d_txt, font=d_fnt, fill=d_col)
+                draw.text((col_start_x + 128 - dw, py + (18 if has_any_bg else 11)), d_txt, font=d_fnt, fill=d_col)
 
-            flag_x = col_start_x + (134 if show_delta else 108)
+            flag_x = col_start_x + (136 if show_delta else 110)
             country = str(pl.get("country") or "un").lower()
             flag_im = get_country_flag(country, w=24, h=17)
-            img.paste(flag_im, (flag_x, py + 13), flag_im)
+            img.paste(flag_im, (flag_x, py + (21 if has_any_bg else 13)), flag_im)
 
             name_x = flag_x + 30
             is_tracked = bool(pl.get("is_tracked"))
@@ -1294,57 +1423,106 @@ def _draw_two_team_columns(
 
             if is_veterano:
                 ring = (245, 184, 46, 255) if is_duel else (56, 189, 248, 255)
+                av_sz = 44 if has_any_bg else 40
                 av_im = avatar_provider.get_circular_avatar(
-                    size=40,
+                    size=av_sz,
                     profile_id=int(pl.get("profile_id", 0)),
                     steam_id=str(pl.get("steam_id") or ""),
                     alias=str(pl.get("alias") or "BR"),
                     ring_color=ring,
                 )
-                img.paste(av_im, (name_x, py + 1), av_im)
-                name_x += 46
+                img.paste(av_im, (name_x, py + (7 if has_any_bg else 1)), av_im)
+                name_x += av_sz + 8
 
-            badge_sz = 22
+            badge_sz = 20 if has_any_bg else 22
             badge_reserve = (badge_sz + 8) if is_veterano else 0
+            alias_sz = (20 if is_veterano else 18) if has_any_bg else (21 if is_veterano else 19)
             disp_alias, a_fnt = truncate_to_px(
                 draw,
                 str(pl.get("alias") or ""),
                 max_px=max(56, col_limit_x - name_x - badge_reserve),
-                size=21 if is_veterano else 19,
+                size=alias_sz,
                 bold=is_veterano,
             )
+
             if is_veterano:
                 alias_color = (253, 230, 138, 255) if is_duel else (125, 211, 252, 255)
-                alias_y = py + 9
+                if has_any_bg:
+                    alias_y = py + (5 if has_bg else 16)
+                else:
+                    alias_y = py + 9
             else:
-                alias_color = (176, 184, 198, 255)
-                alias_y = py + 11
+                alias_color = (182, 190, 204, 255) if has_any_bg else (176, 184, 198, 255)
+                if has_any_bg:
+                    alias_y = py + (6 if has_bg else 17)
+                else:
+                    alias_y = py + 11
+
             draw.text((name_x, alias_y), disp_alias, font=a_fnt, fill=alias_color)
             if is_veterano:
                 vet_ic = get_veteranos_badge_icon(size=badge_sz)
                 bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 6)
-                img.paste(vet_ic, (bx, py + 9), vet_ic)
+                img.paste(vet_ic, (bx, alias_y + 1), vet_ic)
+
+            if has_bg:
+                bg_y = py + 31
+                bg_ic = get_battlegroup_icon(bg_key, size=18) if bg_key else None
+                ic_w = 18 if bg_ic is not None else 0
+                pad_l = 5 if bg_ic is not None else 7
+                pad_r = 8
+                ic_gap = 5 if bg_ic is not None else 0
+                avail_pill_w = max(60, col_limit_x - name_x - 2)
+                max_txt_px = max(36, avail_pill_w - pad_l - ic_w - ic_gap - pad_r)
+
+                disp_bg, bg_fnt = truncate_to_px(
+                    draw,
+                    bg_name or OFFICIAL_COH3_BATTLEGROUPS.get(bg_key, bg_key),
+                    max_px=max_txt_px,
+                    size=13,
+                    bold=is_veterano,
+                    italic=True,
+                )
+                bg_tw = text_width(draw, disp_bg, bg_fnt)
+                pill_w = min(avail_pill_w, int(round(pad_l + ic_w + ic_gap + bg_tw + pad_r)))
+                pill_h = 22
+
+                pill_bg = (36, 30, 17, 255) if is_duel else (18, 20, 27, 255)
+                pill_border = (118, 94, 38, 255) if is_duel else ((68, 86, 114, 255) if is_veterano else (54, 60, 74, 255))
+                draw.rounded_rectangle(
+                    (name_x, bg_y, name_x + pill_w, bg_y + pill_h),
+                    radius=6,
+                    fill=pill_bg,
+                    outline=pill_border,
+                    width=1,
+                )
+                tx = name_x + pad_l
+                if bg_ic is not None:
+                    img.paste(bg_ic, (tx, bg_y + 2), bg_ic)
+                    tx += ic_w + ic_gap
+                bg_txt_col = (232, 199, 126, 255) if is_veterano else (164, 175, 194, 255)
+                draw.text((tx, bg_y + 3), disp_bg, font=bg_fnt, fill=bg_txt_col)
 
 
 # ---------------------------------------------------------------------------
-# RENDERIZADOR 1A: Card Grande de Partida Finalizada (PT-BR, 860px)
+# RENDERIZADOR 1A: Card Grande de Partida Finalizada (PT-BR, 940px)
 # ---------------------------------------------------------------------------
 def render_single_match_card_png(
     grp: dict[str, Any],
     avatar_provider: SteamAvatarProvider,
 ) -> bytes:
-    width = 860
+    width = 940
     recs = grp.get("records") or [grp.get("primary") or grp]
     primary = recs[0]
     axis_p, allies_p = extract_axis_and_allies_players(grp)
     is_duel = _is_br_veteranos_duel(recs, axis_p, allies_p)
+    has_any_bg = any(bool(p.get("battlegroup_name") or p.get("battlegroup_key")) for p in axis_p + allies_p)
 
     duel_banner_h = 34 if is_duel else 0
     max_team = max(len(axis_p), len(allies_p), 1)
     top_bar_h = 90
     col_hdr_h = 38
-    row_pitch = 52
-    total_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 22
+    row_pitch = 62 if has_any_bg else 52
+    total_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 20
 
     bg_fill = (28, 25, 20, 255) if is_duel else (26, 28, 34, 255)
     img = Image.new("RGBA", (width, total_h), bg_fill)
@@ -1394,7 +1572,7 @@ def render_single_match_card_png(
     map_label, m_fnt = truncate_to_px(
         draw,
         _resolve_display_map_name(primary, fallback="Mapa Desconhecido"),
-        max_px=330,
+        max_px=380,
         size=21,
         bold=True,
     )
@@ -1419,6 +1597,7 @@ def render_single_match_card_png(
         avatar_provider=avatar_provider,
         show_delta=True,
         is_duel=is_duel,
+        has_any_bg=has_any_bg,
     )
 
     if is_duel:
@@ -1439,14 +1618,15 @@ def render_matches_table_png(
     if live_single and len(grouped_matches) == 1:
         return render_single_match_card_png(grouped_matches[0], avatar_provider)
 
-    width = 1040
     header_h = 44
-
     prepared_rows: list[dict[str, Any]] = []
+    table_has_bg = False
     for grp in grouped_matches:
         recs = grp.get("records") or [grp.get("primary") or grp]
         primary = recs[0]
         axis_p, allies_p = extract_axis_and_allies_players(grp)
+        if any(bool(p.get("battlegroup_key")) for p in axis_p + allies_p):
+            table_has_bg = True
         max_team = max(len(axis_p), len(allies_p), 1)
         prepared_rows.append(
             {
@@ -1457,6 +1637,12 @@ def render_matches_table_png(
                 "row_h": max(108, 26 + max_team * 32),
             }
         )
+
+    bg_shift = 24 if table_has_bg else 0
+    width = 1040 + bg_shift * 2
+    allies_col_x = 248
+    axis_col_x = 564 + bg_shift
+    map_cx = 954 + bg_shift * 2
 
     total_h = header_h + sum(r["row_h"] for r in prepared_rows) + (2 if prepared_rows else 70)
     img = Image.new("RGBA", (width, total_h), (24, 26, 31, 255))
@@ -1469,9 +1655,9 @@ def render_matches_table_png(
     for hx, hlbl in (
         (22, "DATA ↓"),
         (126, "RESULTADO"),
-        (258, "Allies"),
-        (572, "Axis"),
-        (902, "MAPA / MODO"),
+        (allies_col_x + 10, "Allies"),
+        (axis_col_x + 8, "Axis"),
+        (map_cx - 52, "MAPA / MODO"),
     ):
         hdr_font = pick_font(hlbl, size=15, bold=True, condensed=True)
         draw.text((hx, 13), hlbl, font=hdr_font, fill=hdr_color)
@@ -1520,7 +1706,7 @@ def render_matches_table_png(
         ptw = text_width(draw, pill_text, pill_fnt)
         draw.text((pill_x + (pill_w - ptw) / 2, pill_y + 7), pill_text, font=pill_fnt, fill=(255, 255, 255, 255))
 
-        for col_x, team_list in ((248, row["allies"]), (564, row["axis"])):
+        for col_x, team_list in ((allies_col_x, row["allies"]), (axis_col_x, row["axis"])):
             line_pitch = 31
             start_py = y + (rh - len(team_list) * line_pitch) // 2
             for pidx, pl in enumerate(team_list):
@@ -1528,12 +1714,18 @@ def render_matches_table_png(
                 mini_fac = get_faction_icon(str(pl["faction"]), size=23)
                 img.paste(mini_fac, (col_x, py + 3), mini_fac)
 
+                if table_has_bg:
+                    bg_k = str(pl.get("battlegroup_key") or "").strip()
+                    bg_ic = get_battlegroup_icon(bg_k, size=20) if bg_k else None
+                    if bg_ic is not None:
+                        img.paste(bg_ic, (col_x + 25, py + 4), bg_ic)
+
                 elo_val = pl.get("old_elo")
                 elo_txt = str(elo_val) if elo_val else "S/R"
                 elo_fnt = pick_font(elo_txt, size=15, bold=True, condensed=True)
                 ew = text_width(draw, elo_txt, elo_fnt)
                 elo_col = (238, 240, 244, 255) if elo_val else (156, 163, 175, 255)
-                draw.text((col_x + 64 - ew, py + 6), elo_txt, font=elo_fnt, fill=elo_col)
+                draw.text((col_x + 64 + bg_shift - ew, py + 6), elo_txt, font=elo_fnt, fill=elo_col)
 
                 delta = pl.get("elo_delta")
                 if delta is not None:
@@ -1541,13 +1733,13 @@ def render_matches_table_png(
                     d_col = (74, 222, 128, 255) if delta >= 0 else (248, 113, 113, 255)
                     d_fnt = pick_font(d_txt, size=14, bold=True, condensed=True)
                     dw = text_width(draw, d_txt, d_fnt)
-                    draw.text((col_x + 98 - dw, py + 6), d_txt, font=d_fnt, fill=d_col)
+                    draw.text((col_x + 98 + bg_shift - dw, py + 6), d_txt, font=d_fnt, fill=d_col)
 
                 country = str(pl.get("country") or "un").lower()
                 flag_im = get_country_flag(country, w=20, h=14)
-                img.paste(flag_im, (col_x + 104, py + 8), flag_im)
+                img.paste(flag_im, (col_x + 104 + bg_shift, py + 8), flag_im)
 
-                name_x = col_x + 130
+                name_x = col_x + 130 + bg_shift
                 is_tracked = bool(pl.get("is_tracked"))
                 is_veterano = is_tracked or bool(pl.get("is_br_roster"))
 
@@ -1568,7 +1760,7 @@ def render_matches_table_png(
                 disp_alias, a_fnt = truncate_to_px(
                     draw,
                     str(pl.get("alias") or ""),
-                    max_px=max(44, (col_x + 306) - name_x - badge_reserve),
+                    max_px=max(44, (col_x + 306 + bg_shift) - name_x - badge_reserve),
                     size=16 if is_veterano else 14,
                     bold=is_veterano,
                 )
@@ -1584,7 +1776,6 @@ def render_matches_table_png(
                     bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 5)
                     img.paste(vet_ic, (bx, py + 5), vet_ic)
 
-        map_cx = 954
         m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=52)
         thumb_y = y + (rh - 90) // 2
         img.paste(m_thumb, (map_cx - 26, thumb_y), m_thumb)
