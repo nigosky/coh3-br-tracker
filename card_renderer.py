@@ -23,8 +23,11 @@ from relic_api import (
     ALLOWED_RELIC_HOSTS,
     BASE_URL as RELIC_BASE_URL,
     CORE_BR_ROSTER,
+    MAP_MK_SUFFIX_RE,
+    OFFICIAL_COH3_MAP_NAMES,
     STEAM_ID64_VALID_RE,
     build_roster_lookup_maps,
+    clean_map_name,
     format_bound_display_alias,
 )
 from security import (
@@ -44,11 +47,14 @@ logger = logging.getLogger("coh3_br.renderer")
 BASE_DIR = Path(__file__).resolve().parent
 FACTIONS_DIR = BASE_DIR / "assets" / "factions"
 FLAGS_DIR = BASE_DIR / "assets" / "flags"
+MAPS_DIR = BASE_DIR / "assets" / "maps"
 VETERANOS_BADGE_PATH = BASE_DIR / "assets" / "discord_veteranos_patente.png"
 BRT_TZ = timezone(timedelta(hours=-3))
 
 SAFE_FLAG_CODE_RE = re.compile(r"^[a-z]{2}$")
 MAX_FLAG_ASSET_BYTES = 65_536      # 64 KB
+SAFE_MAP_KEY_RE = re.compile(r"^[a-z0-9_]{2,64}$")
+MAX_MAP_ASSET_BYTES = 262_144      # 256 KB
 
 STEAM_XML_AVATAR_MEDIUM_RE = re.compile(
     r"<avatarMedium>\s*<!\[CDATA\[(https://[^\s\]]+)\]\]>\s*</avatarMedium>",
@@ -77,8 +83,12 @@ MAX_STEAM_XML_BYTES = 65_536       # 64 KB
 MAX_STEAM_AVATAR_BYTES = 524_288   # 512 KB
 MAX_RELIC_LOOKUP_BYTES = 131_072   # 128 KB
 
-AXIS_FACTIONS: frozenset[str] = frozenset({"Wehrmacht", "Afrikakorps", "DAK", "Wehr", "german", "dak"})
-ALLIES_FACTIONS: frozenset[str] = frozenset({"US Forces", "British Forces", "USF", "UKF", "american", "british"})
+AXIS_FACTIONS: frozenset[str] = frozenset(
+    {"Wehrmacht", "Afrikakorps", "Afrika Korps", "Deutsches Afrikakorps", "DAK", "Wehr", "german", "German", "dak"}
+)
+ALLIES_FACTIONS: frozenset[str] = frozenset(
+    {"US Forces", "British Forces", "USF", "UKF", "american", "American", "british", "British"}
+)
 
 FACTION_TO_ASSET: dict[str, str] = {
     "US Forces": "american",
@@ -799,42 +809,126 @@ def get_country_flag(code: str, w: int = 20, h: int = 14) -> Image.Image:
 
 _MAP_THUMB_CACHE: dict[tuple[str, int], Image.Image] = {}
 
+_MAP_THUMB_ALIASES: dict[str, str] = {
+    "radarstation mammut": "mammut_8p",
+    "(6) across the rhine": "across_the_rhine_6p",
+    "across the rhine": "across_the_rhine_6p",
+    "rural_castle_winter_4p": "rural_castle_4p",
+}
+
+_MAP_THUMB_BASE_INDEX: dict[str, str] = {
+    MAP_MK_SUFFIX_RE.sub("", k): k for k in OFFICIAL_COH3_MAP_NAMES
+}
+
+
+def _resolve_display_map_name(primary: dict[str, Any], fallback: str = "Mapa Desconhecido") -> str:
+    """Resolve sempre o nome oficial do mapa a partir de map_raw (com fallback para map_clean)."""
+    raw_map = str(primary.get("map_raw") or "").strip()
+    if raw_map:
+        return clean_map_name(raw_map)
+    return str(primary.get("map_clean") or fallback)
+
+
+def _resolve_map_thumb_path(map_raw: str) -> Path | None:
+    """Resolve com segurança o PNG oficial da miniatura do mapa em assets/maps/."""
+    raw_norm = str(map_raw or "").strip().lower()
+    if not raw_norm:
+        return None
+
+    candidates: list[str] = []
+    alias_hit = _MAP_THUMB_ALIASES.get(raw_norm)
+    if alias_hit:
+        candidates.append(alias_hit)
+    if SAFE_MAP_KEY_RE.fullmatch(raw_norm):
+        candidates.append(raw_norm)
+        base_key = MAP_MK_SUFFIX_RE.sub("", raw_norm)
+        if base_key != raw_norm and SAFE_MAP_KEY_RE.fullmatch(base_key):
+            candidates.append(base_key)
+        base_official = _MAP_THUMB_BASE_INDEX.get(base_key)
+        if base_official and base_official not in candidates:
+            candidates.append(base_official)
+
+    maps_root = MAPS_DIR.resolve()
+    for key in candidates:
+        if not SAFE_MAP_KEY_RE.fullmatch(key):
+            continue
+        candidate = MAPS_DIR / f"{key}.png"
+        try:
+            if (
+                candidate.is_file()
+                and not candidate.is_symlink()
+                and candidate.resolve().parent == maps_root
+                and candidate.stat().st_size <= MAX_MAP_ASSET_BYTES
+            ):
+                return candidate
+        except OSError:
+            continue
+    return None
+
 
 def get_tactical_map_thumb(map_raw: str, size: int = 52) -> Image.Image:
-    """Gera miniatura aérea sépia determinística do mapa no estilo coh3stats."""
-    key = (str(map_raw or "map")[:64], size)
+    """Carrega a miniatura tática oficial do mapa (coh3stats/Relic) com fallback procedural para mapas custom."""
+    sz = max(24, min(int(size), 128))
+    norm_key = str(map_raw or "map").strip().lower()[:64]
+    key = (norm_key, sz)
     cached = _MAP_THUMB_CACHE.get(key)
     if cached is not None:
         return cached
 
-    digest = hashlib.sha256(key[0].encode("utf-8")).digest()
-    rng = random.Random(int.from_bytes(digest[:8], "big"))
+    out: Image.Image | None = None
+    thumb_path = _resolve_map_thumb_path(norm_key)
+    if thumb_path is not None:
+        try:
+            with Image.open(thumb_path, formats=["PNG"]) as raw_im:
+                raw_im.load()
+                src = raw_im.convert("RGBA")
+                inner = max(16, sz - 2)
+                sw, sh = src.size
+                if sw > 0 and sh > 0:
+                    scale = min(inner / sw, inner / sh)
+                    nw = max(1, int(round(sw * scale)))
+                    nh = max(1, int(round(sh * scale)))
+                    fitted = src.resize((nw, nh), Image.Resampling.LANCZOS)
+                    canvas = Image.new("RGBA", (sz, sz), (16, 18, 24, 255))
+                    ox = (sz - nw) // 2
+                    oy = (sz - nh) // 2
+                    canvas.paste(fitted, (ox, oy), fitted)
+                    d_frame = ImageDraw.Draw(canvas)
+                    d_frame.rectangle((0, 0, sz - 1, sz - 1), outline=(78, 84, 98, 255), width=1)
+                    out = canvas
+        except Exception as exc:
+            logger.warning("Fallback procedural ativado para miniatura de mapa '%s': %s", norm_key, redact_secrets(exc))
 
-    ss = size * 2
-    im = Image.new("RGBA", (ss, ss), (112, 100, 86, 255))
-    d = ImageDraw.Draw(im)
+    if out is None:
+        digest = hashlib.sha256(norm_key.encode("utf-8")).digest()
+        rng = random.Random(int.from_bytes(digest[:8], "big"))
 
-    for _ in range(9):
-        cx, cy = rng.randint(0, ss), rng.randint(0, ss)
-        rw, rh = rng.randint(18, 46), rng.randint(18, 46)
-        shade = rng.choice(((92, 81, 69, 180), (132, 119, 103, 170), (78, 69, 58, 160)))
-        d.ellipse((cx - rw, cy - rh, cx + rw, cy + rh), fill=shade)
+        ss = sz * 2
+        im = Image.new("RGBA", (ss, ss), (112, 100, 86, 255))
+        d = ImageDraw.Draw(im)
 
-    for g in range(ss // 4, ss, ss // 4):
-        d.line([(g, 0), (g, ss)], fill=(60, 52, 44, 70), width=1)
-        d.line([(0, g), (ss, g)], fill=(60, 52, 44, 70), width=1)
+        for _ in range(9):
+            cx, cy = rng.randint(0, ss), rng.randint(0, ss)
+            rw, rh = rng.randint(18, 46), rng.randint(18, 46)
+            shade = rng.choice(((92, 81, 69, 180), (132, 119, 103, 170), (78, 69, 58, 160)))
+            d.ellipse((cx - rw, cy - rh, cx + rw, cy + rh), fill=shade)
 
-    for _ in range(4):
-        pts = [
-            (rng.randint(0, ss // 3), rng.randint(0, ss)),
-            (rng.randint(ss // 3, (2 * ss) // 3), rng.randint(10, ss - 10)),
-            (rng.randint((2 * ss) // 3, ss), rng.randint(0, ss)),
-        ]
-        d.line(pts, fill=(198, 186, 170, 225), width=rng.choice((2, 3)))
+        for g in range(ss // 4, ss, ss // 4):
+            d.line([(g, 0), (g, ss)], fill=(60, 52, 44, 70), width=1)
+            d.line([(0, g), (ss, g)], fill=(60, 52, 44, 70), width=1)
 
-    d.rectangle((0, 0, ss - 1, ss - 1), outline=(72, 76, 88, 255), width=2)
-    out = im.resize((size, size), Image.Resampling.LANCZOS)
-    if len(_MAP_THUMB_CACHE) >= 128:
+        for _ in range(4):
+            pts = [
+                (rng.randint(0, ss // 3), rng.randint(0, ss)),
+                (rng.randint(ss // 3, (2 * ss) // 3), rng.randint(10, ss - 10)),
+                (rng.randint((2 * ss) // 3, ss), rng.randint(0, ss)),
+            ]
+            d.line(pts, fill=(198, 186, 170, 225), width=rng.choice((2, 3)))
+
+        d.rectangle((0, 0, ss - 1, ss - 1), outline=(72, 76, 88, 255), width=2)
+        out = im.resize((sz, sz), Image.Resampling.LANCZOS)
+
+    if len(_MAP_THUMB_CACHE) >= 256:
         _MAP_THUMB_CACHE.clear()
     _MAP_THUMB_CACHE[key] = out
     return out
@@ -1089,8 +1183,11 @@ def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[st
     axis_players = [p for p in all_participants if str(p["faction"]) in AXIS_FACTIONS]
     allies_players = [p for p in all_participants if str(p["faction"]) in ALLIES_FACTIONS]
 
-    if not axis_players or not allies_players:
+    if not axis_players and not allies_players:
         return team_a, team_b
+    if (not axis_players or not allies_players) and team_a and team_b:
+        # Partida customizada espelhada (Allies vs Allies ou Axis vs Axis): preserva os 2 times separados
+        return team_b, team_a
     return axis_players, allies_players
 
 
@@ -1146,7 +1243,7 @@ def _draw_two_team_columns(
     show_delta: bool = True,
     is_duel: bool = False,
 ) -> None:
-    """Desenha as duas colunas amplas (Axis vs Allies) destacando apenas brasileiros monitorados."""
+    """Desenha as duas colunas amplas (Allies à esquerda, Axis à direita) destacando apenas brasileiros monitorados."""
     hdr_bg = (30, 26, 18, 255) if is_duel else (22, 24, 30, 255)
     sep_col = (96, 78, 34, 255) if is_duel else (46, 50, 62, 255)
     draw.rectangle((8, top_bar_h, width, top_bar_h + col_hdr_h), fill=hdr_bg)
@@ -1155,14 +1252,14 @@ def _draw_two_team_columns(
     draw.line([(mid_x, top_bar_h), (mid_x, total_h)], fill=sep_col, width=1)
 
     ch_col = (253, 224, 71, 255) if is_duel else (235, 238, 244, 255)
-    ch_fnt = pick_font("Axis", size=17, bold=True, condensed=True)
-    draw.text((22, top_bar_h + 9), "Axis", font=ch_fnt, fill=ch_col)
-    draw.text((mid_x + 16, top_bar_h + 9), "Allies", font=ch_fnt, fill=ch_col)
+    ch_fnt = pick_font("Allies", size=17, bold=True, condensed=True)
+    draw.text((22, top_bar_h + 9), "Allies", font=ch_fnt, fill=ch_col)
+    draw.text((mid_x + 16, top_bar_h + 9), "Axis", font=ch_fnt, fill=ch_col)
 
     base_py = top_bar_h + col_hdr_h + 11
     for col_start_x, col_limit_x, team_list in (
-        (18, mid_x - 10, axis_p),
-        (mid_x + 14, width - 12, allies_p),
+        (18, mid_x - 10, allies_p),
+        (mid_x + 14, width - 12, axis_p),
     ):
         for pidx, pl in enumerate(team_list):
             py = base_py + pidx * row_pitch
@@ -1296,7 +1393,7 @@ def render_single_match_card_png(
 
     map_label, m_fnt = truncate_to_px(
         draw,
-        str(primary.get("map_clean") or "Mapa Desconhecido"),
+        _resolve_display_map_name(primary, fallback="Mapa Desconhecido"),
         max_px=330,
         size=21,
         bold=True,
@@ -1372,8 +1469,8 @@ def render_matches_table_png(
     for hx, hlbl in (
         (22, "DATA ↓"),
         (126, "RESULTADO"),
-        (258, "Axis"),
-        (572, "Allies"),
+        (258, "Allies"),
+        (572, "Axis"),
         (902, "MAPA / MODO"),
     ):
         hdr_font = pick_font(hlbl, size=15, bold=True, condensed=True)
@@ -1423,7 +1520,7 @@ def render_matches_table_png(
         ptw = text_width(draw, pill_text, pill_fnt)
         draw.text((pill_x + (pill_w - ptw) / 2, pill_y + 7), pill_text, font=pill_fnt, fill=(255, 255, 255, 255))
 
-        for col_x, team_list in ((248, row["axis"]), (564, row["allies"])):
+        for col_x, team_list in ((248, row["allies"]), (564, row["axis"])):
             line_pitch = 31
             start_py = y + (rh - len(team_list) * line_pitch) // 2
             for pidx, pl in enumerate(team_list):
@@ -1492,7 +1589,13 @@ def render_matches_table_png(
         thumb_y = y + (rh - 90) // 2
         img.paste(m_thumb, (map_cx - 26, thumb_y), m_thumb)
 
-        map_label, m_fnt = truncate_to_px(draw, str(primary.get("map_clean") or "Mapa"), max_px=156, size=13, bold=True)
+        map_label, m_fnt = truncate_to_px(
+            draw,
+            _resolve_display_map_name(primary, fallback="Mapa"),
+            max_px=156,
+            size=13,
+            bold=True,
+        )
         mw = text_width(draw, map_label, m_fnt)
         draw.text((map_cx - mw / 2, thumb_y + 56), map_label, font=m_fnt, fill=(229, 231, 235, 255))
 

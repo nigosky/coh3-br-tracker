@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from relic_api import clean_map_name
+
 PENDING_DISCORD_MARKER = "PENDING"
 SEEDED_DISCORD_MARKER = "SEEDED"
 PRUNED_DISCORD_MARKER = "PRUNED"
@@ -792,7 +794,7 @@ class MatchDatabase:
         rows = conn.execute(
             """
             SELECT rm.match_id, rm.tracked_profile_id, rm.tracked_alias, rm.tracked_steam_id,
-                   rm.tracked_faction_short, rm.win, rm.mode, rm.map_clean,
+                   rm.tracked_faction_short, rm.win, rm.mode, rm.map_raw, rm.map_clean,
                    rm.completion_time, rm.duration_sec, rm.old_elo, rm.new_elo,
                    COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_alias,
                    COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id
@@ -829,7 +831,8 @@ class MatchDatabase:
             if win_bool:
                 f_slot[1] += 1
 
-            m_clean = str(r["map_clean"] or "Mapa Desconhecido")
+            raw_map = str(r["map_raw"] or "").strip()
+            m_clean = clean_map_name(raw_map) if raw_map else str(r["map_clean"] or "Mapa Desconhecido")
             m_slot = map_counts.setdefault(m_clean, [0, 0])
             if (m_clean, mid) not in seen_map_match:
                 seen_map_match.add((m_clean, mid))
@@ -1010,4 +1013,32 @@ class MatchDatabase:
             "bytes_after": size_after,
             "bytes_saved": max(0, size_before - size_after),
         }
+
+    def refresh_recorded_map_names(self) -> int:
+        """Atualiza map_clean das partidas já catalogadas com o dicionário oficial de nomes de mapas CoH3."""
+        conn = self._connect()
+        distinct_rows = conn.execute(
+            "SELECT DISTINCT map_raw, map_clean FROM recorded_matches WHERE map_raw != ''"
+        ).fetchall()
+        updates: list[tuple[str, str, str]] = []
+        for r in distinct_rows:
+            raw = str(r["map_raw"] or "")
+            cur_clean = str(r["map_clean"] or "")
+            official_clean = clean_map_name(raw)
+            if official_clean and official_clean != cur_clean:
+                updates.append((official_clean, raw, cur_clean))
+
+        if not updates:
+            return 0
+
+        updated_rows = 0
+        with conn:
+            for new_clean, raw, old_clean in updates:
+                cur = conn.execute(
+                    "UPDATE recorded_matches SET map_clean = ? WHERE map_raw = ? AND map_clean = ?",
+                    (new_clean, raw, old_clean),
+                )
+                updated_rows += int(cur.rowcount or 0)
+        return updated_rows
+
 
