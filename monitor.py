@@ -455,6 +455,103 @@ def _should_run_daily_ranking_scan(
     return (past_cutoff and effective_last_date != today_brt), today_brt
 
 
+def _should_run_weekly_summary(
+    now_ts: int,
+    last_iso_week: str | None,
+    cutoff_weekday: int = 0,
+    cutoff_hour_brt: int = 0,
+    cutoff_minute_brt: int = 5,
+) -> tuple[bool, str]:
+    """Determina se o Resumo Semanal deve ser postado (padrão: toda segunda-feira a partir de 00:05 BRT)."""
+    now_brt = datetime.fromtimestamp(int(now_ts), tz=BRT_TZ)
+    iso_year, iso_week, _ = now_brt.isocalendar()
+    current_week_key = f"{iso_year}-W{iso_week:02d}"
+
+    is_target_weekday = now_brt.weekday() == int(cutoff_weekday)
+    past_cutoff = (now_brt.hour, now_brt.minute) >= (int(cutoff_hour_brt), int(cutoff_minute_brt))
+    already_sent = (last_iso_week or "").strip() == current_week_key
+    return (is_target_weekday and past_cutoff and not already_sent), current_week_key
+
+
+def maybe_post_weekly_summary(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+    custom_players: list[dict[str, Any]] | None = None,
+    force: bool = False,
+    now_ts: int | None = None,
+) -> str | None:
+    """Publica 1x por semana (segunda-feira >= 00:05 BRT ou forçado) o Card de Resumo Semanal dos Veteranos BR."""
+    if not discord.is_configured:
+        return None
+
+    now = int(now_ts) if now_ts is not None else int(time.time())
+    last_week = db.get_state("last_weekly_summary_iso_week")
+    due, week_key = _should_run_weekly_summary(now_ts=now, last_iso_week=last_week)
+    if not force and not due:
+        return None
+
+    merged_map = {
+        int(cp["profile_id"]): int(cp["merged_into_profile_id"])
+        for cp in (custom_players or CORE_BR_ROSTER)
+        if int(cp.get("profile_id", 0) or 0) > 0 and int(cp.get("merged_into_profile_id", 0) or 0) > 0
+    }
+    stats = db.get_weekly_summary_stats(now_ts=now, window_days=7, merged_map=merged_map)
+    if int(stats.get("unique_matches_count", 0)) <= 0:
+        logger.info("[RESUMO SEMANAL] Nenhuma partida nos últimos 7 dias para gerar card (%s).", week_key)
+        db.set_state("last_weekly_summary_iso_week", week_key)
+        return None
+
+    try:
+        msg_id = discord.send_weekly_summary_card(stats)
+        if msg_id:
+            db.record_ephemeral_message(msg_id, kind="weekly_summary")
+            db.set_state("last_weekly_summary_iso_week", week_key)
+            logger.info(
+                "[RESUMO SEMANAL] Card semanal (%s) publicado no Discord (ID %s | %d partidas únicas | %d duelos BR).",
+                week_key,
+                msg_id,
+                stats["unique_matches_count"],
+                stats["br_duels_count"],
+            )
+            return msg_id
+    except Exception as exc:
+        logger.error("Erro ao publicar Card de Resumo Semanal no Discord: %s", redact_secrets(exc))
+    return None
+
+
+def maybe_run_db_maintenance(
+    db: MatchDatabase,
+    force: bool = False,
+    interval_days: int = 7,
+    now_ts: int | None = None,
+) -> dict[str, int] | None:
+    """Executa compactação segura (>30 dias) + VACUUM no SQLite a cada `interval_days` dias."""
+    now = int(now_ts) if now_ts is not None else int(time.time())
+    last_raw = (db.get_state("last_db_maintenance_ts") or "").strip()
+    last_ts = int(last_raw) if last_raw.isdigit() else 0
+    min_interval_sec = max(1, int(interval_days)) * 86400
+
+    if not force and last_ts > 0 and (now - last_ts) < min_interval_sec:
+        return None
+
+    try:
+        res = db.run_periodic_maintenance(now_ts=now)
+        db.set_state("last_db_maintenance_ts", str(now))
+        logger.info(
+            "[MANUTENÇÃO SQLITE] Compactadas %d linhas (>30d), %d efêmeros podados, %d avatares expirados | Tamanho: %.1f KB -> %.1f KB (-%.1f KB via VACUUM).",
+            res["compacted_match_rows"],
+            res["purged_ephemeral_rows"],
+            res["purged_avatars"],
+            res["bytes_before"] / 1024.0,
+            res["bytes_after"] / 1024.0,
+            res["bytes_saved"] / 1024.0,
+        )
+        return res
+    except Exception as exc:
+        logger.warning("Manutenção periódica do SQLite adiada: %s", redact_secrets(exc))
+        return None
+
+
 def prune_old_discord_messages(
     db: MatchDatabase,
     discord: DiscordWebhookClient,
@@ -1021,8 +1118,9 @@ def run_cycle(
     reset_discord_channel: bool = False,
     coh3stats: Coh3StatsAPIClient | None = None,
     enable_third_check: bool = True,
+    force_weekly_summary: bool = False,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo com tripla checagem (Relic + Relic Direta em lote × coh3stats.com), fila PENDING e entrega confirmada no Discord."""
+    """Executa um ciclo completo com tripla checagem (Relic + Relic Direta em lote × coh3stats.com), Resumo Semanal, compactação SQLite e entrega confirmada no Discord."""
     cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -1381,20 +1479,34 @@ def run_cycle(
                 pruned_count,
                 panel_status,
             )
+            maybe_post_weekly_summary(
+                db=db,
+                discord=discord,
+                custom_players=custom_players,
+                force=force_weekly_summary,
+                now_ts=now_ts,
+            )
         elif grouped_new_matches or players_changed:
             logger.info("Partidas salvas em %s.", db_path.name)
+
+        maybe_run_db_maintenance(db=db, now_ts=now_ts)
 
     return len(grouped_new_matches), seeded_count
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.6 -> SQLite + Tripla Checagem + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.7 -> SQLite + Tripla Checagem + Resumo Semanal + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
         "--force-rank-scan",
         action="store_true",
         help="Força revarredura imediata do Ranking (Top 20 + monitorados) neste ciclo",
+    )
+    parser.add_argument(
+        "--force-weekly-summary",
+        action="store_true",
+        help="Publica imediatamente o Card de Resumo Semanal dos Veteranos BR neste ciclo",
     )
     parser.add_argument(
         "--verify-discord",
@@ -1424,7 +1536,7 @@ def main() -> int:
 
     relic = RelicAPIClient()
     coh3stats = Coh3StatsAPIClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.6 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.7 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -1438,6 +1550,7 @@ def main() -> int:
                 verify_discord=(bool(args.verify_discord) and first_iter),
                 reset_discord_channel=(bool(args.reset_discord_channel) and first_iter),
                 coh3stats=coh3stats,
+                force_weekly_summary=(bool(args.force_weekly_summary) and first_iter),
             )
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)
