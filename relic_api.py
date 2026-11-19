@@ -1763,12 +1763,23 @@ class CohDBClient:
 
         return relic_mid, bg_by_pid
 
+    def invalidate_player_cache(self, profile_ids: list[int] | None = None) -> None:
+        """Limpa o cache em memória de `/players/<id>/matches` para permitir retentativa fresca no mesmo ciclo."""
+        if profile_ids is None:
+            self._player_matches_cache.clear()
+            return
+        for raw_pid in profile_ids:
+            pid = int(raw_pid or 0)
+            if pid > 0:
+                self._player_matches_cache.pop(pid, None)
+
     def fetch_match_battlegroups(
         self,
         match_id: int,
         tracked_profile_ids: list[int],
         expected_map_clean: str = "",
         max_replay_probes: int = 5,
+        fallback_profile_ids: list[int] | None = None,
     ) -> dict[int, dict[str, str]] | None:
         """
         Retorna `{profile_id: {'key': ..., 'name': ...}}` para a partida Relic `match_id` se já indexada
@@ -1782,13 +1793,20 @@ class CohDBClient:
         if self._circuit_open:
             return None
 
-        clean_pids = [int(p) for p in dict.fromkeys(tracked_profile_ids or []) if int(p) > 0]
-        if not clean_pids:
+        clean_tracked = [int(p) for p in dict.fromkeys(tracked_profile_ids or []) if int(p) > 0]
+        tracked_set = set(clean_tracked)
+        clean_fallback = [
+            int(p)
+            for p in dict.fromkeys(fallback_profile_ids or [])
+            if int(p) > 0 and int(p) not in tracked_set
+        ]
+        probe_pids = clean_tracked[:2] + clean_fallback[:1]
+        if not probe_pids:
             return None
 
         map_probe = str(expected_map_clean or "").strip().lower()
-        # Tenta primeiro o 1º jogador monitorado da partida (se não achar, tenta até o 2º)
-        for pid in clean_pids[:2]:
+        # Tenta primeiro até 2 jogadores monitorados e, se necessário, 1 participante adicional da partida
+        for pid in probe_pids:
             if self._circuit_open:
                 break
             rows = self._get_player_recent_replay_rows(pid)
