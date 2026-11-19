@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 SAFE_WEBHOOK_PLACEHOLDER = "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_WEBHOOK_URL"
+SAFE_LOBBY_WEBHOOK_PLACEHOLDER = "DEFINA_NOS_SECRETS_DO_GITHUB_DISCORD_LOBBY_WEBHOOK_URL"
 SECRET_FILE_NAME = ".env.secret"
 
 ALLOWED_DISCORD_HOSTS: frozenset[str] = frozenset(
@@ -31,7 +32,7 @@ WEBHOOK_REDACT_RE = re.compile(
     re.IGNORECASE,
 )
 ENV_SECRET_REDACT_RE = re.compile(
-    r"(DISCORD_WEBHOOK_URL\s*=\s*)[^\s\"'<>]+",
+    r"(DISCORD_(?:LOBBY_)?WEBHOOK_URL\s*=\s*)[^\s\"'<>]+",
     re.IGNORECASE,
 )
 
@@ -205,11 +206,12 @@ def read_bounded_http_body(resp: Any, max_bytes: int) -> bytes:
     return raw
 
 
-def read_local_secret_webhook(base_dir: Path) -> str:
-    """Lê DISCORD_WEBHOOK_URL de .env.secret local e restringe permissões POSIX para 0600 se necessário."""
+def read_local_secret_webhook(base_dir: Path, key_name: str = "DISCORD_WEBHOOK_URL") -> str:
+    """Lê chave de Webhook (ex.: DISCORD_WEBHOOK_URL ou DISCORD_LOBBY_WEBHOOK_URL) de .env.secret local com 0600."""
     secret_path = base_dir / SECRET_FILE_NAME
     if not secret_path.is_file() or secret_path.is_symlink():
         return ""
+    prefix = f"{key_name.strip()}="
     try:
         st = secret_path.stat()
         if st.st_size > 4096:
@@ -221,7 +223,7 @@ def read_local_secret_webhook(base_dir: Path) -> str:
                 pass
         for line in secret_path.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
-            if stripped.startswith("DISCORD_WEBHOOK_URL="):
+            if stripped.startswith(prefix):
                 return stripped.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
         return ""
