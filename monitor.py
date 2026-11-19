@@ -31,7 +31,6 @@ from relic_api import (
     format_bound_display_alias,
 )
 from security import (
-    SAFE_LOBBY_WEBHOOK_PLACEHOLDER,
     SAFE_WEBHOOK_PLACEHOLDER,
     atomic_write_text,
     configure_secure_logging,
@@ -39,11 +38,6 @@ from security import (
     redact_secrets,
     resolve_data_dir,
     resolve_safe_db_path,
-)
-from steam_presence import (
-    SteamPresenceClient,
-    build_lobby_radar_snapshot,
-    compute_lobby_state_digest,
 )
 
 configure_secure_logging(level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S")
@@ -55,9 +49,6 @@ CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
 CURRENT_SUMMARY_CONTENT_VERSION = "v7_5_vonmises_clean_daily_ranking"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
-DEFAULT_LOBBY_ALERT_CLEANUP_HOURS = 2
-DEFAULT_LOBBY_ALERT_COOLDOWN_MINUTES = 60
-DEFAULT_LOBBY_ALERT_MIN_IN_COH3 = 2
 
 
 def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
@@ -153,19 +144,11 @@ def load_config(config_path: Path = DEFAULT_CONFIG_PATH, ensure_roster: bool = T
     if ensure_roster:
         ensure_core_roster_in_config(cfg)
     env_webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
-    local_secret = read_local_secret_webhook(config_path.parent, "DISCORD_WEBHOOK_URL")
+    local_secret = read_local_secret_webhook(config_path.parent)
     if env_webhook:
         cfg["discord_webhook_url"] = env_webhook
     elif local_secret:
         cfg["discord_webhook_url"] = local_secret
-
-    env_lobby_webhook = os.environ.get("DISCORD_LOBBY_WEBHOOK_URL", "").strip()
-    local_lobby_secret = read_local_secret_webhook(config_path.parent, "DISCORD_LOBBY_WEBHOOK_URL")
-    if env_lobby_webhook:
-        cfg["discord_lobby_webhook_url"] = env_lobby_webhook
-    elif local_lobby_secret:
-        cfg["discord_lobby_webhook_url"] = local_lobby_secret
-
     env_db = os.environ.get("SQLITE_DB_PATH", "").strip()
     if env_db:
         cfg["sqlite_db_path"] = env_db
@@ -176,8 +159,6 @@ def save_config_file(config_path: Path, cfg_to_save: dict[str, Any]) -> None:
     """Salva config.json garantindo que NUNCA nenhum valor real de Webhook seja gravado em disco."""
     sanitized_cfg = dict(cfg_to_save)
     sanitized_cfg["discord_webhook_url"] = SAFE_WEBHOOK_PLACEHOLDER
-    if "discord_lobby_webhook_url" in sanitized_cfg:
-        sanitized_cfg["discord_lobby_webhook_url"] = SAFE_LOBBY_WEBHOOK_PLACEHOLDER
 
     env_db = os.environ.get("SQLITE_DB_PATH", "").strip()
     if env_db and sanitized_cfg.get("sqlite_db_path") == env_db:
@@ -613,189 +594,6 @@ def prune_old_discord_messages(
             pruned_count,
         )
     return pruned_count
-
-
-def prune_old_lobby_alerts(
-    db: MatchDatabase,
-    lobby_discord: DiscordWebhookClient,
-    retention_hours: int = DEFAULT_LOBBY_ALERT_CLEANUP_HOURS,
-    max_per_cycle: int = 20,
-) -> int:
-    """Apaga avisos curtos expirados (`lobby_alert`) no canal de Lobby, preservando sempre o Painel Vivo Fixo."""
-    if retention_hours <= 0 or not lobby_discord.is_configured:
-        return 0
-
-    lobby_panel_id = (db.get_state("lobby_panel_message_id") or "").strip()
-    excluded = {lobby_panel_id} if lobby_panel_id else set()
-    to_prune = db.get_prunable_ephemeral_by_kind(
-        kind="lobby_alert",
-        max_age_sec=int(retention_hours) * 3600,
-        exclude_message_ids=excluded,
-        limit=max_per_cycle,
-    )
-    if not to_prune:
-        return 0
-
-    pruned = 0
-    for msg_id in to_prune:
-        try:
-            if lobby_discord.delete_message(msg_id, protected_message_id=lobby_panel_id or None):
-                db.mark_discord_message_pruned(msg_id)
-                pruned += 1
-            time.sleep(0.3)
-        except Exception as exc:
-            logger.warning("Falha transitória ao limpar aviso curto de Lobby (%s): %s", msg_id, redact_secrets(exc))
-
-    if pruned:
-        logger.info("[LOBBY LIMPEZA %dh] %d aviso(s) curto(s) antigo(s) removido(s) automaticamente.", retention_hours, pruned)
-    return pruned
-
-
-def _extract_best_elo_map(rankings_by_mode: dict[str, list[dict[str, Any]]] | None) -> dict[int, int]:
-    best: dict[int, int] = {}
-    if not rankings_by_mode:
-        return best
-    for entries in rankings_by_mode.values():
-        for e in entries:
-            pid = int(e.get("profile_id", 0) or 0)
-            elo = int(round(float(e.get("avg_elo", 0) or e.get("max_elo", 0) or 0)))
-            if pid > 0 and elo > best.get(pid, 0):
-                best[pid] = elo
-    return best
-
-
-def sync_lobby_radar_channel(
-    db: MatchDatabase,
-    lobby_discord: DiscordWebhookClient,
-    custom_players: list[dict[str, Any]] | None = None,
-    rankings_by_mode: dict[str, list[dict[str, Any]]] | None = None,
-    presence_client: SteamPresenceClient | None = None,
-    force: bool = False,
-    alert_cleanup_hours: int = DEFAULT_LOBBY_ALERT_CLEANUP_HOURS,
-    alert_cooldown_minutes: int = DEFAULT_LOBBY_ALERT_COOLDOWN_MINUTES,
-    alert_min_in_coh3: int = DEFAULT_LOBBY_ALERT_MIN_IN_COH3,
-    now_ts: int | None = None,
-) -> dict[str, Any]:
-    """
-    Sincroniza o 2º canal do Discord (Radar de Lobby Ao Vivo):
-    1. Limpa avisos curtos anteriores com mais de `alert_cleanup_hours` (padrão 2h), protegendo o Painel Vivo Fixo.
-    2. Consulta presença pública XML da Steam das 33 contas + histórico recente da Relic.
-    3. Atualiza via PATCH o Painel Vivo Fixo sempre que a presença mudar (ou a cada >= 25 min).
-    4. Publica aviso curto temporário quando há grupo ativo no CoH3 (`>= alert_min_in_coh3`), respeitando cooldown.
-    """
-    result = {
-        "configured": lobby_discord.is_configured,
-        "panel_updated": False,
-        "alert_sent": False,
-        "alerts_pruned": 0,
-        "in_coh3": 0,
-        "online_steam": 0,
-        "recent_relic": 0,
-    }
-    if not lobby_discord.is_configured:
-        return result
-
-    now = int(now_ts) if now_ts is not None else int(time.time())
-    result["alerts_pruned"] = prune_old_lobby_alerts(
-        db=db,
-        lobby_discord=lobby_discord,
-        retention_hours=alert_cleanup_hours,
-    )
-
-    roster = list(custom_players) if custom_players else list(CORE_BR_ROSTER)
-    steam_ids = [str(r.get("steam_id") or "").replace("/steam/", "").strip() for r in roster if r.get("steam_id")]
-    p_client = presence_client if presence_client is not None else SteamPresenceClient()
-    presence_map = p_client.fetch_batch_presence(steam_ids)
-
-    # Se 100% das consultas à Comunidade Steam falharem por indisponibilidade momentânea, evita zerar o painel
-    if steam_ids and not any(bool(v.get("ok")) for v in presence_map.values()) and not force:
-        logger.warning("[RADAR LOBBY] Comunidade Steam indisponível neste instante; mantendo Painel Vivo anterior.")
-        return result
-
-    latest_matches = db.get_latest_match_per_player(max_age_sec=7200)
-    elo_map = _extract_best_elo_map(rankings_by_mode)
-    snapshot = build_lobby_radar_snapshot(
-        custom_players=roster,
-        presence_by_steam=presence_map,
-        latest_matches_by_pid=latest_matches,
-        elo_by_pid=elo_map,
-        now_ts=now,
-        recent_relic_minutes=35,
-    )
-    result["in_coh3"] = len(snapshot["in_coh3"])
-    result["online_steam"] = len(snapshot["online_steam"])
-    result["recent_relic"] = len(snapshot["recent_relic"])
-
-    digest = compute_lobby_state_digest(snapshot)
-    prev_digest = db.get_state("lobby_last_digest") or ""
-    existing_panel_id = (db.get_state("lobby_panel_message_id") or "").strip() or None
-    last_sync_raw = (db.get_state("lobby_last_sync_ts") or "").strip()
-    last_sync_ts = int(last_sync_raw) if last_sync_raw.isdigit() else 0
-
-    should_refresh_panel = (
-        force
-        or existing_panel_id is None
-        or digest != prev_digest
-        or (now - last_sync_ts) >= 1500  # Atualiza carimbo de minutos a cada ~25 min mesmo estável
-    )
-
-    if should_refresh_panel:
-        try:
-            new_panel_id = lobby_discord.upsert_lobby_radar_message(snapshot, existing_message_id=existing_panel_id)
-            if new_panel_id:
-                db.set_state("lobby_panel_message_id", new_panel_id)
-                db.set_state("lobby_last_digest", digest)
-                db.set_state("lobby_last_sync_ts", str(now))
-                result["panel_updated"] = True
-                logger.info(
-                    "[RADAR LOBBY] Painel Vivo Fixo sincronizado (ID %s | No CoH3: %d | Online Steam: %d | Recentes Relic: %d).",
-                    new_panel_id,
-                    result["in_coh3"],
-                    result["online_steam"],
-                    result["recent_relic"],
-                )
-        except Exception as exc:
-            logger.error("Erro ao sincronizar Painel Vivo de Lobby no Discord: %s", redact_secrets(exc))
-
-    # Regra do Aviso Curto com Limpeza Automática (sempre respeitando cooldown e novos entrantes no CoH3)
-    curr_coh3_pids = sorted(int(p["profile_id"]) for p in snapshot["in_coh3"])
-    prev_alert_pids_raw = db.get_state("lobby_last_alert_coh3_pids") or "[]"
-    try:
-        prev_alert_pids = set(int(x) for x in json.loads(prev_alert_pids_raw) if int(x) > 0)
-    except Exception:
-        prev_alert_pids = set()
-
-    last_alert_raw = (db.get_state("lobby_last_alert_ts") or "").strip()
-    last_alert_ts = int(last_alert_raw) if last_alert_raw.isdigit() else 0
-    cooldown_sec = max(15, int(alert_cooldown_minutes)) * 60
-    has_new_coh3_entrant = any(pid not in prev_alert_pids for pid in curr_coh3_pids)
-
-    if len(curr_coh3_pids) == 0:
-        # Quando todos saem do CoH3, zera o conjunto anterior para avisar assim que uma nova sessão começar
-        if prev_alert_pids:
-            db.set_state("lobby_last_alert_coh3_pids", "[]")
-    elif (
-        len(curr_coh3_pids) >= max(1, int(alert_min_in_coh3))
-        and has_new_coh3_entrant
-        and (now - last_alert_ts) >= cooldown_sec
-    ):
-        try:
-            alert_id = lobby_discord.send_lobby_alert_message(snapshot, retention_hours=alert_cleanup_hours)
-            if alert_id:
-                db.record_ephemeral_message(alert_id, kind="lobby_alert")
-                db.set_state("lobby_last_alert_ts", str(now))
-                db.set_state("lobby_last_alert_coh3_pids", json.dumps(curr_coh3_pids))
-                result["alert_sent"] = True
-                logger.info(
-                    "[RADAR LOBBY] Aviso curto enviado (ID %s | %d veteranos no CoH3 | limpeza em %dh).",
-                    alert_id,
-                    len(curr_coh3_pids),
-                    alert_cleanup_hours,
-                )
-        except Exception as exc:
-            logger.error("Erro ao enviar aviso curto de Lobby no Discord: %s", redact_secrets(exc))
-
-    return result
 
 
 def reset_and_clean_discord_channel(
@@ -1321,10 +1119,8 @@ def run_cycle(
     coh3stats: Coh3StatsAPIClient | None = None,
     enable_third_check: bool = True,
     force_weekly_summary: bool = False,
-    force_lobby_sync: bool = False,
-    presence_client: SteamPresenceClient | None = None,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo com tripla checagem (Relic + Relic Direta em lote × coh3stats.com), Radar de Lobby, Resumo Semanal e compactação SQLite."""
+    """Executa um ciclo completo com tripla checagem (Relic + Relic Direta em lote × coh3stats.com), Resumo Semanal, compactação SQLite e entrega confirmada no Discord."""
     cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -1339,12 +1135,6 @@ def run_cycle(
             db=db,
             catalog_json_path=catalog_path,
         )
-        lobby_discord = DiscordWebhookClient(
-            webhook_url=str(cfg.get("discord_lobby_webhook_url", "")),
-            bot_username=str(cfg.get("lobby_bot_username", "CoH3 Brasil Radar")),
-            db=db,
-            catalog_json_path=catalog_path,
-        )
 
         if verify_discord:
             wh_info = discord.verify_webhook()
@@ -1353,16 +1143,6 @@ def run_cycle(
                 wh_info.get("name") or "Webhook",
                 wh_info.get("channel_id") or "N/D",
             )
-            if lobby_discord.is_configured:
-                try:
-                    lwh_info = lobby_discord.verify_webhook()
-                    logger.info(
-                        "[RADAR LOBBY] Webhook de Lobby verificado e ativo: '%s' (canal #%s).",
-                        lwh_info.get("name") or "Lobby Webhook",
-                        lwh_info.get("channel_id") or "N/D",
-                    )
-                except Exception as exc:
-                    logger.warning("Webhook de Lobby configurado, mas falhou na verificação: %s", redact_secrets(exc))
 
         if reset_discord_channel and discord.is_configured:
             reset_and_clean_discord_channel(db, discord)
@@ -1709,28 +1489,13 @@ def run_cycle(
         elif grouped_new_matches or players_changed:
             logger.info("Partidas salvas em %s.", db_path.name)
 
-        if lobby_discord.is_configured:
-            rankings_for_elo = fresh_rankings or load_cached_rankings(config_path.parent, top_n=top_n)
-            sync_lobby_radar_channel(
-                db=db,
-                lobby_discord=lobby_discord,
-                custom_players=custom_players,
-                rankings_by_mode=rankings_for_elo,
-                presence_client=presence_client,
-                force=force_lobby_sync,
-                alert_cleanup_hours=max(1, int(cfg.get("lobby_alert_cleanup_hours", DEFAULT_LOBBY_ALERT_CLEANUP_HOURS))),
-                alert_cooldown_minutes=max(15, int(cfg.get("lobby_alert_cooldown_minutes", DEFAULT_LOBBY_ALERT_COOLDOWN_MINUTES))),
-                alert_min_in_coh3=max(1, int(cfg.get("lobby_alert_min_in_coh3", DEFAULT_LOBBY_ALERT_MIN_IN_COH3))),
-                now_ts=now_ts,
-            )
-
         maybe_run_db_maintenance(db=db, now_ts=now_ts)
 
     return len(grouped_new_matches), seeded_count
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.8 -> SQLite + Tripla Checagem + Radar de Lobby + Resumo Semanal")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.7 -> SQLite + Tripla Checagem + Resumo Semanal + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1742,11 +1507,6 @@ def main() -> int:
         "--force-weekly-summary",
         action="store_true",
         help="Publica imediatamente o Card de Resumo Semanal dos Veteranos BR neste ciclo",
-    )
-    parser.add_argument(
-        "--force-lobby-sync",
-        action="store_true",
-        help="Força atualização imediata do Painel Vivo do Radar de Lobby neste ciclo",
     )
     parser.add_argument(
         "--verify-discord",
@@ -1776,8 +1536,7 @@ def main() -> int:
 
     relic = RelicAPIClient()
     coh3stats = Coh3StatsAPIClient()
-    presence_client = SteamPresenceClient()
-    logger.info("Iniciando CoH3 Brasil Monitor v7.8 usando %s...", args.config)
+    logger.info("Iniciando CoH3 Brasil Monitor v7.7 usando %s...", args.config)
 
     first_iter = True
     while not stop_requested:
@@ -1792,8 +1551,6 @@ def main() -> int:
                 reset_discord_channel=(bool(args.reset_discord_channel) and first_iter),
                 coh3stats=coh3stats,
                 force_weekly_summary=(bool(args.force_weekly_summary) and first_iter),
-                force_lobby_sync=(bool(args.force_lobby_sync) and first_iter),
-                presence_client=presence_client,
             )
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)
