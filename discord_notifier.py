@@ -16,13 +16,11 @@ from typing import Any
 
 from card_renderer import (
     SteamAvatarProvider,
-    render_lobby_radar_card_png,
     render_matches_table_png,
     render_ranking_movement_card_png,
     render_ranking_table_png,
     render_weekly_summary_card_png,
 )
-from relic_api import STEAM_ID64_VALID_RE
 from security import (
     ALLOWED_DISCORD_HOSTS,
     build_no_redirect_https_opener,
@@ -39,8 +37,6 @@ COLOR_LOSS = 0xE03131     # Vermelho Derrota
 COLOR_DUEL = 0xEAB308     # Ouro Duelo Brasileiro
 COLOR_RANKING = 0xEAB308  # Ouro Tabela de Ranking Tático
 COLOR_SUMMARY = 0x1D7DFA  # Azul Lista Horizontal de Partidas
-COLOR_LOBBY_GAME = 0x22C55E    # Verde Em Jogo no CoH3
-COLOR_LOBBY_ONLINE = 0x38BDF8  # Azul-Celeste Online na Steam
 
 BOT_AVATAR_URL = "https://coh3stats.com/logo/android-icon-192x192.png"
 
@@ -66,12 +62,9 @@ _SECURE_OPENER = build_no_redirect_https_opener()
 __all__ = [
     "ALLOWED_DISCORD_HOSTS",
     "DiscordWebhookClient",
-    "build_lobby_alert_payload",
-    "build_lobby_radar_payload",
     "build_match_embed_payload",
     "build_ranking_movement_payload",
     "build_safe_coh3stats_match_url",
-    "build_safe_steam_profile_url",
     "build_summary_list_payload",
     "build_weekly_summary_payload",
     "compact_mode",
@@ -99,13 +92,6 @@ def build_safe_coh3stats_match_url(profile_id: Any, match_id: Any) -> str:
     if pid <= 0 or mid <= 0:
         raise ValueError("IDs de perfil/partida devem ser inteiros positivos.")
     return f"https://coh3stats.com/players/{pid}/matches/{mid}"
-
-
-def build_safe_steam_profile_url(steam_id: Any) -> str | None:
-    sid = str(steam_id or "").replace("/steam/", "").strip()
-    if not STEAM_ID64_VALID_RE.fullmatch(sid):
-        return None
-    return f"https://steamcommunity.com/profiles/{sid}"
 
 
 def compact_mode(mode_raw: Any) -> str:
@@ -683,161 +669,3 @@ class DiscordWebhookClient:
         }
         _, data = self._request("POST", self._append_wait_param(self._webhook_url), payload)
         return self._extract_snowflake(data)
-
-    def upsert_lobby_radar_message(
-        self,
-        snapshot: dict[str, Any],
-        existing_message_id: str | None,
-    ) -> str | None:
-        """Mantém o Painel Vivo Fixo do canal de Lobby atualizado in-place via PATCH (ou cria se ausente)."""
-        if not self.is_configured:
-            return None
-
-        png_bytes = render_lobby_radar_card_png(snapshot, avatar_provider=self.get_avatar_provider())
-        files = [("lobby_radar.png", png_bytes, "image/png")]
-        payload = build_lobby_radar_payload(snapshot, bot_username=self.bot_username)
-
-        clean_msg_id = (existing_message_id or "").strip()
-        if clean_msg_id and SNOWFLAKE_ID_RE.fullmatch(clean_msg_id):
-            parsed = urllib.parse.urlparse(self._webhook_url)
-            msg_url = urllib.parse.urlunparse(parsed._replace(path=f"{parsed.path.rstrip('/')}/messages/{clean_msg_id}"))
-            status, data = self._request("PATCH", msg_url, payload, files=files)
-            if status != 404:
-                patched_id = self._extract_snowflake(data)
-                if patched_id:
-                    return patched_id
-            logger.info("Painel de Lobby anterior (%s) não encontrado (404); criando novo.", clean_msg_id)
-
-        _, data = self._request("POST", self._append_wait_param(self._webhook_url), payload, files=files)
-        return self._extract_snowflake(data)
-
-    def send_lobby_alert_message(
-        self,
-        snapshot: dict[str, Any],
-        retention_hours: int = 2,
-    ) -> str | None:
-        """Envia o aviso curto de movimentação no CoH3 (com limpeza automática configurada)."""
-        if not self.is_configured or not snapshot.get("in_coh3"):
-            return None
-        payload = build_lobby_alert_payload(
-            snapshot,
-            retention_hours=retention_hours,
-            bot_username=self.bot_username,
-        )
-        _, data = self._request("POST", self._append_wait_param(self._webhook_url), payload)
-        return self._extract_snowflake(data)
-
-
-def build_lobby_radar_payload(
-    snapshot: dict[str, Any],
-    bot_username: str = "CoH3 Brasil Radar",
-    attachment_filename: str = "lobby_radar.png",
-) -> dict[str, Any]:
-    """Monta o Painel Vivo Fixo do canal de Lobby: Card PNG + links diretos da Steam para convidar com 1 clique."""
-    in_coh3: list[dict[str, Any]] = list(snapshot.get("in_coh3") or [])
-    online_steam: list[dict[str, Any]] = list(snapshot.get("online_steam") or [])
-    recent_relic: list[dict[str, Any]] = list(snapshot.get("recent_relic") or [])
-
-    desc_blocks: list[str] = []
-
-    if in_coh3:
-        coh3_links: list[str] = []
-        for pl in in_coh3[:12]:
-            nm = sanitize_discord_text(pl.get("alias"), 22)
-            surl = build_safe_steam_profile_url(pl.get("steam_id"))
-            age_m = pl.get("last_age_min")
-            tag = f" *(saiu de partida há {max(1, int(age_m))}m)*" if (age_m is not None and int(age_m) <= 15) else ""
-            if surl:
-                coh3_links.append(f"🎮 [**{nm}** ↗]({surl}){tag}")
-            else:
-                coh3_links.append(f"🎮 **{nm}**{tag}")
-        desc_blocks.append("**Jogando CoH3 agora (clique para abrir na Steam):**\n" + "  •  ".join(coh3_links))
-
-    free_online = [p for p in online_steam if not p.get("other_game") and not p.get("is_away")]
-    busy_online = [p for p in online_steam if p.get("other_game") or p.get("is_away")]
-
-    if free_online:
-        on_links: list[str] = []
-        for pl in free_online[:16]:
-            nm = sanitize_discord_text(pl.get("alias"), 20)
-            surl = build_safe_steam_profile_url(pl.get("steam_id"))
-            on_links.append(f"[**{nm}** ↗]({surl})" if surl else f"**{nm}**")
-        desc_blocks.append("🟢 **Online e livres na Steam:** " + "  •  ".join(on_links))
-
-    if busy_online:
-        bz_links: list[str] = []
-        for pl in busy_online[:8]:
-            nm = sanitize_discord_text(pl.get("alias"), 18)
-            surl = build_safe_steam_profile_url(pl.get("steam_id"))
-            og = sanitize_discord_text(pl.get("other_game"), 18) if pl.get("other_game") else "Ausente"
-            bz_links.append((f"[{nm} ↗]({surl})" if surl else nm) + f" *({og})*")
-        desc_blocks.append("🕹️ **Em outro jogo / ausentes:** " + "  •  ".join(bz_links))
-
-    if recent_relic:
-        rec_names = [
-            f"**{sanitize_discord_text(p.get('alias'), 20)}** *(há {max(1, int(p.get('last_age_min') or 1))}m)*"
-            for p in recent_relic[:6]
-        ]
-        desc_blocks.append("⏱️ **Jogaram há pouco (Steam privada/invisível):** " + "  •  ".join(rec_names))
-
-    if not desc_blocks:
-        desc_blocks.append("_Nenhum veterano monitorado com status público online ou partida recente neste instante._")
-
-    color = COLOR_LOBBY_GAME if in_coh3 else (COLOR_LOBBY_ONLINE if online_steam else COLOR_RANKING)
-    embed = {
-        "title": "📡 RADAR DE LOBBY AO VIVO — VETERANOS COH3 BRASIL",
-        "description": "\n\n".join(desc_blocks)[:4000],
-        "color": color,
-        "image": {"url": f"attachment://{attachment_filename}"},
-        "footer": {
-            "text": (
-                f"No CoH3: {len(in_coh3)} • Online Steam: {len(online_steam)} • "
-                "Painel atualizado automaticamente a cada 5 min quando há movimento"
-            )
-        },
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-    }
-
-    return {
-        "username": sanitize_discord_text(bot_username, max_len=80),
-        "avatar_url": BOT_AVATAR_URL,
-        "allowed_mentions": SAFE_ALLOWED_MENTIONS,
-        "content": "",
-        "embeds": [embed],
-    }
-
-
-def build_lobby_alert_payload(
-    snapshot: dict[str, Any],
-    retention_hours: int = 2,
-    bot_username: str = "CoH3 Brasil Radar",
-) -> dict[str, Any]:
-    """Monta aviso curto de movimentação ativa no CoH3 (auto-apagado após `retention_hours` horas)."""
-    in_coh3: list[dict[str, Any]] = list(snapshot.get("in_coh3") or [])
-    online_steam: list[dict[str, Any]] = list(snapshot.get("online_steam") or [])
-
-    linked_names: list[str] = []
-    for pl in in_coh3[:8]:
-        nm = sanitize_discord_text(pl.get("alias"), 22)
-        surl = build_safe_steam_profile_url(pl.get("steam_id"))
-        linked_names.append(f"[**{nm}**](<{surl}>)" if surl else f"**{nm}**")
-
-    extra_coh3 = f" +{len(in_coh3) - 8}" if len(in_coh3) > 8 else ""
-    free_cnt = sum(1 for p in online_steam if not p.get("other_game") and not p.get("is_away"))
-    online_tail = f"  •  🟢 **+{free_cnt} livre(s) na Steam** para fechar time!" if free_cnt > 0 else ""
-
-    plural = "Veteranos" if len(in_coh3) != 1 else "Veterano"
-    content = (
-        f"🔥 **MOVIMENTO NO LOBBY AGORA!** — 🎮 **{len(in_coh3)} {plural} no CoH3:** "
-        f"{', '.join(linked_names)}{extra_coh3}{online_tail}\n"
-        f"-# _Veja os detalhes no Painel Vivo acima • Este aviso curto é limpo automaticamente em {max(1, int(retention_hours))}h._"
-    )
-
-    return {
-        "username": sanitize_discord_text(bot_username, max_len=80),
-        "avatar_url": BOT_AVATAR_URL,
-        "allowed_mentions": SAFE_ALLOWED_MENTIONS,
-        "content": content[:2000],
-        "embeds": [],
-    }
-

@@ -588,31 +588,6 @@ class MatchDatabase:
         candidates.sort(key=lambda item: item[0])
         return [(mid, kind) for _, mid, kind in candidates[:safe_limit]]
 
-    def get_prunable_ephemeral_by_kind(
-        self,
-        kind: str,
-        max_age_sec: int = 7200,
-        exclude_message_ids: set[str] | None = None,
-        limit: int = 30,
-    ) -> list[str]:
-        """Retorna IDs de mensagens efêmeras de um `kind` específico (ex.: `lobby_alert` no canal de Lobby) prontas para limpeza."""
-        safe_limit = max(1, min(int(limit), 100))
-        cutoff = int(time.time()) - max(300, int(max_age_sec))
-        excluded = {str(x).strip() for x in (exclude_message_ids or set()) if x}
-        rows = self._connect().execute(
-            """
-            SELECT message_id
-            FROM discord_ephemeral_messages
-            WHERE pruned_at IS NULL
-              AND kind = ?
-              AND sent_at <= ?
-            ORDER BY sent_at ASC
-            LIMIT ?
-            """,
-            (str(kind)[:32], cutoff, safe_limit),
-        ).fetchall()
-        return [str(r["message_id"]) for r in rows if str(r["message_id"]) not in excluded]
-
     def mark_discord_message_pruned(self, message_id: str) -> None:
         """Marca a mensagem como limpa no canal sem remover o histórico de partidas do SQLite."""
         clean_id = (message_id or "").strip()
@@ -631,7 +606,7 @@ class MatchDatabase:
             )
 
     def get_all_active_discord_message_ids(self, include_summary: bool = True) -> list[tuple[str, str]]:
-        """Retorna todas as mensagens ativas do bot/webhook no canal principal para limpeza total do canal."""
+        """Retorna todas as mensagens ativas do bot/webhook no Discord para limpeza total do canal."""
         conn = self._connect()
         result: list[tuple[str, str]] = []
         seen: set[str] = set()
@@ -658,7 +633,6 @@ class MatchDatabase:
             SELECT message_id, kind
             FROM discord_ephemeral_messages
             WHERE pruned_at IS NULL
-              AND kind != 'lobby_alert'
             ORDER BY sent_at ASC
             """
         ).fetchall()
@@ -1036,32 +1010,4 @@ class MatchDatabase:
             "bytes_after": size_after,
             "bytes_saved": max(0, size_before - size_after),
         }
-
-    def get_latest_match_per_player(self, max_age_sec: int = 86400) -> dict[int, dict[str, Any]]:
-        """Retorna a última partida concluída de cada `tracked_profile_id` dentro de `max_age_sec`."""
-        cutoff = int(time.time()) - max(600, int(max_age_sec))
-        rows = self._connect().execute(
-            """
-            SELECT tracked_profile_id, match_id, mode, map_clean, completion_time, win, new_elo
-            FROM recorded_matches
-            WHERE completion_time >= ?
-            ORDER BY completion_time DESC, match_id DESC
-            """,
-            (cutoff,),
-        ).fetchall()
-        latest: dict[int, dict[str, Any]] = {}
-        for r in rows:
-            pid = int(r["tracked_profile_id"])
-            if pid not in latest:
-                latest[pid] = {
-                    "profile_id": pid,
-                    "match_id": int(r["match_id"]),
-                    "mode": str(r["mode"] or ""),
-                    "map_clean": str(r["map_clean"] or ""),
-                    "completion_time": int(r["completion_time"]),
-                    "win": bool(r["win"]),
-                    "new_elo": int(r["new_elo"]) if r["new_elo"] is not None else 0,
-                }
-        return latest
-
 
