@@ -43,8 +43,12 @@ logger = logging.getLogger("coh3_br.renderer")
 
 BASE_DIR = Path(__file__).resolve().parent
 FACTIONS_DIR = BASE_DIR / "assets" / "factions"
+FLAGS_DIR = BASE_DIR / "assets" / "flags"
 VETERANOS_BADGE_PATH = BASE_DIR / "assets" / "discord_veteranos_patente.png"
 BRT_TZ = timezone(timedelta(hours=-3))
+
+SAFE_FLAG_CODE_RE = re.compile(r"^[a-z]{2}$")
+MAX_FLAG_ASSET_BYTES = 65_536      # 64 KB
 
 STEAM_XML_AVATAR_MEDIUM_RE = re.compile(
     r"<avatarMedium>\s*<!\[CDATA\[(https://[^\s\]]+)\]\]>\s*</avatarMedium>",
@@ -91,8 +95,11 @@ FACTION_TO_ASSET: dict[str, str] = {
     "german": "german",
 }
 
-HAS_CJK_RE = re.compile(r"[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\u3040-\u30ff]")
-NEEDS_DEJAVU_RE = re.compile(r"[^\x00-\x024f]")
+HAS_CJK_RE = re.compile(
+    r"[\u1100-\u11ff\u2e80-\u33ff\u3400-\u4dbf\u4e00-\u9fff"
+    r"\uac00-\ud7af\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]"
+)
+NEEDS_DEJAVU_RE = re.compile(r"[^\u0000-\u024f\u2013\u2014\u2022\u2026]")
 
 _DEFAULT_ROSTER_MAPS = build_roster_lookup_maps()
 
@@ -123,6 +130,8 @@ _NO_REDIRECT_OPENER = build_no_redirect_https_opener()
 # Carregamento seguro de fontes com cache em memória (Latim, Cirílico e CJK)
 # ---------------------------------------------------------------------------
 _FONT_CACHE: dict[tuple[str, int], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+_DISCOVERED_CJK_FONTS: dict[str, list[str]] | None = None
+_WARNED_MISSING_CJK = False
 
 FONT_CANDIDATES: dict[str, list[str]] = {
     "regular": [
@@ -150,30 +159,92 @@ FONT_CANDIDATES: dict[str, list[str]] = {
     "unicode_bold": ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"],
     "cjk_regular": [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     ],
     "cjk_bold": [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Bold.otf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
     ],
 }
 
 
+def _discover_cjk_fonts() -> dict[str, list[str]]:
+    """Varre /usr/share/fonts uma única vez para localizar fontes CJK mesmo se o caminho mudar entre versões do SO."""
+    global _DISCOVERED_CJK_FONTS
+    if _DISCOVERED_CJK_FONTS is not None:
+        return _DISCOVERED_CJK_FONTS
+
+    regular: list[str] = []
+    bold: list[str] = []
+    fonts_root = Path("/usr/share/fonts")
+    if fonts_root.is_dir():
+        for p in sorted(fonts_root.rglob("*")):
+            if not p.is_file() or p.suffix.lower() not in (".ttc", ".ttf", ".otf"):
+                continue
+            low = p.name.lower()
+            if not any(tok in low for tok in ("notosanscjk", "notosanssc", "notosanstc", "wqy-", "sourcehansans")):
+                continue
+            if "bold" in low:
+                bold.append(str(p))
+            else:
+                regular.append(str(p))
+
+    _DISCOVERED_CJK_FONTS = {
+        "cjk_regular": regular + bold,
+        "cjk_bold": bold + regular,
+    }
+    return _DISCOVERED_CJK_FONTS
+
+
+def _load_truetype_font(path: Path, size: int, is_cjk: bool = False) -> ImageFont.FreeTypeFont:
+    """Carrega fonte TrueType/OpenType; em coleções NotoSansCJK.ttc prioriza face SC (chinês simplificado + CJK pan-asiático)."""
+    if is_cjk and path.suffix.lower() == ".ttc" and "notosanscjk" in path.name.lower():
+        for idx in (2, 0):
+            try:
+                return ImageFont.truetype(str(path), size=size, index=idx)
+            except OSError:
+                continue
+    return ImageFont.truetype(str(path), size=size)
+
+
 def _get_font_by_role(role: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    global _WARNED_MISSING_CJK
     key = (role, size)
     cached = _FONT_CACHE.get(key)
     if cached is not None:
         return cached
-    for path_str in FONT_CANDIDATES.get(role, FONT_CANDIDATES["regular"]):
+
+    is_cjk = role in ("cjk_regular", "cjk_bold")
+    candidates = list(FONT_CANDIDATES.get(role, FONT_CANDIDATES["regular"]))
+    if is_cjk:
+        for extra in _discover_cjk_fonts().get(role, []):
+            if extra not in candidates:
+                candidates.append(extra)
+
+    for path_str in candidates:
         p = Path(path_str)
         if p.is_file():
             try:
-                fnt = ImageFont.truetype(str(p), size=size)
+                fnt = _load_truetype_font(p, size=size, is_cjk=is_cjk)
                 _FONT_CACHE[key] = fnt
                 return fnt
             except OSError:
                 continue
+
+    if is_cjk:
+        if not _WARNED_MISSING_CJK:
+            logger.warning("Fonte CJK (fonts-noto-cjk) não encontrada em /usr/share/fonts; usando fallback DejaVu.")
+            _WARNED_MISSING_CJK = True
+        return _get_font_by_role("unicode_bold" if role == "cjk_bold" else "unicode_regular", size)
+
     fallback = ImageFont.load_default()
     _FONT_CACHE[key] = fallback
     return fallback
@@ -540,7 +611,36 @@ def get_faction_icon(faction_name: str, size: int) -> Image.Image:
     return icon
 
 
+_FLAG_BASE_CACHE: dict[str, Image.Image | None] = {}
 _FLAG_CACHE: dict[tuple[str, int, int], Image.Image] = {}
+
+FLAG_CODE_ALIASES: dict[str, str] = {
+    "uk": "gb",
+}
+
+
+def _load_flag_asset(code: str) -> Image.Image | None:
+    """Carrega bandeira PNG local oficial (48x36) de assets/flags/<cc>.png com validação segura."""
+    if not SAFE_FLAG_CODE_RE.match(code):
+        return None
+    if code in _FLAG_BASE_CACHE:
+        return _FLAG_BASE_CACHE[code]
+
+    png_path = FLAGS_DIR / f"{code}.png"
+    base: Image.Image | None = None
+    try:
+        flags_root = FLAGS_DIR.resolve()
+        if not png_path.is_symlink() and png_path.is_file():
+            resolved = png_path.resolve()
+            if resolved.parent == flags_root and resolved.stat().st_size <= MAX_FLAG_ASSET_BYTES:
+                with Image.open(resolved, formats=["PNG"]) as im:
+                    base = im.convert("RGBA")
+    except Exception:
+        base = None
+
+    _FLAG_BASE_CACHE[code] = base
+    return base
+
 
 HORIZONTAL_TRICOLORS: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], tuple[int, int, int]]] = {
     "de": ((20, 20, 20), (221, 0, 0), (255, 206, 0)),
@@ -576,12 +676,24 @@ VERTICAL_TRICOLORS: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], 
 
 
 def get_country_flag(code: str, w: int = 20, h: int = 14) -> Image.Image:
-    c = (code or "un").strip().lower()[:4]
+    raw = (code or "un").strip().lower()[:4]
+    c = FLAG_CODE_ALIASES.get(raw, raw)
     ck = (c, w, h)
     cached = _FLAG_CACHE.get(ck)
     if cached is not None:
         return cached
 
+    asset = _load_flag_asset(c)
+    if asset is None and not SAFE_FLAG_CODE_RE.match(c):
+        asset = _load_flag_asset("un")
+    if asset is not None:
+        resized = asset.resize((w, h), Image.Resampling.LANCZOS)
+        border_draw = ImageDraw.Draw(resized)
+        border_draw.rectangle((0, 0, w - 1, h - 1), outline=(0, 0, 0, 110), width=1)
+        _FLAG_CACHE[ck] = resized
+        return resized
+
+    # Fallback vetorial caso assets/flags não esteja disponível
     sw, sh = w * 2, h * 2
     im = Image.new("RGBA", (sw, sh), (45, 50, 62, 255))
     d = ImageDraw.Draw(im)
@@ -596,7 +708,7 @@ def get_country_flag(code: str, w: int = 20, h: int = 14) -> Image.Image:
             y0, y1 = int(i * sh / 7), int((i + 1) * sh / 7)
             d.rectangle((0, y0, sw, y1), fill=(187, 19, 62, 255) if i % 2 == 0 else (255, 255, 255, 255))
         d.rectangle((0, 0, int(sw * 0.45), int(sh * 0.55)), fill=(0, 38, 100, 255))
-    elif c in ("gb", "uk"):
+    elif c == "gb":
         d.rectangle((0, 0, sw, sh), fill=(1, 33, 105, 255))
         d.line([(0, 0), (sw, sh)], fill=(255, 255, 255, 255), width=5)
         d.line([(0, sh), (sw, 0)], fill=(255, 255, 255, 255), width=5)
@@ -625,6 +737,15 @@ def get_country_flag(code: str, w: int = 20, h: int = 14) -> Image.Image:
     elif c == "cn":
         d.rectangle((0, 0, sw, sh), fill=(222, 41, 16, 255))
         d.ellipse((5, 4, 13, 12), fill=(255, 222, 0, 255))
+    elif c == "tw":
+        d.rectangle((0, 0, sw, sh), fill=(254, 0, 0, 255))
+        d.rectangle((0, 0, sw // 2, sh // 2), fill=(0, 0, 149, 255))
+        r = max(3, sh // 7)
+        d.ellipse((sw // 4 - r, sh // 4 - r, sw // 4 + r, sh // 4 + r), fill=(255, 255, 255, 255))
+    elif c == "hk":
+        d.rectangle((0, 0, sw, sh), fill=(222, 41, 16, 255))
+        r = max(4, sh // 4)
+        d.ellipse((sw // 2 - r, sh // 2 - r, sw // 2 + r, sh // 2 + r), fill=(255, 255, 255, 255))
     elif c == "ca":
         d.rectangle((0, 0, sw, sh), fill=(255, 255, 255, 255))
         d.rectangle((0, 0, sw // 4, sh), fill=(216, 6, 33, 255))
@@ -1247,7 +1368,6 @@ def render_matches_table_png(
     draw.rectangle((0, 0, width, header_h), fill=(19, 21, 26, 255))
     draw.line([(0, header_h - 1), (width, header_h - 1)], fill=(52, 56, 68, 255), width=2)
 
-    hdr_font = pick_font("DATA", size=15, bold=True, condensed=True)
     hdr_color = (235, 238, 244, 255)
     for hx, hlbl in (
         (22, "DATA ↓"),
@@ -1256,6 +1376,7 @@ def render_matches_table_png(
         (572, "Allies"),
         (902, "MAPA / MODO"),
     ):
+        hdr_font = pick_font(hlbl, size=15, bold=True, condensed=True)
         draw.text((hx, 13), hlbl, font=hdr_font, fill=hdr_color)
 
     if not prepared_rows:
@@ -1434,7 +1555,6 @@ def render_ranking_table_png(
 
     gold_col = (245, 184, 46, 255)
     ch_y = banner_h + 7
-    hdr_fnt = pick_font("VITÓRIAS", size=15, bold=True, condensed=True)
 
     for lbl, cx, align in (
         ("POS.", 46, "center"),
@@ -1447,6 +1567,7 @@ def render_ranking_table_png(
         ("JOGOS", 838, "right"),
         ("ÚLT. JOGO", 964, "right"),
     ):
+        hdr_fnt = pick_font(lbl, size=15, bold=True, condensed=True)
         lw = text_width(draw, lbl, hdr_fnt)
         tx = (cx - lw / 2) if align == "center" else ((cx - lw) if align == "right" else cx)
         draw.text((tx, ch_y), lbl, font=hdr_fnt, fill=gold_col)

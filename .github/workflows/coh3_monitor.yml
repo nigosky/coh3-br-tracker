@@ -82,6 +82,12 @@ jobs:
           if [ ! -d "/usr/share/fonts/truetype/dejavu" ]; then
             NEED_PKGS+=("fonts-dejavu-core" "fonts-liberation")
           fi
+          if [ ! -d "/usr/share/fonts/truetype/roboto" ]; then
+            NEED_PKGS+=("fonts-roboto")
+          fi
+          if [ ! -f "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc" ] && [ -z "$(find /usr/share/fonts -iname '*NotoSansCJK*' -print -quit 2>/dev/null)" ]; then
+            NEED_PKGS+=("fonts-noto-cjk")
+          fi
           if [ "${#NEED_PKGS[@]}" -gt 0 ]; then
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends "${NEED_PKGS[@]}"
