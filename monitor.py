@@ -454,9 +454,10 @@ def prune_old_discord_messages(
     db: MatchDatabase,
     discord: DiscordWebhookClient,
     retention_hours: int = DEFAULT_DISCORD_CLEANUP_HOURS,
-    max_per_cycle: int = 40,
+    max_per_cycle: int = 80,
+    now_ts: int | None = None,
 ) -> int:
-    """Remove do canal de texto do Discord partidas/cards com mais de retention_hours (padrão 72h), preservando o Painel Fixado."""
+    """Remove apenas do canal de texto do Discord partidas/cards com mais de retention_hours (padrão 72h), preservando o Painel Fixado e 100% do histórico em SQLite."""
     if retention_hours <= 0 or not discord.is_configured:
         return 0
 
@@ -466,6 +467,7 @@ def prune_old_discord_messages(
         max_age_sec=int(retention_hours) * 3600,
         exclude_message_ids=excluded,
         limit=max_per_cycle,
+        now_ts=now_ts,
     )
     if not to_prune:
         return 0
@@ -487,7 +489,7 @@ def prune_old_discord_messages(
 
     if pruned_count:
         logger.info(
-            "[LIMPEZA %dh] %d mensagem(ns) antiga(s) removida(s) do canal de texto do Discord (Painel Fixado preservado).",
+            "[LIMPEZA %dh] %d mensagem(ns) antiga(s) removida(s) apenas do canal Discord (Painel Fixado e histórico SQLite preservados).",
             retention_hours,
             pruned_count,
         )
@@ -1406,7 +1408,8 @@ def run_cycle(
         only_automatch = bool(cfg.get("only_automatch", False))
         seed_limit = int(cfg.get("initial_seed_per_player", 3))
         summary_size = int(cfg.get("summary_list_size", 15))
-        cleanup_hours = max(0, int(cfg.get("discord_cleanup_hours", DEFAULT_DISCORD_CLEANUP_HOURS)))
+        raw_cleanup_hours = cfg.get("discord_cleanup_hours", DEFAULT_DISCORD_CLEANUP_HOURS)
+        cleanup_hours = max(0, int(DEFAULT_DISCORD_CLEANUP_HOURS if raw_cleanup_hours is None else raw_cleanup_hours))
         window_sec = cleanup_hours * 3600 if cleanup_hours > 0 else 86400
         pending_max_age_sec = max(21600, window_sec)
 
@@ -1505,17 +1508,34 @@ def run_cycle(
                     player_new = [m for m in recent_matches if int(m["match_id"]) not in existing_mids]
                     player_new.sort(key=lambda x: x["completion_time"])
                     for m in player_new:
-                        if db.insert_match(m, discord_message_id=live_marker):
-                            newly_finished.append(m)
-                            logger.info(
-                                "[NOVA PARTIDA] %s (%s) -> %s em %s (%s) [#%d]",
-                                m["tracked_alias"],
-                                m["tracked_faction_short"],
-                                "VITÓRIA" if m["win"] else "DERROTA",
-                                m["map_clean"],
-                                m["mode"],
-                                m["match_id"],
-                            )
+                        m_ct = int(m.get("completion_time", 0) or 0)
+                        is_expired_for_discord = bool(
+                            cleanup_hours > 0 and m_ct > 0 and (now_ts - m_ct) > window_sec
+                        )
+                        target_marker = PRUNED_DISCORD_MARKER if is_expired_for_discord else live_marker
+                        if db.insert_match(m, discord_message_id=target_marker):
+                            if is_expired_for_discord:
+                                logger.info(
+                                    "[HISTÓRICO >%dh] %s (%s) -> %s em %s (%s) [#%d] registrada apenas no SQLite (fora da janela do Discord).",
+                                    cleanup_hours,
+                                    m["tracked_alias"],
+                                    m["tracked_faction_short"],
+                                    "VITÓRIA" if m["win"] else "DERROTA",
+                                    m["map_clean"],
+                                    m["mode"],
+                                    m["match_id"],
+                                )
+                            else:
+                                newly_finished.append(m)
+                                logger.info(
+                                    "[NOVA PARTIDA] %s (%s) -> %s em %s (%s) [#%d]",
+                                    m["tracked_alias"],
+                                    m["tracked_faction_short"],
+                                    "VITÓRIA" if m["win"] else "DERROTA",
+                                    m["map_clean"],
+                                    m["mode"],
+                                    m["match_id"],
+                                )
                 if resolved_alias != alias or (resolved_steam_id and not existing_player_sid):
                     db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
                     players_changed = True
@@ -1585,7 +1605,23 @@ def run_cycle(
         if discord.is_configured:
             # Recupera novas partidas + recuperadas na 3ª/4ª checagem + pendentes de falhas transitórias anteriores (sem duplicar)
             pending_records = db.get_pending_matches(max_age_sec=pending_max_age_sec, limit=100)
-            grouped_to_send = group_matches_by_id(pending_records)
+            all_pending_groups = group_matches_by_id(pending_records)
+            grouped_to_send: list[dict[str, Any]] = []
+            expired_pending_count = 0
+            for grp in all_pending_groups:
+                grp_ct = int(grp["primary"].get("completion_time", 0) or 0)
+                if cleanup_hours > 0 and grp_ct > 0 and (now_ts - grp_ct) > window_sec:
+                    db.update_matches_discord_id_batch(grp["records"], PRUNED_DISCORD_MARKER)
+                    expired_pending_count += 1
+                    continue
+                grouped_to_send.append(grp)
+            if expired_pending_count:
+                logger.info(
+                    "[LIMPEZA %dh] %d partida(s) pendente(s) com mais de %dh arquivada(s) apenas no SQLite (sem postar no Discord).",
+                    cleanup_hours,
+                    expired_pending_count,
+                    cleanup_hours,
+                )
             new_match_ids = {int(g["match_id"]) for g in grouped_new_matches}
             retried_from_prev = sum(1 for g in grouped_to_send if int(g["match_id"]) not in new_match_ids)
             if retried_from_prev:
@@ -1760,10 +1796,25 @@ def run_cycle(
             logger.info("Aviso: o Ranking Unificado BR foi migrado para o projeto dedicado nigosky/coh3-br-ranking.")
 
         if discord.is_configured:
-            pruned_count = prune_old_discord_messages(db, discord, retention_hours=cleanup_hours)
+            pruned_count = prune_old_discord_messages(
+                db,
+                discord,
+                retention_hours=cleanup_hours,
+                now_ts=now_ts,
+            )
+            min_panel_ts = max(display_since_ts, now_ts - window_sec) if cleanup_hours > 0 else display_since_ts
 
             if cards_confirmed > 0 or bg_patched_cards > 0 or newly_finished or players_changed or tracked_changed:
                 db.set_state("summary_needs_refresh", "1")
+            elif pruned_count > 0 and cleanup_hours > 0:
+                active_window_rows = db.get_recent_recorded_matches(
+                    limit=20,
+                    only_active_players=True,
+                    min_recorded_at=display_since_ts,
+                    min_completion_time=min_panel_ts,
+                )
+                if len(group_matches_by_id(active_window_rows)) < 5:
+                    db.set_state("summary_needs_refresh", "1")
 
             summary_msg_id = db.get_state("summary_message_id")
             layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
@@ -1776,6 +1827,7 @@ def run_cycle(
                     limit=max(40, summary_size * 3),
                     only_active_players=True,
                     min_recorded_at=display_since_ts,
+                    min_completion_time=min_panel_ts,
                 )
                 updated_players = db.get_active_players()
                 panel_ok = False

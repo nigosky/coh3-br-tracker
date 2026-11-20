@@ -691,9 +691,11 @@ class MatchDatabase:
         limit: int = 15,
         only_active_players: bool = True,
         min_recorded_at: int = 0,
+        min_completion_time: int = 0,
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit), 500))
         min_ts = max(0, int(min_recorded_at or 0))
+        min_ct = max(0, int(min_completion_time or 0))
         where_parts: list[str] = []
         params: list[Any] = []
         if only_active_players:
@@ -706,6 +708,9 @@ class MatchDatabase:
             params.append(min_ts)
             where_parts.append("COALESCE(rm.discord_message_id, '') != ?")
             params.append(SEEDED_DISCORD_MARKER)
+        if min_ct > 0:
+            where_parts.append("CASE WHEN rm.completion_time > 0 THEN rm.completion_time ELSE rm.recorded_at END >= ?")
+            params.append(min_ct)
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         params.append(safe_limit)
         rows = self._connect().execute(
@@ -907,11 +912,13 @@ class MatchDatabase:
         self,
         max_age_sec: int = 72 * 3600,
         exclude_message_ids: set[str] | None = None,
-        limit: int = 40,
+        limit: int = 80,
+        now_ts: int | None = None,
     ) -> list[tuple[str, str]]:
-        """Retorna lista (message_id, origem) de mensagens do Discord com mais de max_age_sec para limpeza."""
+        """Retorna lista (message_id, origem) de mensagens do Discord com mais de max_age_sec para limpeza (apenas no canal)."""
         safe_limit = max(1, min(int(limit), 200))
-        cutoff = int(time.time()) - max(3600, int(max_age_sec))
+        now = int(now_ts) if now_ts is not None else int(time.time())
+        cutoff = now - max(3600, int(max_age_sec))
         excluded = {str(x).strip() for x in (exclude_message_ids or set()) if x}
         conn = self._connect()
 
@@ -920,14 +927,15 @@ class MatchDatabase:
 
         match_rows = conn.execute(
             """
-            SELECT discord_message_id, MAX(recorded_at) AS latest_ts
+            SELECT discord_message_id,
+                   MAX(CASE WHEN completion_time > 0 THEN completion_time ELSE recorded_at END) AS effective_ts
             FROM recorded_matches
             WHERE discord_message_id IS NOT NULL
               AND length(discord_message_id) >= 15
               AND discord_message_id NOT GLOB '*[^0-9]*'
             GROUP BY discord_message_id
-            HAVING MAX(recorded_at) <= ?
-            ORDER BY latest_ts ASC
+            HAVING MAX(CASE WHEN completion_time > 0 THEN completion_time ELSE recorded_at END) <= ?
+            ORDER BY effective_ts ASC
             LIMIT ?
             """,
             (cutoff, safe_limit),
@@ -936,14 +944,13 @@ class MatchDatabase:
             mid = str(r["discord_message_id"])
             if mid not in excluded and mid not in seen_ids:
                 seen_ids.add(mid)
-                candidates.append((int(r["latest_ts"]), mid, "match"))
+                candidates.append((int(r["effective_ts"]), mid, "match"))
 
         eph_rows = conn.execute(
             """
             SELECT message_id, kind, sent_at
             FROM discord_ephemeral_messages
             WHERE pruned_at IS NULL
-              AND kind != 'lobby_alert'
               AND sent_at <= ?
             ORDER BY sent_at ASC
             LIMIT ?
