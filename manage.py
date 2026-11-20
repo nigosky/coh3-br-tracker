@@ -242,14 +242,19 @@ def cmd_remove_player(args: argparse.Namespace) -> int:
         print("ERRO: Informe pelo menos um SteamID64, Relic ID ou link válido do coh3stats.com.")
         return 1
 
-    blocked_core = (pids_to_remove & CORE_PROFILE_IDS) or (sids_to_remove & CORE_STEAM_IDS)
+    from relic_api import refresh_core_br_roster
+
+    refresh_core_br_roster()
+    live_core_pids = {int(x["profile_id"]) for x in CORE_BR_ROSTER}
+    live_core_sids = {str(x["steam_id"]) for x in CORE_BR_ROSTER}
+    blocked_core = (pids_to_remove & live_core_pids) or (sids_to_remove & live_core_sids)
     if blocked_core:
         print(
-            "AVISO: Os jogadores brasileiros principais fazem parte da lista fixa protegida "
-            "e permanecem monitorados automaticamente."
+            "AVISO: Jogadores da base compartilhada (players_roster.json em nigosky/coh3-br-lobby-radar) "
+            "devem ser removidos via workflow 'Gerenciar Base Compartilhada de Jogadores' para refletir nos 4 sistemas."
         )
-        pids_to_remove -= CORE_PROFILE_IDS
-        sids_to_remove -= CORE_STEAM_IDS
+        pids_to_remove -= live_core_pids
+        sids_to_remove -= live_core_sids
         if not pids_to_remove and not sids_to_remove:
             return 0
 

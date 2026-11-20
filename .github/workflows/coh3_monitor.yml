@@ -88,6 +88,13 @@ jobs:
             sudo apt-get install -y --no-install-recommends "${NEED_PKGS[@]}"
           fi
 
+      - name: Validar suite de testes da base compartilhada
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s . -p "test_*.py" -v
+
       - name: Executar ciclo automatico CoH3 -> Discord (quadrupla checagem Relic x coh3stats x Radar Veteranos)
         env:
           PYTHONDONTWRITEBYTECODE: "1"
