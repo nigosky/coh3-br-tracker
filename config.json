@@ -260,8 +260,8 @@
     },
     {
       "profile_id": 55693,
-      "alias": "BinhoBiceps",
-      "original_alias": "BinhoBiceps",
+      "alias": "Alface aka BinhoBiceps",
+      "original_alias": "Alface aka BinhoBiceps",
       "steam_id": "76561197996817129",
       "placements": [
         "#87 1v1 (média 1128.2) ⭐",
@@ -729,9 +729,14 @@
     {
       "profile_id": 55693,
       "steam_id": "76561197996817129",
-      "original_alias": "BinhoBiceps",
-      "alias": "BinhoBiceps",
-      "is_core_roster": true
+      "original_alias": "Alface aka BinhoBiceps",
+      "alias": "Alface aka BinhoBiceps",
+      "is_core_roster": true,
+      "known_aliases": [
+        "BinhoBiceps",
+        "Alface",
+        "Alface aka BinhoBiceps"
+      ]
     },
     {
       "profile_id": 337051,
@@ -941,7 +946,8 @@
         "Chacineiro"
       ],
       "merged_into_profile_id": 79327,
-      "merged_into_steam_id": "76561197963172584"
+      "merged_into_steam_id": "76561197963172584",
+      "show_smurf_alias": true
     }
   ],
   "monitor_only_custom_matches": true
