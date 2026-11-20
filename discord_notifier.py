@@ -342,7 +342,7 @@ def build_summary_list_payload(
         primary = grp["primary"]
         recs = grp["records"]
         safe_url = build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
-        uniq_names = list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 20) for r in recs))[:2]
+        uniq_names = list(dict.fromkeys(sanitize_discord_text(r["tracked_alias"], 34) for r in recs))[:2]
         names = " + ".join(uniq_names)
         raw_map = str(primary.get("map_raw") or "").strip()
         disp_map = clean_map_name(raw_map) if raw_map else str(primary.get("map_clean") or "")
