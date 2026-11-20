@@ -288,13 +288,18 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa dos 44 jogadores brasileiros únicos monitorados (45 contas Steam vinculadas por SteamID64 imutável)
+# Lista fixa dos 44 jogadores brasileiros únicos monitorados (46 contas Steam vinculadas por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
     {"profile_id": 1088455, "steam_id": "76561198108568598", "original_alias": "luiz_fmh"},
     {"profile_id": 735940, "steam_id": "76561198034510845", "original_alias": "Jimmy Duelista"},
-    {"profile_id": 559962, "steam_id": "76561198062871244", "original_alias": "É o Gabe"},
+    {
+        "profile_id": 559962,
+        "steam_id": "76561198062871244",
+        "original_alias": "Gabe",
+        "known_aliases": ["É o Gabe", "Gabe"],
+    },
     {"profile_id": 648514, "steam_id": "76561198372757032", "original_alias": "Halokoo"},
     {"profile_id": 35952, "steam_id": "76561198121484554", "original_alias": "Sauronzinho"},
     {"profile_id": 900358, "steam_id": "76561198070545853", "original_alias": "Margheriti"},
@@ -324,16 +329,25 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 557890,
         "steam_id": "76561199538846112",
-        "original_alias": "É o Gabe",
+        "original_alias": "Gabe",
         "merged_into_profile_id": 559962,
         "merged_into_steam_id": "76561198062871244",
-        "known_aliases": ["gabe44arg", "gabe444arg", "É o Gabe"],
+        "known_aliases": ["gabe44arg", "gabe444arg", "É o Gabe", "Gabe"],
     },
     {"profile_id": 26910, "steam_id": "76561197963741792", "original_alias": "nigo_BR ᵀᴹ"},
     {"profile_id": 6557, "steam_id": "76561198135142137", "original_alias": "Dragoness"},
     {"profile_id": 1226910, "steam_id": "76561198140782132", "original_alias": "Lupus Alba"},
     {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
-    {"profile_id": 1005730, "steam_id": "76561199791811246", "original_alias": "arc"},
+    {"profile_id": 1005730, "steam_id": "76561199791811246", "original_alias": "arc", "pin_alias": True},
+    {
+        "profile_id": 1423426,
+        "steam_id": "76561199482388323",
+        "original_alias": "arc",
+        "pin_alias": True,
+        "merged_into_profile_id": 1005730,
+        "merged_into_steam_id": "76561199791811246",
+        "known_aliases": ["uncle hans", "geladeira velha", "dibas", "arc"],
+    },
     {"profile_id": 31145, "steam_id": "76561197985268629", "original_alias": "vonMises"},
     {"profile_id": 58737, "steam_id": "76561197993922195", "original_alias": "INFIEL"},
     {"profile_id": 431802, "steam_id": "76561198000099422", "original_alias": "Conflict.BR"},
@@ -403,6 +417,8 @@ def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
             raw_ctry = "br"
         if _COUNTRY_ISO2_RE.fullmatch(raw_ctry) and raw_ctry != "br":
             entry["country"] = raw_ctry
+        if row.get("pin_alias"):
+            entry["pin_alias"] = True
         known = [strip_unsafe_chars(k)[:40] for k in (row.get("known_aliases") or []) if strip_unsafe_chars(k)]
         if known:
             entry["known_aliases"] = known
@@ -1982,13 +1998,15 @@ def format_bound_display_alias(
     current_alias: str,
     original_alias: str = "",
     known_aliases: list[str] | tuple[str, ...] | None = None,
+    *,
+    pin_alias: bool = False,
 ) -> str:
-    """Exibe o nome preferencial vinculado à conta Steam ou 'NickOriginal (NovoNick)' se inédito."""
+    """Exibe o nome preferencial vinculado à conta Steam ou 'NickAnterior* (NovoNick)' se inédito (salvo pin_alias=True)."""
     cur = (current_alias or "").strip()
     orig = (original_alias or "").strip()
     if not orig:
         return cur or "Jogador"
-    if not cur:
+    if pin_alias or not cur:
         return orig
 
     cur_cf = cur.casefold()
@@ -2000,16 +2018,18 @@ def format_bound_display_alias(
     if cur_cf in known_cf:
         return orig
     for k_cf in known_cf:
-        if cur_cf.startswith(k_cf + " (") or cur_cf.endswith(f"({k_cf})"):
+        if cur_cf.startswith(k_cf + " (") or cur_cf.startswith(k_cf + "* (") or cur_cf.endswith(f"({k_cf})"):
             return orig
 
-    if cur_cf.startswith(orig_cf + " ("):
+    if cur_cf.startswith(orig_cf + "* ("):
         return cur
-    return f"{orig} ({cur})"
+    if cur_cf.startswith(orig_cf + " ("):
+        return f"{orig}* {cur[len(orig) + 1:]}"
+    return f"{orig}* ({cur})"
 
 
 def _merge_roster_fields(rec: dict[str, Any], prev: dict[str, Any]) -> None:
-    for field in ("original_alias", "steam_id", "known_aliases", "merged_into_profile_id", "merged_into_steam_id", "country"):
+    for field in ("original_alias", "steam_id", "known_aliases", "merged_into_profile_id", "merged_into_steam_id", "country", "pin_alias"):
         if not rec.get(field) and prev.get(field):
             rec[field] = prev[field]
 
@@ -2031,6 +2051,7 @@ def build_roster_lookup_maps(
                 "steam_id": sid,
                 "original_alias": str(item.get("original_alias") or item.get("alias") or "").strip(),
                 "known_aliases": list(item.get("known_aliases") or []),
+                "pin_alias": bool(item.get("pin_alias")),
                 "merged_into_profile_id": int(item.get("merged_into_profile_id", 0) or 0),
                 "merged_into_steam_id": str(item.get("merged_into_steam_id") or "").strip(),
                 "country": str(item.get("country") or "").strip().lower(),
@@ -2072,6 +2093,7 @@ def _apply_roster_identity(
         raw_cur,
         r_entry.get("original_alias", ""),
         r_entry.get("known_aliases"),
+        pin_alias=bool(r_entry.get("pin_alias")),
     )
     target["is_br_roster"] = True
 
@@ -2210,7 +2232,12 @@ def _ingest_personal_stat_payload(
         r_entry = steam_map.get(steam_id) or pid_map.get(pid) or {}
         orig_alias = str(r_entry.get("original_alias") or "")
         cur_alias = str(mem.get("alias") or orig_alias or f"Player {pid}")
-        disp_alias = format_bound_display_alias(cur_alias, orig_alias, r_entry.get("known_aliases"))
+        disp_alias = format_bound_display_alias(
+            cur_alias,
+            orig_alias,
+            r_entry.get("known_aliases"),
+            pin_alias=bool(r_entry.get("pin_alias")),
+        )
 
         results_by_pid[pid] = {
             "profile_id": pid,
@@ -2550,7 +2577,12 @@ def build_top_tracked_players(
             )
             consolidated[pid] = {
                 "profile_id": pid,
-                "alias": format_bound_display_alias(cur_alias, orig_alias, r_entry.get("known_aliases")),
+                "alias": format_bound_display_alias(
+                    cur_alias,
+                    orig_alias,
+                    r_entry.get("known_aliases"),
+                    pin_alias=bool(r_entry.get("pin_alias")),
+                ),
                 "original_alias": orig_alias,
                 "steam_id": sid or str(r_entry.get("steam_id") or ""),
                 "merged_into_profile_id": merged_pid,
