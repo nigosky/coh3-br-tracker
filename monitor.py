@@ -48,7 +48,7 @@ logger = logging.getLogger("coh3_br.monitor")
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
-CURRENT_SUMMARY_CONTENT_VERSION = "v7_15_battlegroups_panel"
+CURRENT_SUMMARY_CONTENT_VERSION = "v7_16_lem22_us_flag"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
