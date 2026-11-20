@@ -798,7 +798,8 @@
       "steam_id": "76561199791811246",
       "original_alias": "arc",
       "alias": "arc",
-      "is_core_roster": true
+      "is_core_roster": true,
+      "pin_alias": true
     },
     {
       "profile_id": 31145,
@@ -912,7 +913,8 @@
         "arc"
       ],
       "merged_into_profile_id": 1005730,
-      "merged_into_steam_id": "76561199791811246"
+      "merged_into_steam_id": "76561199791811246",
+      "pin_alias": true
     }
   ],
   "monitor_only_custom_matches": true
