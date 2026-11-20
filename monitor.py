@@ -31,6 +31,7 @@ from relic_api import (
     export_players_files,
     fetch_custom_players_stats,
     format_bound_display_alias,
+    refresh_core_br_roster,
 )
 from security import (
     SAFE_WEBHOOK_PLACEHOLDER,
@@ -54,8 +55,12 @@ BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 
 
-def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
-    """Garante que o elenco brasileiro fixo esteja sincronizado pelo SteamID64 em custom_players."""
+def ensure_core_roster_in_config(
+    cfg: dict[str, Any],
+    *,
+    prune_removed_core: bool = True,
+) -> bool:
+    """Garante que o elenco brasileiro compartilhado esteja sincronizado (adições, flags e remoções) em custom_players."""
     changed = False
     if "monitor_only_custom_matches" not in cfg:
         cfg["monitor_only_custom_matches"] = True
@@ -64,6 +69,9 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
     if int(cfg.get("leaderboard_refresh_minutes", 30)) >= 20:
         cfg["leaderboard_refresh_minutes"] = 15
         changed = True
+
+    core_pids = {int(c["profile_id"]) for c in CORE_BR_ROSTER if int(c.get("profile_id", 0) or 0) > 0}
+    core_sids = {str(c.get("steam_id") or "").strip() for c in CORE_BR_ROSTER if str(c.get("steam_id") or "").strip()}
 
     existing_custom: list[dict[str, Any]] = list(cfg.get("custom_players", []))
     by_sid: dict[str, dict[str, Any]] = {}
@@ -75,6 +83,14 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
             continue
         sid = str(item.get("steam_id") or "").replace("/steam/", "").strip()
         pid = int(item.get("profile_id", 0) or 0)
+        if (
+            prune_removed_core
+            and bool(item.get("is_core_roster"))
+            and pid not in core_pids
+            and (not sid or sid not in core_sids)
+        ):
+            changed = True
+            continue
         entry = dict(item)
         if sid:
             by_sid[sid] = entry
@@ -89,6 +105,7 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
         c_known = list(core.get("known_aliases") or [])
         c_merged_pid = int(core.get("merged_into_profile_id", 0) or 0)
         c_merged_sid = str(core.get("merged_into_steam_id") or "")
+        c_country = str(core.get("country") or "").strip().lower()
 
         target = by_sid.get(c_sid) or by_pid.get(c_pid)
         if target is None:
@@ -99,6 +116,8 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
                 "alias": c_orig,
                 "is_core_roster": True,
             }
+            if c_country and c_country != "br":
+                new_entry["country"] = c_country
             if c_known:
                 new_entry["known_aliases"] = c_known
             if c_merged_pid:
@@ -122,6 +141,13 @@ def ensure_core_roster_in_config(cfg: dict[str, Any]) -> bool:
                 changed = True
             if not int(target.get("profile_id", 0) or 0):
                 target["profile_id"] = c_pid
+                changed = True
+            if c_country and c_country != "br":
+                if str(target.get("country") or "").strip().lower() != c_country:
+                    target["country"] = c_country
+                    changed = True
+            elif "country" in target and str(target.get("country") or "").strip().lower() != "br":
+                target.pop("country", None)
                 changed = True
             if c_known and target.get("known_aliases") != c_known:
                 target["known_aliases"] = c_known
@@ -1555,6 +1581,7 @@ def run_cycle(
         if reset_discord_channel and discord.is_configured:
             reset_and_clean_discord_channel(db, discord)
 
+        refresh_core_br_roster()
         cfg_upgraded = ensure_core_roster_in_config(cfg)
         custom_players = list(cfg.get("custom_players") or [])
         tracked_existing = list(cfg.get("tracked_players") or [])

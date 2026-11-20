@@ -26,6 +26,7 @@ from security import (
     read_bounded_http_body,
     redact_secrets,
     sanitize_csv_cell,
+    strip_unsafe_chars,
     validate_https_endpoint,
 )
 
@@ -51,6 +52,11 @@ VETERANOS_RADAR_STATE_URL = "https://raw.githubusercontent.com/nigosky/coh3-br-l
 ALLOWED_RADAR_HOSTS: frozenset[str] = frozenset({"raw.githubusercontent.com"})
 VETERANOS_RADAR_PATH_RE = re.compile(r"^/nigosky/coh3-br-lobby-radar/main/state\.json$")
 MAX_RADAR_STATE_BYTES = 256 * 1024  # 256 KB teto rígido para state.json do Radar
+
+# Base única compartilhada de jogadores (Radar + Scheduler + Tracker + Ranking)
+SHARED_ROSTER_URL = "https://raw.githubusercontent.com/nigosky/coh3-br-lobby-radar/main/players_roster.json"
+SHARED_ROSTER_PATH_RE = re.compile(r"^/nigosky/coh3-br-lobby-radar/main/players_roster\.json$")
+MAX_SHARED_ROSTER_BYTES = 256 * 1024  # 256 KB teto rígido para players_roster.json
 
 # Consulta somente-leitura de Battlegroups em páginas canônicas públicas do cohdb.com (respeitando robots.txt)
 COHDB_BASE_URL = "https://cohdb.com"
@@ -352,6 +358,131 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     },
     {"profile_id": 975688, "steam_id": "76561197994245218", "original_alias": "Kefbr"},
 ]
+
+FALLBACK_CORE_BR_ROSTER: list[dict[str, Any]] = [dict(row) for row in CORE_BR_ROSTER]
+
+_COUNTRY_ISO2_RE = re.compile(r"^[a-z]{2}$")
+
+
+def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Valida e normaliza a seção `veteranos` da base única compartilhada `players_roster.json`."""
+    if not isinstance(data, dict) or int(data.get("schema_version", 0) or 0) < 1:
+        raise ValueError("Formato inválido de players_roster.json.")
+    raw_vets = data.get("veteranos")
+    if not isinstance(raw_vets, list) or not raw_vets:
+        raise ValueError("Lista 'veteranos' ausente ou vazia em players_roster.json.")
+
+    parsed_rows: list[dict[str, Any]] = []
+    seen_pids: set[int] = set()
+    seen_sids: set[str] = set()
+    for row in raw_vets:
+        if not isinstance(row, dict):
+            continue
+        try:
+            pid = int(row.get("profile_id", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        sid = str(row.get("steam_id") or "").replace("/steam/", "").strip()
+        if pid <= 0 or not STEAM_ID64_VALID_RE.fullmatch(sid):
+            continue
+        if pid in seen_pids or sid in seen_sids:
+            continue
+        seen_pids.add(pid)
+        seen_sids.add(sid)
+
+        alias = strip_unsafe_chars(row.get("original_alias") or row.get("alias") or "")[:40] or f"Player {pid}"
+        entry: dict[str, Any] = {
+            "profile_id": pid,
+            "steam_id": sid,
+            "original_alias": alias,
+        }
+        raw_ctry = str(row.get("country") or row.get("flag_country") or "").strip().lower()
+        if raw_ctry in ("usa", "eua"):
+            raw_ctry = "us"
+        elif raw_ctry == "bra":
+            raw_ctry = "br"
+        if _COUNTRY_ISO2_RE.fullmatch(raw_ctry) and raw_ctry != "br":
+            entry["country"] = raw_ctry
+        known = [strip_unsafe_chars(k)[:40] for k in (row.get("known_aliases") or []) if strip_unsafe_chars(k)]
+        if known:
+            entry["known_aliases"] = known
+        try:
+            mpid = int(row.get("merged_into_profile_id", 0) or 0)
+        except (TypeError, ValueError):
+            mpid = 0
+        if mpid > 0 and mpid != pid:
+            entry["merged_into_profile_id"] = mpid
+            msid = str(row.get("merged_into_steam_id") or "").replace("/steam/", "").strip()
+            if STEAM_ID64_VALID_RE.fullmatch(msid):
+                entry["merged_into_steam_id"] = msid
+        parsed_rows.append(entry)
+
+    if not parsed_rows:
+        raise ValueError("Nenhum jogador válido encontrado em players_roster.json.")
+    return parsed_rows
+
+
+def fetch_shared_roster(
+    url: str = SHARED_ROSTER_URL,
+    local_path: Path | None = None,
+) -> list[dict[str, Any]] | None:
+    """
+    Obtém a base compartilhada `players_roster.json` (`nigosky/coh3-br-lobby-radar`) via HTTPS endurecido
+    (ou de arquivo local em testes). Retorna `None` em caso de falha transitória (mantendo fallback).
+    """
+    if local_path is not None:
+        if not local_path.is_file() or local_path.is_symlink() or local_path.stat().st_size > MAX_SHARED_ROSTER_BYTES:
+            return None
+        try:
+            data = json.loads(local_path.read_text(encoding="utf-8"))
+            return parse_shared_roster_payload(data)
+        except Exception as exc:
+            logger.warning("Falha ao ler players_roster local (%s): %s", local_path.name, redact_secrets(exc))
+            return None
+
+    validate_https_endpoint(
+        url,
+        ALLOWED_RADAR_HOSTS,
+        path_prefix="/nigosky/coh3-br-lobby-radar/main/",
+        path_regex=SHARED_ROSTER_PATH_RE,
+    )
+    headers = {
+        "User-Agent": "CoH3-BR-Tracker/7.10",
+        "Accept": "application/json",
+        "Accept-Encoding": "gzip",
+        "Cache-Control": "no-cache",
+    }
+    opener = _get_thread_opener()
+    for attempt in range(2):
+        req = urllib.request.Request(url, headers=headers, method="GET")
+        try:
+            with opener.open(req, timeout=8) as resp:
+                raw = read_bounded_http_body(resp, max_bytes=MAX_SHARED_ROSTER_BYTES)
+            data = json.loads(raw.decode("utf-8"))
+            return parse_shared_roster_payload(data)
+        except Exception as exc:
+            if attempt == 0:
+                time.sleep(0.5)
+            else:
+                logger.warning(
+                    "Falha transitória ao baixar players_roster.json compartilhado (mantendo fallback): %s",
+                    redact_secrets(exc),
+                )
+    return None
+
+
+def refresh_core_br_roster(
+    url: str = SHARED_ROSTER_URL,
+    local_path: Path | None = None,
+) -> bool:
+    """Atualiza `CORE_BR_ROSTER` in-place com a base única compartilhada `players_roster.json`."""
+    fetched = fetch_shared_roster(url=url, local_path=local_path)
+    if not fetched:
+        return False
+    CORE_BR_ROSTER[:] = fetched
+    logger.info("[ROSTER COMPARTILHADO] Base do Tracker sincronizada: %d contas (%s).", len(fetched), local_path or "GitHub")
+    return True
+
 
 _THREAD_LOCAL = threading.local()
 
