@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from relic_api import STEAM_ID64_VALID_RE, clean_map_name
+from relic_api import AUTOMATCH_MODES, STEAM_ID64_VALID_RE, clean_map_name
 
 PENDING_DISCORD_MARKER = "PENDING"
 SEEDED_DISCORD_MARKER = "SEEDED"
@@ -153,6 +153,22 @@ class MatchDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_nemesis_pair_day
                     ON nemesis_1v1_matches (tracked_profile_id, opponent_profile_id, utc_day);
+
+                CREATE TABLE IF NOT EXISTS nemesis_matches (
+                    tracked_profile_id INTEGER NOT NULL,
+                    opponent_profile_id INTEGER NOT NULL,
+                    match_id INTEGER NOT NULL,
+                    completion_time INTEGER NOT NULL,
+                    utc_day INTEGER NOT NULL,
+                    win INTEGER NOT NULL,
+                    mode TEXT DEFAULT '',
+                    opponent_alias TEXT DEFAULT '',
+                    opponent_country TEXT DEFAULT '',
+                    PRIMARY KEY (tracked_profile_id, opponent_profile_id, match_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_nemesis_all_pair_day
+                    ON nemesis_matches (tracked_profile_id, opponent_profile_id, utc_day);
                 """
             )
             existing_match_cols = {
@@ -169,93 +185,113 @@ class MatchDatabase:
             if "original_alias" not in existing_player_cols:
                 conn.execute("ALTER TABLE tracked_players ADD COLUMN original_alias TEXT DEFAULT ''")
 
-            self._ensure_nemesis_1v1_backfill(conn)
+            self._ensure_nemesis_all_modes_backfill(conn)
 
     @staticmethod
-    def _extract_1v1_steam_opponent(
+    def _extract_automatch_steam_opponents(
         mode: str,
         tracked_profile_id: int,
         opponents: Any,
-    ) -> tuple[int, str, str] | None:
-        """Retorna `(opponent_profile_id, opponent_alias, opponent_country)` para partidas Automatch 1v1 entre jogadores Steam."""
-        if str(mode or "").strip() != "1v1":
-            return None
-        if not isinstance(opponents, list) or len(opponents) != 1:
-            return None
-        opp = opponents[0]
-        if not isinstance(opp, dict):
-            return None
-        opp_pid = int(opp.get("profile_id", 0) or 0)
-        if opp_pid <= 0 or opp_pid == int(tracked_profile_id or 0):
-            return None
-        if "steam_id" in opp:
-            raw_sid = str(opp.get("steam_id") or "").strip()
-            clean_sid = raw_sid.replace("/steam/", "").strip()
-            # Quando o campo steam_id está presente (registros novos), exige SteamID64 válido (Steam-only)
-            if not STEAM_ID64_VALID_RE.fullmatch(clean_sid):
-                return None
-        opp_alias = str(opp.get("alias") or "").strip()[:80]
-        opp_country = str(opp.get("country") or "").strip().lower()[:4]
-        return opp_pid, opp_alias, opp_country
+    ) -> list[tuple[int, str, str]]:
+        """Retorna lista `[(opponent_profile_id, opponent_alias, opponent_country), ...]` para partidas Automatch (1v1 a 4v4) Steam."""
+        if str(mode or "").strip() not in AUTOMATCH_MODES:
+            return []
+        if not isinstance(opponents, list) or not opponents:
+            return []
+        out: list[tuple[int, str, str]] = []
+        seen_pids: set[int] = set()
+        t_pid = int(tracked_profile_id or 0)
+        for opp in opponents:
+            if not isinstance(opp, dict):
+                continue
+            opp_pid = int(opp.get("profile_id", 0) or 0)
+            if opp_pid <= 0 or opp_pid == t_pid or opp_pid in seen_pids:
+                continue
+            if "steam_id" in opp:
+                raw_sid = str(opp.get("steam_id") or "").strip()
+                clean_sid = raw_sid.replace("/steam/", "").strip()
+                # Quando o campo steam_id está presente (registros novos), exige SteamID64 válido (Steam-only)
+                if not STEAM_ID64_VALID_RE.fullmatch(clean_sid):
+                    continue
+            seen_pids.add(opp_pid)
+            opp_alias = str(opp.get("alias") or "").strip()[:80]
+            opp_country = str(opp.get("country") or "").strip().lower()[:4]
+            out.append((opp_pid, opp_alias, opp_country))
+        return out
 
-    def _ensure_nemesis_1v1_backfill(self, conn: sqlite3.Connection) -> None:
-        """Popula `nemesis_1v1_matches` uma única vez a partir das partidas 1v1 já gravadas no histórico."""
-        row = conn.execute("SELECT value FROM bot_state WHERE key = 'nemesis_1v1_backfilled_v1'").fetchone()
+    def _ensure_nemesis_all_modes_backfill(self, conn: sqlite3.Connection) -> None:
+        """Popula `nemesis_matches` uma única vez com todo o histórico Automatch (1v1, 2v2, 3v3, 4v4)."""
+        row = conn.execute("SELECT value FROM bot_state WHERE key = 'nemesis_all_modes_backfilled_v1'").fetchone()
         if row and str(row["value"]) == "1":
             return
 
-        existing_1v1 = conn.execute(
+        # Migra quaisquer registros previamente salvos em nemesis_1v1_matches
+        conn.execute(
             """
-            SELECT match_id, tracked_profile_id, tracked_steam_id, mode, win, completion_time, opponents_json
+            INSERT OR IGNORE INTO nemesis_matches (
+                tracked_profile_id, opponent_profile_id, match_id, completion_time,
+                utc_day, win, mode, opponent_alias, opponent_country
+            )
+            SELECT tracked_profile_id, opponent_profile_id, match_id, completion_time,
+                   utc_day, win, '1v1', opponent_alias, opponent_country
+            FROM nemesis_1v1_matches
+            """
+        )
+
+        placeholders = ",".join("?" for _ in AUTOMATCH_MODES)
+        existing_auto = conn.execute(
+            f"""
+            SELECT match_id, tracked_profile_id, mode, win, completion_time, opponents_json
             FROM recorded_matches
-            WHERE mode = '1v1'
+            WHERE mode IN ({placeholders})
               AND opponents_json IS NOT NULL
               AND opponents_json != ''
               AND opponents_json != '[]'
-            """
+            """,
+            tuple(AUTOMATCH_MODES),
         ).fetchall()
 
-        to_insert: list[tuple[int, int, int, int, int, int, str, str]] = []
-        for r in existing_1v1:
+        to_insert: list[tuple[int, int, int, int, int, int, str, str, str]] = []
+        for r in existing_auto:
             tracked_pid = int(r["tracked_profile_id"] or 0)
             ct = int(r["completion_time"] or 0)
             mid = int(r["match_id"] or 0)
+            mode_str = str(r["mode"] or "")
             if tracked_pid <= 0 or ct <= 0 or mid <= 0:
                 continue
             try:
                 opps = json.loads(r["opponents_json"] or "[]")
             except Exception:
                 continue
-            extracted = self._extract_1v1_steam_opponent(str(r["mode"] or ""), tracked_pid, opps)
-            if not extracted:
-                continue
-            opp_pid, opp_alias, opp_country = extracted
-            to_insert.append(
-                (
-                    tracked_pid,
-                    opp_pid,
-                    mid,
-                    ct,
-                    ct // 86400,
-                    1 if int(r["win"] or 0) else 0,
-                    opp_alias,
-                    opp_country,
+            extracted = self._extract_automatch_steam_opponents(mode_str, tracked_pid, opps)
+            for opp_pid, opp_alias, opp_country in extracted:
+                to_insert.append(
+                    (
+                        tracked_pid,
+                        opp_pid,
+                        mid,
+                        ct,
+                        ct // 86400,
+                        1 if int(r["win"] or 0) else 0,
+                        mode_str,
+                        opp_alias,
+                        opp_country,
+                    )
                 )
-            )
 
         if to_insert:
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO nemesis_1v1_matches (
+                INSERT OR IGNORE INTO nemesis_matches (
                     tracked_profile_id, opponent_profile_id, match_id, completion_time,
-                    utc_day, win, opponent_alias, opponent_country
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    utc_day, win, mode, opponent_alias, opponent_country
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 to_insert,
             )
         conn.execute(
             """
-            INSERT INTO bot_state (key, value) VALUES ('nemesis_1v1_backfilled_v1', '1')
+            INSERT INTO bot_state (key, value) VALUES ('nemesis_all_modes_backfilled_v1', '1')
             ON CONFLICT(key) DO UPDATE SET value = '1'
             """
         )
@@ -424,36 +460,40 @@ class MatchDatabase:
                     bg_json,
                 ),
             )
-            extracted_opp = self._extract_1v1_steam_opponent(
-                str(match.get("mode") or ""),
+            mode_str = str(match.get("mode") or "")
+            extracted_opps = self._extract_automatch_steam_opponents(
+                mode_str,
                 int(match["tracked_profile_id"]),
                 match.get("opponents"),
             )
-            if extracted_opp:
-                opp_pid, opp_alias, opp_country = extracted_opp
+            if extracted_opps:
                 ct_val = int(match["completion_time"])
                 if ct_val > 0:
-                    conn.execute(
+                    conn.executemany(
                         """
-                        INSERT OR IGNORE INTO nemesis_1v1_matches (
+                        INSERT OR IGNORE INTO nemesis_matches (
                             tracked_profile_id, opponent_profile_id, match_id, completion_time,
-                            utc_day, win, opponent_alias, opponent_country
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            utc_day, win, mode, opponent_alias, opponent_country
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
-                        (
-                            int(match["tracked_profile_id"]),
-                            opp_pid,
-                            int(match["match_id"]),
-                            ct_val,
-                            ct_val // 86400,
-                            1 if match["win"] else 0,
-                            opp_alias,
-                            opp_country,
-                        ),
+                        [
+                            (
+                                int(match["tracked_profile_id"]),
+                                opp_pid,
+                                int(match["match_id"]),
+                                ct_val,
+                                ct_val // 86400,
+                                1 if match["win"] else 0,
+                                mode_str,
+                                opp_alias,
+                                opp_country,
+                            )
+                            for opp_pid, opp_alias, opp_country in extracted_opps
+                        ],
                     )
         return cur.rowcount > 0
 
-    def get_1v1_nemesis_status(
+    def get_nemesis_status(
         self,
         tracked_profile_ids: list[int],
         opponent_profile_id: int,
@@ -463,10 +503,10 @@ class MatchDatabase:
         current_opponent_steam_id: str = "",
     ) -> dict[str, Any] | None:
         """
-        Avalia a condição oficial de 1v1 Nemesis (estilo coh3stats.com, em tempo real):
-        - Apenas partidas Automatch 1v1 entre jogadores Steam.
+        Avalia a condição de Nemesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4) em tempo real:
+        - Apenas partidas Automatch entre jogadores Steam.
         - Trigger: enfrentar o mesmo oponente >= 2 vezes no mesmo dia (UTC).
-        - Após o trigger, todas as partidas 1v1 contra esse oponente entram na contagem acumulada.
+        - Após o trigger, todas as partidas Automatch contra esse oponente entram na contagem acumulada.
         - Salva o alias do oponente da última partida.
         """
         clean_tracked = [int(p) for p in dict.fromkeys(tracked_profile_ids or []) if int(p) > 0]
@@ -485,8 +525,8 @@ class MatchDatabase:
         placeholders = ",".join("?" for _ in clean_tracked)
         rows = self._connect().execute(
             f"""
-            SELECT match_id, completion_time, utc_day, win, opponent_alias, opponent_country
-            FROM nemesis_1v1_matches
+            SELECT match_id, completion_time, utc_day, win, mode, opponent_alias, opponent_country
+            FROM nemesis_matches
             WHERE tracked_profile_id IN ({placeholders})
               AND opponent_profile_id = ?
               AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
@@ -529,6 +569,7 @@ class MatchDatabase:
         total = len(unique_games)
         losses = total - wins
         latest_alias = (current_opponent_alias or "").strip() or str(unique_games[-1].get("opponent_alias") or "").strip()
+        modes_seen = sorted({str(g.get("mode") or "") for g in unique_games if g.get("mode")})
 
         return {
             "triggered": True,
@@ -543,7 +584,27 @@ class MatchDatabase:
             "win_rate": round((wins * 100.0) / total, 1) if total > 0 else 0.0,
             "same_day_games": same_day_games,
             "trigger_utc_day": first_trigger_day,
+            "modes": modes_seen,
         }
+
+    def get_1v1_nemesis_status(
+        self,
+        tracked_profile_ids: list[int],
+        opponent_profile_id: int,
+        up_to_completion_time: int,
+        up_to_match_id: int,
+        current_opponent_alias: str = "",
+        current_opponent_steam_id: str = "",
+    ) -> dict[str, Any] | None:
+        """Alias de compatibilidade para `get_nemesis_status` (agora cobre 1v1, 2v2, 3v3 e 4v4 Automatch)."""
+        return self.get_nemesis_status(
+            tracked_profile_ids=tracked_profile_ids,
+            opponent_profile_id=opponent_profile_id,
+            up_to_completion_time=up_to_completion_time,
+            up_to_match_id=up_to_match_id,
+            current_opponent_alias=current_opponent_alias,
+            current_opponent_steam_id=current_opponent_steam_id,
+        )
 
     def update_match_discord_id(self, match_id: int, tracked_profile_id: int, message_id: str) -> None:
         conn = self._connect()

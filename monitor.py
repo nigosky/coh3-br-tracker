@@ -19,6 +19,7 @@ from typing import Any
 from database import MatchDatabase, PENDING_DISCORD_MARKER, SEEDED_DISCORD_MARKER
 from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
+    AUTOMATCH_MODES,
     CORE_BR_ROSTER,
     Coh3StatsAPIClient,
     CohDBClient,
@@ -1558,58 +1559,98 @@ def enrich_group_with_nemesis(
     db: MatchDatabase,
     grp: dict[str, Any],
     roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
-) -> dict[str, Any] | None:
+) -> list[dict[str, Any]]:
     """
-    Calcula em tempo real a condição oficial de 1v1 Nemesis (trigger >= 2 partidas 1v1 no mesmo dia UTC
-    entre jogadores Steam; após o trigger, conta todas as partidas 1v1 contra esse oponente) e anexa ao grupo.
+    Calcula em tempo real a condição de Nemesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4):
+    trigger >= 2 confrontos Automatch no mesmo dia UTC contra o mesmo oponente Steam; após o trigger,
+    contabiliza todas as partidas Automatch contra aquele oponente. Retorna lista ordenada de rivalidades ativas.
     """
     recs = grp.get("records") or [grp.get("primary") or grp]
     primary = recs[0]
-    if str(primary.get("mode") or "").strip() != "1v1":
-        return None
-    opponents = primary.get("opponents") or []
-    if not isinstance(opponents, list) or len(opponents) != 1 or not isinstance(opponents[0], dict):
-        return None
+    if str(primary.get("mode") or "").strip() not in AUTOMATCH_MODES:
+        return []
 
-    opp = opponents[0]
-    opp_pid = int(opp.get("profile_id", 0) or 0)
-    tracked_pid = int(primary.get("tracked_profile_id", 0) or 0)
     match_id = int(grp.get("match_id") or primary.get("match_id") or 0)
     comp_ts = int(primary.get("completion_time", 0) or 0)
-    if opp_pid <= 0 or tracked_pid <= 0 or match_id <= 0 or comp_ts <= 0:
-        return None
+    if match_id <= 0 or comp_ts <= 0:
+        return []
 
-    # Agrupa IDs de contas secundárias mescladas (ex.: É o Gabe) para unificar o placar 1v1 Nemesis
-    pid_group: list[int] = [tracked_pid]
     _, pid_map = roster_maps if roster_maps is not None else build_roster_lookup_maps()
-    entry = pid_map.get(tracked_pid) or {}
-    canon_pid = int(entry.get("merged_into_profile_id") or tracked_pid)
-    if canon_pid > 0 and canon_pid not in pid_group:
-        pid_group.append(canon_pid)
-    for r_pid, r_ent in pid_map.items():
-        m_pid = int(r_ent.get("merged_into_profile_id") or r_pid)
-        if m_pid == canon_pid and r_pid not in pid_group:
-            pid_group.append(r_pid)
 
-    nemesis = db.get_1v1_nemesis_status(
-        tracked_profile_ids=pid_group,
-        opponent_profile_id=opp_pid,
-        up_to_completion_time=comp_ts,
-        up_to_match_id=match_id,
-        current_opponent_alias=str(opp.get("alias") or ""),
-        current_opponent_steam_id=str(opp.get("steam_id") or ""),
+    def _canonical_pid_group(tpid: int) -> tuple[int, list[int], str]:
+        entry = pid_map.get(tpid) or {}
+        canon = int(entry.get("merged_into_profile_id") or tpid)
+        group = [tpid]
+        if canon > 0 and canon not in group:
+            group.append(canon)
+        for r_pid, r_ent in pid_map.items():
+            m_pid = int(r_ent.get("merged_into_profile_id") or r_pid)
+            if m_pid == canon and r_pid not in group:
+                group.append(r_pid)
+        disp = str(entry.get("original_alias") or "").strip()
+        return canon, group, disp
+
+    best_by_opponent: dict[int, dict[str, Any]] = {}
+    seen_pairs: set[tuple[int, int]] = set()
+
+    for rec in recs:
+        tpid = int(rec.get("tracked_profile_id", 0) or 0)
+        if tpid <= 0:
+            continue
+        opponents = rec.get("opponents") or []
+        if not isinstance(opponents, list) or not opponents:
+            continue
+        canon_pid, pid_group, roster_disp = _canonical_pid_group(tpid)
+        tracked_disp = roster_disp or str(rec.get("tracked_alias") or f"Jogador {tpid}").strip()
+
+        for opp in opponents:
+            if not isinstance(opp, dict):
+                continue
+            opp_pid = int(opp.get("profile_id", 0) or 0)
+            if opp_pid <= 0 or opp_pid in pid_group or (canon_pid, opp_pid) in seen_pairs:
+                continue
+            seen_pairs.add((canon_pid, opp_pid))
+
+            nem = db.get_nemesis_status(
+                tracked_profile_ids=pid_group,
+                opponent_profile_id=opp_pid,
+                up_to_completion_time=comp_ts,
+                up_to_match_id=match_id,
+                current_opponent_alias=str(opp.get("alias") or ""),
+                current_opponent_steam_id=str(opp.get("steam_id") or ""),
+            )
+            if not nem:
+                continue
+            nem["tracked_alias"] = tracked_disp
+            prev = best_by_opponent.get(opp_pid)
+            if prev is None or (
+                int(nem["total"]),
+                1 if nem["is_new_trigger"] else 0,
+                int(nem["same_day_games"]),
+            ) > (
+                int(prev["total"]),
+                1 if prev["is_new_trigger"] else 0,
+                int(prev["same_day_games"]),
+            ):
+                best_by_opponent[opp_pid] = nem
+
+    if not best_by_opponent:
+        return []
+
+    nemesis_list = sorted(
+        best_by_opponent.values(),
+        key=lambda x: (-int(x["total"]), -(1 if x["is_new_trigger"] else 0), -int(x["same_day_games"])),
     )
-    if not nemesis:
-        return None
-
-    tracked_disp = str(entry.get("original_alias") or primary.get("tracked_alias") or f"Jogador {tracked_pid}").strip()
-    nemesis["tracked_alias"] = tracked_disp
-    grp["nemesis"] = nemesis
+    top_nem = nemesis_list[0]
+    grp["nemesis"] = top_nem
+    grp["nemesis_list"] = nemesis_list
     for r in recs:
-        r["nemesis"] = nemesis
+        r["nemesis"] = top_nem
+        r["nemesis_list"] = nemesis_list
     if isinstance(grp.get("primary"), dict):
-        grp["primary"]["nemesis"] = nemesis
-    return nemesis
+        grp["primary"]["nemesis"] = top_nem
+        grp["primary"]["nemesis_list"] = nemesis_list
+    return nemesis_list
 
 
 def run_cycle(
@@ -1892,15 +1933,18 @@ def run_cycle(
                     checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
                     if has_bg:
                         bg_enriched_new += 1
-                nem_info = enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
-                if nem_info:
+                nem_list = enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+                if nem_list:
+                    top_nem = nem_list[0]
+                    extra_nem = f" (+{len(nem_list) - 1} rival(is))" if len(nem_list) > 1 else ""
                     logger.info(
-                        "[1v1 NEMESIS] %s vs %s -> %dV-%dD (%s) [#%d]",
-                        nem_info.get("tracked_alias"),
-                        nem_info.get("opponent_alias"),
-                        int(nem_info.get("wins", 0)),
-                        int(nem_info.get("losses", 0)),
-                        "NOVO TRIGGER" if nem_info.get("is_new_trigger") else "ATIVO",
+                        "[NEMESIS] %s vs %s -> %dV-%dD (%s)%s [#%d]",
+                        top_nem.get("tracked_alias"),
+                        top_nem.get("opponent_alias"),
+                        int(top_nem.get("wins", 0)),
+                        int(top_nem.get("losses", 0)),
+                        "NOVO TRIGGER" if top_nem.get("is_new_trigger") else "ATIVO",
+                        extra_nem,
                         grp["match_id"],
                     )
                 is_automatch = str(grp["primary"].get("mode") or "") != "Custom"
