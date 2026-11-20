@@ -551,6 +551,17 @@
       ],
       "is_custom": true,
       "merged_into_profile_id": 1005730
+    },
+    {
+      "profile_id": 1333418,
+      "alias": "Chacineiro",
+      "original_alias": "Chacineiro",
+      "steam_id": "76561198698969876",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true,
+      "merged_into_profile_id": 79327
     }
   ],
   "auto_follow_top_br": true,
@@ -915,6 +926,22 @@
       "merged_into_profile_id": 1005730,
       "merged_into_steam_id": "76561199791811246",
       "pin_alias": true
+    },
+    {
+      "profile_id": 1333418,
+      "steam_id": "76561198698969876",
+      "original_alias": "Chacineiro",
+      "alias": "Chacineiro",
+      "is_core_roster": true,
+      "known_aliases": [
+        "TacticalForceConcentration",
+        "Charles Bronson",
+        "Lord Charles Bronson",
+        "Charles Broson",
+        "Chacineiro"
+      ],
+      "merged_into_profile_id": 79327,
+      "merged_into_steam_id": "76561197963172584"
     }
   ],
   "monitor_only_custom_matches": true
