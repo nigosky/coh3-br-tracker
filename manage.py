@@ -24,7 +24,6 @@ from discord_notifier import (
 from monitor import (
     CURRENT_SUMMARY_LAYOUT_VERSION,
     ensure_core_roster_in_config,
-    load_cached_rankings,
     load_config as _load_monitor_config,
     merge_catalog_with_custom_players,
     save_config_file,
@@ -34,13 +33,12 @@ from relic_api import (
     FACTION_KEY_LABELS,
     RelicAPIClient,
     build_roster_lookup_maps,
-    build_top_tracked_players,
     compute_merged_mode_rankings,
-    export_merged_top_rankings,
     export_players_files,
     fetch_custom_players_stats,
     parse_profile_id_input,
     parse_steam_id_input,
+    refresh_core_br_roster,
 )
 from security import (
     SAFE_WEBHOOK_PLACEHOLDER,
@@ -59,9 +57,6 @@ logger = logging.getLogger("coh3_br.manage")
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 
-CORE_STEAM_IDS: frozenset[str] = frozenset(str(x["steam_id"]) for x in CORE_BR_ROSTER)
-CORE_PROFILE_IDS: frozenset[int] = frozenset(int(x["profile_id"]) for x in CORE_BR_ROSTER)
-
 
 def _data_paths() -> tuple[Path, Path]:
     data_dir = resolve_data_dir(BASE_DIR)
@@ -78,7 +73,7 @@ def load_br_catalog() -> list[dict[str, Any]]:
     ]
     seen: set[Path] = set()
     for path in candidates:
-        if path in seen or not path.is_file():
+        if path in seen or not path.is_file() or path.is_symlink():
             continue
         seen.add(path)
         try:
@@ -242,8 +237,6 @@ def cmd_remove_player(args: argparse.Namespace) -> int:
         print("ERRO: Informe pelo menos um SteamID64, Relic ID ou link válido do coh3stats.com.")
         return 1
 
-    from relic_api import refresh_core_br_roster
-
     refresh_core_br_roster()
     live_core_pids = {int(x["profile_id"]) for x in CORE_BR_ROSTER}
     live_core_sids = {str(x["steam_id"]) for x in CORE_BR_ROSTER}
@@ -359,7 +352,6 @@ def cmd_history(args: argparse.Namespace) -> int:
 def cmd_test_discord(args: argparse.Namespace) -> int:
     cfg = load_config()
     db_path = resolve_safe_db_path(BASE_DIR, cfg.get("sqlite_db_path"))
-    top_n = _clamp_int(int(cfg.get("top_n_per_mode", 20)), 1, 100)
     custom_players = cfg.get("custom_players", [])
     roster_maps = build_roster_lookup_maps(custom_players)
     players_json_path, _ = _data_paths()
@@ -393,7 +385,6 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
             print("Nenhuma partida disponível para os jogadores monitorados.")
             return 1
 
-        cached_rankings = load_cached_rankings(BASE_DIR, top_n=top_n)
         grouped = group_matches_by_id(matches)
         sample_group = grouped[0]
 
@@ -421,9 +412,7 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
             matches,
             tracked,
             cfg.get("bot_username", "CoH3 Brasil Monitor"),
-            rankings_by_mode=None,
             custom_players=custom_players,
-            has_ranking_images=False,
         )
         card_payload = build_match_embed_payload(sample_group, cfg.get("bot_username", "CoH3 Brasil Monitor"))
 
@@ -449,9 +438,7 @@ def cmd_test_discord(args: argparse.Namespace) -> int:
             matches,
             tracked,
             summary_id,
-            rankings_by_mode=None,
             custom_players=custom_players,
-            top_n=top_n,
         )
         if new_summary_id:
             db.set_state("summary_message_id", new_summary_id)

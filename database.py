@@ -139,21 +139,6 @@ class MatchDatabase:
                 CREATE INDEX IF NOT EXISTS idx_ephemeral_prune
                     ON discord_ephemeral_messages (pruned_at, sent_at);
 
-                CREATE TABLE IF NOT EXISTS nemesis_1v1_matches (
-                    tracked_profile_id INTEGER NOT NULL,
-                    opponent_profile_id INTEGER NOT NULL,
-                    match_id INTEGER NOT NULL,
-                    completion_time INTEGER NOT NULL,
-                    utc_day INTEGER NOT NULL,
-                    win INTEGER NOT NULL,
-                    opponent_alias TEXT DEFAULT '',
-                    opponent_country TEXT DEFAULT '',
-                    PRIMARY KEY (tracked_profile_id, opponent_profile_id, match_id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_nemesis_pair_day
-                    ON nemesis_1v1_matches (tracked_profile_id, opponent_profile_id, utc_day);
-
                 CREATE TABLE IF NOT EXISTS nemesis_matches (
                     tracked_profile_id INTEGER NOT NULL,
                     opponent_profile_id INTEGER NOT NULL,
@@ -225,18 +210,22 @@ class MatchDatabase:
         if row and str(row["value"]) == "1":
             return
 
-        # Migra quaisquer registros previamente salvos em nemesis_1v1_matches
-        conn.execute(
-            """
-            INSERT OR IGNORE INTO nemesis_matches (
-                tracked_profile_id, opponent_profile_id, match_id, completion_time,
-                utc_day, win, mode, opponent_alias, opponent_country
+        # Migra quaisquer registros previamente salvos na tabela legada nemesis_1v1_matches (se presente)
+        legacy_tbl = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'nemesis_1v1_matches'"
+        ).fetchone()
+        if legacy_tbl is not None:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO nemesis_matches (
+                    tracked_profile_id, opponent_profile_id, match_id, completion_time,
+                    utc_day, win, mode, opponent_alias, opponent_country
+                )
+                SELECT tracked_profile_id, opponent_profile_id, match_id, completion_time,
+                       utc_day, win, '1v1', opponent_alias, opponent_country
+                FROM nemesis_1v1_matches
+                """
             )
-            SELECT tracked_profile_id, opponent_profile_id, match_id, completion_time,
-                   utc_day, win, '1v1', opponent_alias, opponent_country
-            FROM nemesis_1v1_matches
-            """
-        )
 
         placeholders = ",".join("?" for _ in AUTOMATCH_MODES)
         existing_auto = conn.execute(
@@ -318,7 +307,13 @@ class MatchDatabase:
                     INSERT INTO tracked_players (profile_id, alias, original_alias, steam_id, active, baseline_synced, added_at)
                     VALUES (?, ?, ?, ?, 1, 0, ?)
                     ON CONFLICT(profile_id) DO UPDATE SET
-                        alias = excluded.alias,
+                        alias = CASE
+                            WHEN excluded.alias = excluded.original_alias
+                                 AND excluded.original_alias != ''
+                                 AND substr(tracked_players.alias, 1, length(excluded.original_alias) + 3) = (excluded.original_alias || '* (')
+                            THEN tracked_players.alias
+                            ELSE excluded.alias
+                        END,
                         original_alias = CASE
                             WHEN excluded.original_alias != '' THEN excluded.original_alias
                             ELSE tracked_players.original_alias
@@ -352,24 +347,21 @@ class MatchDatabase:
         steam_id: str | None = None,
     ) -> None:
         conn = self._connect()
+        clean_sid = str(steam_id or "").strip()
         with conn:
             conn.execute(
                 """
                 UPDATE tracked_players
                 SET baseline_synced = 1,
                     alias = COALESCE(NULLIF(?, ''), alias),
-                    steam_id = COALESCE(NULLIF(?, ''), steam_id)
+                    steam_id = CASE
+                        WHEN COALESCE(steam_id, '') = '' AND ? != '' THEN ?
+                        ELSE steam_id
+                    END
                 WHERE profile_id = ?
                 """,
-                (alias or "", steam_id or "", int(profile_id)),
+                (alias or "", clean_sid, clean_sid, int(profile_id)),
             )
-
-    def match_exists(self, match_id: int, tracked_profile_id: int) -> bool:
-        row = self._connect().execute(
-            "SELECT 1 FROM recorded_matches WHERE match_id = ? AND tracked_profile_id = ?",
-            (int(match_id), int(tracked_profile_id)),
-        ).fetchone()
-        return row is not None
 
     def get_player_match_ids(self, tracked_profile_id: int, match_ids: list[int]) -> set[int]:
         """Retorna em uma única consulta quais match_ids da lista já estão gravados para o jogador."""
@@ -586,33 +578,6 @@ class MatchDatabase:
             "trigger_utc_day": first_trigger_day,
             "modes": modes_seen,
         }
-
-    def get_1v1_nemesis_status(
-        self,
-        tracked_profile_ids: list[int],
-        opponent_profile_id: int,
-        up_to_completion_time: int,
-        up_to_match_id: int,
-        current_opponent_alias: str = "",
-        current_opponent_steam_id: str = "",
-    ) -> dict[str, Any] | None:
-        """Alias de compatibilidade para `get_nemesis_status` (agora cobre 1v1, 2v2, 3v3 e 4v4 Automatch)."""
-        return self.get_nemesis_status(
-            tracked_profile_ids=tracked_profile_ids,
-            opponent_profile_id=opponent_profile_id,
-            up_to_completion_time=up_to_completion_time,
-            up_to_match_id=up_to_match_id,
-            current_opponent_alias=current_opponent_alias,
-            current_opponent_steam_id=current_opponent_steam_id,
-        )
-
-    def update_match_discord_id(self, match_id: int, tracked_profile_id: int, message_id: str) -> None:
-        conn = self._connect()
-        with conn:
-            conn.execute(
-                "UPDATE recorded_matches SET discord_message_id = ? WHERE match_id = ? AND tracked_profile_id = ?",
-                (str(message_id), int(match_id), int(tracked_profile_id)),
-            )
 
     def update_matches_discord_id_batch(self, records: list[dict[str, Any]], message_id: str) -> None:
         """Atualiza o discord_message_id de todos os registros agrupados da mesma partida em uma transação."""
@@ -1396,6 +1361,12 @@ class MatchDatabase:
                 (eph_cutoff,),
             )
             purged_ephemeral = int(cur_eph.rowcount or 0)
+
+            backfill_row = conn.execute(
+                "SELECT value FROM bot_state WHERE key = 'nemesis_all_modes_backfilled_v1'"
+            ).fetchone()
+            if backfill_row and str(backfill_row["value"]) == "1":
+                conn.execute("DROP TABLE IF EXISTS nemesis_1v1_matches")
 
         purged_avatars = int(self.prune_expired_avatars(max_age_sec=max(7, int(avatar_retention_days)) * 86400) or 0)
 

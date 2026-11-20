@@ -35,6 +35,10 @@ ENV_SECRET_REDACT_RE = re.compile(
     r"(DISCORD_(?:LOBBY_)?WEBHOOK_URL\s*=\s*)[^\s\"'<>]+",
     re.IGNORECASE,
 )
+TOKEN_ENV_REDACT_RE = re.compile(
+    r"((?:TRACKER_DISPATCH_TOKEN|GITHUB_TOKEN|GH_TOKEN)\s*=\s*)[^\s\"'<>]+",
+    re.IGNORECASE,
+)
 STEAM_API_KEY_QUERY_REDACT_RE = re.compile(
     r"([?&]key=)[^&\s\"'<>]+",
     re.IGNORECASE,
@@ -58,6 +62,7 @@ AUTH_HEADER_REDACT_RE = re.compile(
 # Remove caracteres de controle ASCII, zero-width e overrides bidirecionais Unicode (anti-spoofing visual RLO)
 UNSAFE_TEXT_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]+")
 URL_FORBIDDEN_CHARS_RE = re.compile(r"[\x00-\x20\x7f]")
+URL_PATH_TRAVERSAL_RE = re.compile(r"(?:^|/)\.\.(?:/|$)|%2e%2e|%5c|\\", re.IGNORECASE)
 
 CSV_DANGEROUS_INITIALS = ("=", "+", "-", "@", "|")
 _EXC_FORMATTER = logging.Formatter()
@@ -70,6 +75,7 @@ def redact_secrets(text: Any) -> str:
         return ""
     scrubbed = WEBHOOK_REDACT_RE.sub("[WEBHOOK_REDACTED]", raw)
     scrubbed = ENV_SECRET_REDACT_RE.sub(r"\1[WEBHOOK_REDACTED]", scrubbed)
+    scrubbed = TOKEN_ENV_REDACT_RE.sub(r"\1[TOKEN_REDACTED]", scrubbed)
     scrubbed = STEAM_API_KEY_QUERY_REDACT_RE.sub(r"\1[STEAM_KEY_REDACTED]", scrubbed)
     scrubbed = STEAM_API_KEY_ENV_REDACT_RE.sub(r"\1[STEAM_KEY_REDACTED]", scrubbed)
     scrubbed = STEAM_API_KEY_HEADER_REDACT_RE.sub(r"\1[STEAM_KEY_REDACTED]", scrubbed)
@@ -188,8 +194,9 @@ def validate_https_endpoint(
     allowed_hosts: set[str] | frozenset[str],
     path_prefix: str = "/",
     path_regex: re.Pattern[str] | None = None,
+    allow_query: bool = True,
 ) -> urllib.parse.ParseResult:
-    """Valida esquema HTTPS, host em allowlist, porta 443, ausência de credenciais e caminho permitido."""
+    """Valida esquema HTTPS, host em allowlist, porta 443, ausência de credenciais/fragmentos/traversal e caminho permitido."""
     clean = (url or "").strip()
     if not clean or URL_FORBIDDEN_CHARS_RE.search(clean):
         raise ValueError("URL inválida ou contendo caracteres de controle proibidos.")
@@ -207,10 +214,17 @@ def validate_https_endpoint(
         raise ValueError("Porta inválida na URL.") from exc
     if port not in (None, 443):
         raise ValueError(f"Porta não autorizada bloqueada: {port}")
-    if path_prefix and not (parsed.path or "").startswith(path_prefix):
+    if parsed.params or parsed.fragment or "#" in clean:
+        raise ValueError("Parâmetros de caminho ou fragmentos de URL são bloqueados por segurança.")
+    path_val = parsed.path or ""
+    if URL_PATH_TRAVERSAL_RE.search(path_val):
+        raise ValueError("Tentativa de path traversal na URL bloqueada.")
+    if path_prefix and not path_val.startswith(path_prefix):
         raise ValueError("Caminho da URL fora do escopo permitido.")
-    if path_regex is not None and not path_regex.fullmatch(parsed.path or ""):
+    if path_regex is not None and not path_regex.fullmatch(path_val):
         raise ValueError("Formato do caminho da URL rejeitado pela validação estrita.")
+    if not allow_query and (parsed.query or "?" in clean):
+        raise ValueError("Query string não permitida nesta URL.")
     return parsed
 
 
@@ -221,7 +235,17 @@ def validate_discord_webhook_url(url: str, allow_message_subpath: bool = False) 
         return False
     pattern = WEBHOOK_REQUEST_PATH_RE if allow_message_subpath else WEBHOOK_PATH_RE
     try:
-        validate_https_endpoint(raw, ALLOWED_DISCORD_HOSTS, path_prefix="/api/", path_regex=pattern)
+        parsed = validate_https_endpoint(
+            raw,
+            ALLOWED_DISCORD_HOSTS,
+            path_prefix="/api/",
+            path_regex=pattern,
+            allow_query=allow_message_subpath,
+        )
+        if parsed.query:
+            q_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if not q_pairs or any(k != "wait" or v != "true" for k, v in q_pairs):
+                return False
         return True
     except ValueError:
         return False
@@ -229,12 +253,21 @@ def validate_discord_webhook_url(url: str, allow_message_subpath: bool = False) 
 
 def read_bounded_http_body(resp: Any, max_bytes: int) -> bytes:
     """
-    Lê resposta HTTP com limite rígido de bytes no fio e na descompressão Gzip,
-    prevenindo ataques de exaustão de memória / Gzip Bomb (CWE-409).
+    Lê resposta HTTP em blocos de 64 KB com limite rígido no fio e na descompressão Gzip em streaming,
+    prevenindo ataques de exaustão de memória / Gzip Bomb (CWE-409) e payloads truncados.
     """
-    raw = resp.read(max_bytes + 1)
-    if len(raw) > max_bytes:
-        raise RuntimeError(f"Resposta HTTP excedeu o limite máximo seguro ({max_bytes} bytes).")
+    limit = max(1, int(max_bytes))
+    raw_chunks: list[bytes] = []
+    wire_total = 0
+    while True:
+        chunk = resp.read(min(65_536, limit - wire_total + 1))
+        if not chunk:
+            break
+        wire_total += len(chunk)
+        if wire_total > limit:
+            raise RuntimeError(f"Resposta HTTP excedeu o limite máximo seguro ({limit} bytes).")
+        raw_chunks.append(chunk)
+    raw = b"".join(raw_chunks)
 
     encoding = ""
     if hasattr(resp, "headers") and resp.headers is not None:
@@ -242,47 +275,75 @@ def read_bounded_http_body(resp: Any, max_bytes: int) -> bytes:
 
     if encoding in ("gzip", "x-gzip") and raw:
         decomp = zlib.decompressobj(16 + zlib.MAX_WBITS)
-        out = decomp.decompress(raw, max_bytes + 1)
-        if decomp.unconsumed_tail or len(out) > max_bytes:
-            raise RuntimeError(f"Payload Gzip descomprimido excedeu o limite seguro ({max_bytes} bytes).")
-        tail = decomp.flush(max_bytes + 1 - len(out))
-        out += tail
-        if len(out) > max_bytes:
-            raise RuntimeError(f"Payload Gzip descomprimido excedeu o limite seguro ({max_bytes} bytes).")
-        return out
+        out_chunks: list[bytes] = []
+        uz_total = 0
+        for off in range(0, len(raw), 65_536):
+            pending = raw[off : off + 65_536]
+            while pending:
+                remaining = limit - uz_total
+                piece = decomp.decompress(pending, remaining + 1)
+                uz_total += len(piece)
+                if uz_total > limit or decomp.unconsumed_tail:
+                    raise RuntimeError(f"Payload Gzip descomprimido excedeu o limite seguro ({limit} bytes).")
+                if piece:
+                    out_chunks.append(piece)
+                pending = decomp.unconsumed_tail
+        tail = decomp.flush(limit - uz_total + 1)
+        uz_total += len(tail)
+        if uz_total > limit:
+            raise RuntimeError(f"Payload Gzip descomprimido excedeu o limite seguro ({limit} bytes).")
+        if tail:
+            out_chunks.append(tail)
+        if not decomp.eof:
+            raise RuntimeError("Payload Gzip truncado ou corrompido rejeitado.")
+        return b"".join(out_chunks)
 
     return raw
 
 
 def read_local_secret_webhook(base_dir: Path) -> str:
-    """Lê DISCORD_WEBHOOK_URL de .env.secret local e restringe permissões POSIX para 0600 se necessário."""
+    """Lê DISCORD_WEBHOOK_URL de .env.secret local sem seguir symlinks (O_NOFOLLOW) e reforça chmod 0600."""
     secret_path = base_dir / SECRET_FILE_NAME
     if not secret_path.is_file() or secret_path.is_symlink():
         return ""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
-        st = secret_path.stat()
-        if st.st_size > 4096:
+        fd = os.open(secret_path, flags)
+    except OSError:
+        return ""
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > 4096:
             return ""
         if os.name == "posix" and (st.st_mode & (stat.S_IRWXG | stat.S_IRWXO)):
             try:
-                os.chmod(secret_path, 0o600)
+                os.fchmod(fd, 0o600)
             except OSError:
                 pass
-        for line in secret_path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("DISCORD_WEBHOOK_URL="):
-                return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+        with os.fdopen(fd, "r", encoding="utf-8") as secret_fp:
+            fd = -1
+            for line in secret_fp.read().splitlines():
+                stripped = line.strip()
+                if stripped.startswith("DISCORD_WEBHOOK_URL="):
+                    return stripped.split("=", 1)[1].strip().strip('"').strip("'")
     except OSError:
         return ""
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     return ""
 
 
 def write_local_secret_webhook(base_dir: Path, webhook_url: str) -> Path:
-    """Grava DISCORD_WEBHOOK_URL em .env.secret com permissão restrita 0600 (somente dono)."""
+    """Grava DISCORD_WEBHOOK_URL em .env.secret com permissão restrita 0600 (somente dono) e O_NOFOLLOW."""
     secret_path = base_dir / SECRET_FILE_NAME
     if secret_path.is_symlink():
         raise RuntimeError(f"Recusando gravar segredo em symlink: {secret_path}")
-    fd = os.open(secret_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(secret_path, flags, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as secret_fp:
         secret_fp.write(f"DISCORD_WEBHOOK_URL={webhook_url.strip()}\n")
     if os.name == "posix":
@@ -324,7 +385,7 @@ def resolve_data_dir(base_dir: Path) -> Path:
 
 
 def atomic_write_text(target_path: Path, content: str) -> None:
-    """Escreve arquivo de texto atomicamente via tempfile.mkstemp (O_CREAT|O_EXCL, anti-CWE-377), com fallback para bind-mount único."""
+    """Escreve arquivo de texto atomicamente via tempfile.mkstemp (O_CREAT|O_EXCL, anti-CWE-377), com fallback O_NOFOLLOW."""
     if target_path.is_symlink():
         raise RuntimeError(f"Escrita bloqueada em symlink não confiável: {target_path}")
     target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -356,7 +417,10 @@ def atomic_write_text(target_path: Path, content: str) -> None:
     except OSError:
         if target_path.is_symlink():
             raise RuntimeError(f"Escrita bloqueada em symlink não confiável: {target_path}") from None
-        target_path.write_text(content, encoding="utf-8")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fallback_fd = os.open(target_path, flags, existing_mode if existing_mode is not None else 0o644)
+        with os.fdopen(fallback_fd, "w", encoding="utf-8") as fallback_fp:
+            fallback_fp.write(content)
     finally:
         if tmp_name and os.path.exists(tmp_name):
             try:

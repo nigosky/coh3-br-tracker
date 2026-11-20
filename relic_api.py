@@ -34,6 +34,7 @@ logger = logging.getLogger("coh3_br.relic_api")
 
 BASE_URL = "https://coh3-api.reliclink.com/community/leaderboard"
 ALLOWED_RELIC_HOSTS: frozenset[str] = frozenset({"coh3-api.reliclink.com"})
+TRACKER_USER_AGENT = "CoH3-BR-Discord-Tracker/7.11"
 TITLE_STEAM = "coh3"
 SOUTH_AMERICA_REGION_ID = 2074438
 MAX_RELIC_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB limite rígido (fio e pós-descompressão Gzip)
@@ -336,7 +337,12 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 639157, "steam_id": "76561197979883434", "original_alias": "Itaperuna"},
     {"profile_id": 110078, "steam_id": "76561198024839791", "original_alias": "Bineto"},
     {"profile_id": 1143262, "steam_id": "76561198105073246", "original_alias": "Mazzaroppee"},
-    {"profile_id": 55693, "steam_id": "76561197996817129", "original_alias": "BinhoBiceps"},
+    {
+        "profile_id": 55693,
+        "steam_id": "76561197996817129",
+        "original_alias": "Alface aka BinhoBiceps",
+        "known_aliases": ["BinhoBiceps", "Alface", "Alface aka BinhoBiceps"],
+    },
     {"profile_id": 337051, "steam_id": "76561197981615184", "original_alias": "Maiti"},
     {"profile_id": 1022333, "steam_id": "76561198264285149", "original_alias": "gaules"},
     {"profile_id": 32922, "steam_id": "76561197986271242", "original_alias": "Showtaro"},
@@ -511,9 +517,10 @@ def fetch_shared_roster(
         ALLOWED_RADAR_HOSTS,
         path_prefix="/nigosky/coh3-br-lobby-radar/main/",
         path_regex=SHARED_ROSTER_PATH_RE,
+        allow_query=False,
     )
     headers = {
-        "User-Agent": "CoH3-BR-Tracker/7.10",
+        "User-Agent": TRACKER_USER_AGENT,
         "Accept": "application/json",
         "Accept-Encoding": "gzip",
         "Cache-Control": "no-cache",
@@ -631,7 +638,7 @@ def normalize_mode_name(matchtype_id: int, raw_name: str | None = None) -> str:
 class RelicAPIClient:
     """Cliente HTTPS endurecido com TLS 1.2+, allowlist estrita, Gzip anti-bomb e rate-limit sem contenção."""
 
-    def __init__(self, min_interval_sec: float = 0.06, timeout_sec: float = 15.0) -> None:
+    def __init__(self, min_interval_sec: float = 0.10, timeout_sec: float = 15.0) -> None:
         self.min_interval_sec = max(0.01, float(min_interval_sec))
         self.timeout_sec = max(2.0, float(timeout_sec))
         self._next_req_ts = 0.0
@@ -650,6 +657,13 @@ class RelicAPIClient:
         if wait > 0:
             time.sleep(wait)
 
+    def _push_rate_backoff(self, delay_sec: float) -> None:
+        """Empurra o portão compartilhado de rate-limit após HTTP 429 para frear threads concorrentes."""
+        with self._rate_lock:
+            target = time.monotonic() + max(0.2, float(delay_sec))
+            if target > self._next_req_ts:
+                self._next_req_ts = target
+
     def _get_json(
         self,
         url: str,
@@ -663,7 +677,7 @@ class RelicAPIClient:
         )
         opener = _get_thread_opener()
         headers = {
-            "User-Agent": "CoH3-BR-Discord-Tracker/7.6",
+            "User-Agent": TRACKER_USER_AGENT,
             "Accept": "application/json",
             "Accept-Encoding": "gzip",
         }
@@ -683,7 +697,14 @@ class RelicAPIClient:
                 last_err = exc
                 if exc.code in (400, 401, 403, 404):
                     break
-                wait = (2**attempt) * 0.6
+                if exc.code == 429:
+                    wait = max(1.5, (2**attempt) * 1.2)
+                    ra_hdr = str(exc.headers.get("Retry-After", "") if exc.headers else "").strip()
+                    if ra_hdr.isdigit():
+                        wait = max(1.0, min(float(int(ra_hdr)), 15.0))
+                    self._push_rate_backoff(wait)
+                else:
+                    wait = (2**attempt) * 0.6
                 logger.warning(
                     "HTTP %d na API Relic (%s) tentativa %d/%d; aguardando %.1fs",
                     exc.code,
@@ -845,104 +866,16 @@ class RelicAPIClient:
         only_automatch: bool,
         active_roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
     ) -> dict[str, Any] | None:
-        match_id = int(match.get("id", 0) or 0)
-        if match_id <= 0:
-            return None
-        mt_id = int(match.get("matchtype_id", 0) or 0)
-        mode_label = normalize_mode_name(mt_id, self.match_types.get(mt_id))
-
-        if only_automatch and mode_label not in AUTOMATCH_MODES:
-            return None
-
-        reports = match.get("matchhistoryreportresults", [])
-        if not isinstance(reports, list):
-            return None
-        my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
-        if not my_rep:
-            return None
-
-        tracked_prof = profiles_by_id.get(pid_clean, {})
-        tracked_alias = tracked_prof.get("alias") or fallback_alias or f"Player {pid_clean}"
-        tracked_steam_id = _extract_steam_id(tracked_prof.get("name"))
-
-        members_by_pid: dict[int, dict[str, Any]] = {
-            int(mem["profile_id"]): mem
-            for mem in (match.get("matchhistorymember") or [])
-            if isinstance(mem, dict) and "profile_id" in mem
-        }
-
-        my_team = my_rep.get("teamid", 0)
-        allies: list[dict[str, Any]] = []
-        opponents: list[dict[str, Any]] = []
-
-        for rep in reports:
-            if not isinstance(rep, dict):
-                continue
-            rpid = int(rep.get("profile_id", 0) or 0)
-            prof = profiles_by_id.get(rpid, {})
-            mem = members_by_pid.get(rpid, {})
-            race_name = self.races.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
-            raw_old = int(mem.get("oldrating", 0) or 0)
-            raw_new = int(mem.get("newrating", 0) or 0)
-            p_old_elo = raw_old if raw_old > 0 else None
-            p_new_elo = raw_new if raw_new > 0 else None
-            p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
-
-            participant = {
-                "profile_id": rpid,
-                "alias": prof.get("alias") or f"ID {rpid}",
-                "steam_id": _extract_steam_id(prof.get("name")),
-                "country": str(prof.get("country") or "un").lower(),
-                "faction": race_name,
-                "faction_short": FACTION_SHORT.get(race_name, race_name),
-                "old_elo": p_old_elo,
-                "new_elo": p_new_elo,
-                "elo_delta": p_delta,
-                "elo": p_new_elo,
-            }
-            if rep.get("teamid") == my_team:
-                if rpid != pid_clean:
-                    allies.append(participant)
-            else:
-                opponents.append(participant)
-
-        my_mem = members_by_pid.get(pid_clean, {})
-        my_old_raw = int(my_mem.get("oldrating", 0) or 0)
-        my_new_raw = int(my_mem.get("newrating", 0) or 0)
-        old_elo = my_old_raw if my_old_raw > 0 else None
-        new_elo = my_new_raw if my_new_raw > 0 else None
-
-        start_ts = int(match.get("startgametime", 0) or 0)
-        end_ts = int(match.get("completiontime", 0) or 0)
-        raw_map = str(match.get("mapname") or "unknown_map")
-        my_faction = self.races.get(int(my_rep.get("race_id", -1)), "Unknown")
-        result_type = int(my_rep.get("resulttype", 0) or 0)
-
-        m_obj = {
-            "match_id": match_id,
-            "tracked_profile_id": pid_clean,
-            "tracked_alias": tracked_alias,
-            "tracked_steam_id": tracked_steam_id,
-            "tracked_faction": my_faction,
-            "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
-            "win": result_type == 1,
-            "resulttype": result_type,
-            "mode": mode_label,
-            "matchtype_id": mt_id,
-            "map_raw": raw_map,
-            "map_clean": clean_map_name(raw_map),
-            "start_time": start_ts,
-            "completion_time": end_ts,
-            "duration_sec": max(0, end_ts - start_ts),
-            "old_elo": old_elo,
-            "new_elo": new_elo,
-            "allies": allies,
-            "opponents": opponents,
-            "counters": {},
-            "has_replay": bool(match.get("matchurls")),
-            "coh3stats_url": f"https://coh3stats.com/players/{pid_clean}/matches/{match_id}",
-        }
-        return enrich_match_with_roster(m_obj, active_roster_maps)
+        return _build_parsed_match_record(
+            match=match,
+            pid_clean=pid_clean,
+            fallback_alias=fallback_alias,
+            only_automatch=only_automatch,
+            active_roster_maps=active_roster_maps,
+            race_map=self.races,
+            mt_map=self.match_types,
+            profiles_by_id=profiles_by_id,
+        )
 
     def fetch_player_recent_matches(
         self,
@@ -1176,6 +1109,125 @@ class RelicAPIClient:
         return latest_by_pid
 
 
+def _build_parsed_match_record(
+    match: dict[str, Any],
+    pid_clean: int,
+    fallback_alias: str,
+    only_automatch: bool,
+    active_roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    race_map: dict[int, str],
+    mt_map: dict[int, str],
+    profiles_by_id: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """Constrói e enriquece o registro normalizado de partida (compartilhado por Relic API e Open Data coh3stats)."""
+    match_id = int(match.get("id", 0) or 0)
+    if match_id <= 0:
+        return None
+    mt_id = int(match.get("matchtype_id", 0) or 0)
+    mode_label = normalize_mode_name(mt_id, mt_map.get(mt_id))
+    if only_automatch and mode_label not in AUTOMATCH_MODES:
+        return None
+
+    reports = match.get("matchhistoryreportresults", [])
+    if not isinstance(reports, list):
+        return None
+    my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
+    if not my_rep:
+        return None
+
+    top_profiles: dict[int, dict[str, Any]] = (
+        profiles_by_id
+        if profiles_by_id is not None
+        else {
+            int(pr["profile_id"]): pr
+            for pr in (match.get("profiles") or [])
+            if isinstance(pr, dict) and "profile_id" in pr
+        }
+    )
+    top_members: dict[int, dict[str, Any]] = {
+        int(mem["profile_id"]): mem
+        for mem in (match.get("matchhistorymember") or [])
+        if isinstance(mem, dict) and "profile_id" in mem
+    }
+
+    my_prof = my_rep.get("profile") if isinstance(my_rep.get("profile"), dict) else top_profiles.get(pid_clean, {})
+    my_mem = my_rep.get("matchhistorymember") if isinstance(my_rep.get("matchhistorymember"), dict) else top_members.get(pid_clean, {})
+    tracked_alias = str(my_prof.get("alias") or fallback_alias or f"Player {pid_clean}")
+    tracked_steam_id = _extract_steam_id(my_prof.get("name"))
+
+    my_team = my_rep.get("teamid", 0)
+    allies: list[dict[str, Any]] = []
+    opponents: list[dict[str, Any]] = []
+
+    for rep in reports:
+        if not isinstance(rep, dict):
+            continue
+        rpid = int(rep.get("profile_id", 0) or 0)
+        prof = rep.get("profile") if isinstance(rep.get("profile"), dict) else top_profiles.get(rpid, {})
+        mem = rep.get("matchhistorymember") if isinstance(rep.get("matchhistorymember"), dict) else top_members.get(rpid, {})
+        race_name = race_map.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
+        raw_old = int(mem.get("oldrating", 0) or 0)
+        raw_new = int(mem.get("newrating", 0) or 0)
+        p_old_elo = raw_old if raw_old > 0 else None
+        p_new_elo = raw_new if raw_new > 0 else None
+        p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
+
+        participant = {
+            "profile_id": rpid,
+            "alias": prof.get("alias") or f"ID {rpid}",
+            "steam_id": _extract_steam_id(prof.get("name")),
+            "country": str(prof.get("country") or "un").lower(),
+            "faction": race_name,
+            "faction_short": FACTION_SHORT.get(race_name, race_name),
+            "old_elo": p_old_elo,
+            "new_elo": p_new_elo,
+            "elo_delta": p_delta,
+            "elo": p_new_elo,
+        }
+        if rep.get("teamid") == my_team:
+            if rpid != pid_clean:
+                allies.append(participant)
+        else:
+            opponents.append(participant)
+
+    my_old_raw = int(my_mem.get("oldrating", 0) or 0)
+    my_new_raw = int(my_mem.get("newrating", 0) or 0)
+    old_elo = my_old_raw if my_old_raw > 0 else None
+    new_elo = my_new_raw if my_new_raw > 0 else None
+
+    start_ts = int(match.get("startgametime", 0) or 0)
+    end_ts = int(match.get("completiontime", 0) or 0)
+    raw_map = str(match.get("mapname") or "unknown_map")
+    my_faction = race_map.get(int(my_rep.get("race_id", -1)), "Unknown")
+    result_type = int(my_rep.get("resulttype", 0) or 0)
+
+    m_obj = {
+        "match_id": match_id,
+        "tracked_profile_id": pid_clean,
+        "tracked_alias": tracked_alias,
+        "tracked_steam_id": tracked_steam_id,
+        "tracked_faction": my_faction,
+        "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
+        "win": result_type == 1,
+        "resulttype": result_type,
+        "mode": mode_label,
+        "matchtype_id": mt_id,
+        "map_raw": raw_map,
+        "map_clean": clean_map_name(raw_map),
+        "start_time": start_ts,
+        "completion_time": end_ts,
+        "duration_sec": max(0, end_ts - start_ts),
+        "old_elo": old_elo,
+        "new_elo": new_elo,
+        "allies": allies,
+        "opponents": opponents,
+        "counters": {},
+        "has_replay": bool(match.get("matchurls")),
+        "coh3stats_url": f"https://coh3stats.com/players/{pid_clean}/matches/{match_id}",
+    }
+    return enrich_match_with_roster(m_obj, active_roster_maps)
+
+
 class Coh3StatsAPIClient:
     """
     Cliente HTTPS endurecido (streaming de baixa memória) para o Open Data público e oficial do site coh3stats.com.
@@ -1241,108 +1293,15 @@ class Coh3StatsAPIClient:
         race_map: dict[int, str],
         mt_map: dict[int, str],
     ) -> dict[str, Any] | None:
-        match_id = int(match.get("id", 0) or 0)
-        if match_id <= 0:
-            return None
-        mt_id = int(match.get("matchtype_id", 0) or 0)
-        mode_label = normalize_mode_name(mt_id, mt_map.get(mt_id))
-        if only_automatch and mode_label not in AUTOMATCH_MODES:
-            return None
-
-        reports = match.get("matchhistoryreportresults", [])
-        if not isinstance(reports, list):
-            return None
-        my_rep = next((r for r in reports if isinstance(r, dict) and int(r.get("profile_id", -1)) == pid_clean), None)
-        if not my_rep:
-            return None
-
-        top_profiles: dict[int, dict[str, Any]] = {
-            int(pr["profile_id"]): pr
-            for pr in (match.get("profiles") or [])
-            if isinstance(pr, dict) and "profile_id" in pr
-        }
-        top_members: dict[int, dict[str, Any]] = {
-            int(mem["profile_id"]): mem
-            for mem in (match.get("matchhistorymember") or [])
-            if isinstance(mem, dict) and "profile_id" in mem
-        }
-
-        my_prof = my_rep.get("profile") if isinstance(my_rep.get("profile"), dict) else top_profiles.get(pid_clean, {})
-        my_mem = my_rep.get("matchhistorymember") if isinstance(my_rep.get("matchhistorymember"), dict) else top_members.get(pid_clean, {})
-        tracked_alias = str(my_prof.get("alias") or fallback_alias or f"Player {pid_clean}")
-        tracked_steam_id = _extract_steam_id(my_prof.get("name"))
-
-        my_team = my_rep.get("teamid", 0)
-        allies: list[dict[str, Any]] = []
-        opponents: list[dict[str, Any]] = []
-
-        for rep in reports:
-            if not isinstance(rep, dict):
-                continue
-            rpid = int(rep.get("profile_id", 0) or 0)
-            prof = rep.get("profile") if isinstance(rep.get("profile"), dict) else top_profiles.get(rpid, {})
-            mem = rep.get("matchhistorymember") if isinstance(rep.get("matchhistorymember"), dict) else top_members.get(rpid, {})
-            race_name = race_map.get(int(rep.get("race_id", -1)), f"Race {rep.get('race_id')}")
-            raw_old = int(mem.get("oldrating", 0) or 0)
-            raw_new = int(mem.get("newrating", 0) or 0)
-            p_old_elo = raw_old if raw_old > 0 else None
-            p_new_elo = raw_new if raw_new > 0 else None
-            p_delta = (p_new_elo - p_old_elo) if (p_old_elo is not None and p_new_elo is not None) else None
-
-            participant = {
-                "profile_id": rpid,
-                "alias": prof.get("alias") or f"ID {rpid}",
-                "steam_id": _extract_steam_id(prof.get("name")),
-                "country": str(prof.get("country") or "un").lower(),
-                "faction": race_name,
-                "faction_short": FACTION_SHORT.get(race_name, race_name),
-                "old_elo": p_old_elo,
-                "new_elo": p_new_elo,
-                "elo_delta": p_delta,
-                "elo": p_new_elo,
-            }
-            if rep.get("teamid") == my_team:
-                if rpid != pid_clean:
-                    allies.append(participant)
-            else:
-                opponents.append(participant)
-
-        my_old_raw = int(my_mem.get("oldrating", 0) or 0)
-        my_new_raw = int(my_mem.get("newrating", 0) or 0)
-        old_elo = my_old_raw if my_old_raw > 0 else None
-        new_elo = my_new_raw if my_new_raw > 0 else None
-
-        start_ts = int(match.get("startgametime", 0) or 0)
-        end_ts = int(match.get("completiontime", 0) or 0)
-        raw_map = str(match.get("mapname") or "unknown_map")
-        my_faction = race_map.get(int(my_rep.get("race_id", -1)), "Unknown")
-        result_type = int(my_rep.get("resulttype", 0) or 0)
-
-        m_obj = {
-            "match_id": match_id,
-            "tracked_profile_id": pid_clean,
-            "tracked_alias": tracked_alias,
-            "tracked_steam_id": tracked_steam_id,
-            "tracked_faction": my_faction,
-            "tracked_faction_short": FACTION_SHORT.get(my_faction, my_faction),
-            "win": result_type == 1,
-            "resulttype": result_type,
-            "mode": mode_label,
-            "matchtype_id": mt_id,
-            "map_raw": raw_map,
-            "map_clean": clean_map_name(raw_map),
-            "start_time": start_ts,
-            "completion_time": end_ts,
-            "duration_sec": max(0, end_ts - start_ts),
-            "old_elo": old_elo,
-            "new_elo": new_elo,
-            "allies": allies,
-            "opponents": opponents,
-            "counters": {},
-            "has_replay": bool(match.get("matchurls")),
-            "coh3stats_url": f"https://coh3stats.com/players/{pid_clean}/matches/{match_id}",
-        }
-        return enrich_match_with_roster(m_obj, active_roster_maps)
+        return _build_parsed_match_record(
+            match=match,
+            pid_clean=pid_clean,
+            fallback_alias=fallback_alias,
+            only_automatch=only_automatch,
+            active_roster_maps=active_roster_maps,
+            race_map=race_map,
+            mt_map=mt_map,
+        )
 
     def _stream_open_data_matches(
         self,
@@ -1495,6 +1454,7 @@ class Coh3StatsAPIClient:
             ALLOWED_COH3STATS_HOSTS,
             path_prefix="/matches/",
             path_regex=COH3STATS_OPEN_DATA_PATH_RE,
+            allow_query=False,
         )
 
         alias_by_pid: dict[int, str] = {}
@@ -1512,7 +1472,7 @@ class Coh3StatsAPIClient:
         mt_map = match_types or {}
         opener = _get_thread_opener()
         headers = {
-            "User-Agent": "CoH3-BR-Discord-Tracker/7.6",
+            "User-Agent": TRACKER_USER_AGENT,
             "Accept": "application/json",
             "Accept-Encoding": "gzip",
         }
@@ -1720,6 +1680,7 @@ class VeteransRadarClient:
                 ALLOWED_RADAR_HOSTS,
                 path_prefix="/nigosky/coh3-br-lobby-radar/",
                 path_regex=VETERANOS_RADAR_PATH_RE,
+                allow_query=False,
             )
         except Exception as exc:
             return {
@@ -1734,7 +1695,7 @@ class VeteransRadarClient:
 
         opener = _get_thread_opener()
         headers = {
-            "User-Agent": "CoH3-BR-Discord-Tracker/7.8",
+            "User-Agent": TRACKER_USER_AGENT,
             "Accept": "application/json",
             "Accept-Encoding": "gzip",
             "Cache-Control": "no-cache",
@@ -1863,14 +1824,13 @@ class CohDBClient:
         if not path or "?" in path or "#" in path or not path_regex.fullmatch(path):
             raise ValueError(f"Caminho cohdb não canônico bloqueado: {path!r}")
         url = f"{COHDB_BASE_URL}{path}"
-        parsed = validate_https_endpoint(
+        validate_https_endpoint(
             url,
             ALLOWED_COHDB_HOSTS,
             path_prefix="/",
             path_regex=path_regex,
+            allow_query=False,
         )
-        if parsed.query or parsed.fragment:
-            raise ValueError("Query string ou fragmento bloqueado para cohdb.com (robots.txt).")
         opener = _get_thread_opener()
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; CoH3-BR-Tracker/7.9)",
@@ -2240,7 +2200,7 @@ def export_players_files(players: list[dict[str, Any]], json_path: Path, csv_pat
         atomic_write_text(json_path, json_str + "\n")
         atomic_write_text(csv_path, csv_buf.getvalue())
     except OSError as exc:
-        logger.warning("Não foi possível exportar catálogo em disco (%s): %s", json_path.parent, exc)
+        logger.warning("Não foi possível exportar catálogo em disco (%s): %s", json_path.parent, redact_secrets(exc))
 
 
 def parse_profile_id_input(raw_input: str) -> int | None:
@@ -2587,175 +2547,3 @@ def compute_merged_mode_rankings(
         rankings_by_mode[group_name] = mode_entries
 
     return rankings_by_mode
-
-
-def build_top_tracked_players(
-    rankings_by_mode: dict[str, list[dict[str, Any]]],
-    top_n: int = 20,
-    custom_players: list[dict[str, Any]] | None = None,
-    only_custom: bool = False,
-) -> list[dict[str, Any]]:
-    """Constrói a lista consolidada de contas rastreadas (31 únicos + convidados ou Top N)."""
-    steam_map, pid_map = build_roster_lookup_maps(custom_players)
-    custom_by_id = {int(cp["profile_id"]): cp for cp in (custom_players or []) if int(cp.get("profile_id", 0)) > 0}
-    custom_sids = {str(cp.get("steam_id") or "") for cp in (custom_players or []) if cp.get("steam_id")}
-    consolidated: dict[int, dict[str, Any]] = {}
-
-    for mode, entries in rankings_by_mode.items():
-        mode_pt = "Jogos em Equipe" if mode == "Team Games" else mode
-        for idx, item in enumerate(entries):
-            pid = int(item["profile_id"])
-            sid = str(item.get("steam_id") or "")
-            is_cust = pid in custom_by_id or (bool(sid) and sid in custom_sids) or bool(item.get("is_custom"))
-            if only_custom and not is_cust:
-                continue
-            if not only_custom and idx >= top_n and not is_cust:
-                continue
-            if pid not in consolidated:
-                r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
-                consolidated[pid] = {
-                    "profile_id": pid,
-                    "alias": item["alias"],
-                    "original_alias": str(r_entry.get("original_alias") or item.get("original_alias") or item["alias"]),
-                    "steam_id": sid or str(r_entry.get("steam_id") or ""),
-                    "placements": [],
-                    "best_avg_elo": item["avg_elo"],
-                    "is_custom": is_cust,
-                }
-            rec = consolidated[pid]
-            tag = " ⭐" if rec["is_custom"] and idx >= top_n else ""
-            rec["placements"].append(f"#{item['br_rank']} {mode_pt} (média {item['avg_elo']:.1f}){tag}")
-            if item["avg_elo"] > rec["best_avg_elo"]:
-                rec["best_avg_elo"] = item["avg_elo"]
-
-    for pid, cp in custom_by_id.items():
-        if pid not in consolidated:
-            sid = str(cp.get("steam_id") or "")
-            r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(sid) or {}
-            orig_alias = str(r_entry.get("original_alias") or cp.get("original_alias") or cp.get("alias") or f"Player {pid}")
-            cur_alias = str(cp.get("alias") or orig_alias)
-            merged_pid = int(r_entry.get("merged_into_profile_id") or cp.get("merged_into_profile_id") or 0)
-            placements_lbl = (
-                [f"🔗 Conta mesclada em {orig_alias} (#{merged_pid})"]
-                if merged_pid
-                else ["⭐ Monitorado (aguardando ranking)"]
-            )
-            consolidated[pid] = {
-                "profile_id": pid,
-                "alias": format_bound_display_alias(
-                    cur_alias,
-                    orig_alias,
-                    r_entry.get("known_aliases"),
-                    pin_alias=bool(r_entry.get("pin_alias")),
-                    show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
-                ),
-                "original_alias": orig_alias,
-                "steam_id": sid or str(r_entry.get("steam_id") or ""),
-                "merged_into_profile_id": merged_pid,
-                "placements": placements_lbl,
-                "best_avg_elo": 0.0,
-                "is_custom": True,
-            }
-
-    return sorted(consolidated.values(), key=lambda x: (-x["best_avg_elo"], x["alias"].lower()))
-
-
-def export_merged_top_rankings(
-    rankings_by_mode: dict[str, list[dict[str, Any]]],
-    top_n: int,
-    json_path: Path,
-    csv_path: Path,
-    custom_players: list[dict[str, Any]] | None = None,
-) -> dict[str, list[dict[str, Any]]]:
-    """Exporta atomicamente Top N + monitorados em JSON/CSV e retorna o dicionário filtrado."""
-    custom_ids = {int(cp["profile_id"]) for cp in (custom_players or []) if int(cp.get("profile_id", 0)) > 0}
-    custom_sids = {str(cp.get("steam_id") or "") for cp in (custom_players or []) if cp.get("steam_id")}
-    trimmed: dict[str, list[dict[str, Any]]] = {}
-
-    for mode, entries in rankings_by_mode.items():
-        trimmed[mode] = [
-            e
-            for idx, e in enumerate(entries)
-            if idx < top_n
-            or e["profile_id"] in custom_ids
-            or (bool(e.get("steam_id")) and str(e["steam_id"]) in custom_sids)
-            or bool(e.get("is_custom"))
-        ]
-
-    unique_players = build_top_tracked_players(
-        rankings_by_mode,
-        top_n=top_n,
-        custom_players=custom_players,
-        only_custom=False,
-    )
-
-    json_str = json.dumps(
-        {
-            "updated_at": int(time.time()),
-            "methodology": "simple_average_of_active_factions_elo_1v1_2v2_team_games",
-            "modes": list(rankings_by_mode.keys()),
-            "top_n_per_mode": top_n,
-            "unique_players_count": len(unique_players),
-            "rankings_by_mode": trimmed,
-            "selected_unique_players": unique_players,
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-
-    csv_buf = io.StringIO()
-    writer = csv.writer(csv_buf, lineterminator="\n")
-    writer.writerow(
-        [
-            "mode",
-            "br_rank",
-            "rank_delta",
-            "is_monitored_31",
-            "profile_id",
-            "steam_id",
-            "original_alias",
-            "display_alias",
-            "avg_elo",
-            "active_rankings",
-            "elo_usf",
-            "elo_ukf",
-            "elo_dak",
-            "elo_wehr",
-            "mode_wins",
-            "mode_losses",
-            "coh3stats_url",
-        ]
-    )
-    for mode, entries in trimmed.items():
-        for e in entries:
-            fe = e["faction_elos"]
-            pid_int = int(e["profile_id"])
-            writer.writerow(
-                [
-                    sanitize_csv_cell(mode),
-                    e["br_rank"],
-                    e.get("rank_delta", 0),
-                    "sim" if e.get("is_custom") else "nao",
-                    pid_int,
-                    sanitize_csv_cell(e.get("steam_id", "")),
-                    sanitize_csv_cell(e.get("original_alias", "")),
-                    sanitize_csv_cell(e["alias"]),
-                    e["avg_elo"],
-                    f"{e['active_rankings_count']}/{e['max_rankings_slots']}",
-                    fe.get("american", ""),
-                    fe.get("british", ""),
-                    fe.get("dak", ""),
-                    fe.get("german", ""),
-                    e["wins"],
-                    e["losses"],
-                    f"https://coh3stats.com/players/{pid_int}",
-                ]
-            )
-
-    try:
-        atomic_write_text(json_path, json_str + "\n")
-        atomic_write_text(csv_path, csv_buf.getvalue())
-    except OSError as exc:
-        logger.warning("Não foi possível exportar ranking em disco (%s): %s", json_path.parent, exc)
-
-    return trimmed
