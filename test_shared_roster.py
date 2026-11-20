@@ -105,6 +105,36 @@ class TestTrackerSharedRoster(unittest.TestCase):
             # Idempotente na segunda chamada
             self.assertFalse(monitor.ensure_core_roster_in_config(cfg))
 
+    def test_format_bound_display_alias_marks_nick_changes_with_asterisk_and_respects_pin_alias(self) -> None:
+        # Mudança inédita preserva nick anterior com asterisco '*'
+        self.assertEqual(
+            relic_api.format_bound_display_alias("NovoNick", "Chacineiro"),
+            "Chacineiro* (NovoNick)",
+        )
+        # Idempotente e atualiza formato antigo sem asterisco
+        self.assertEqual(
+            relic_api.format_bound_display_alias("Chacineiro* (NovoNick)", "Chacineiro"),
+            "Chacineiro* (NovoNick)",
+        )
+        self.assertEqual(
+            relic_api.format_bound_display_alias("Chacineiro (NovoNick)", "Chacineiro"),
+            "Chacineiro* (NovoNick)",
+        )
+        # Gabe com nick conhecido "É o Gabe" -> exibe simplesmente "Gabe"
+        self.assertEqual(
+            relic_api.format_bound_display_alias("É o Gabe", "Gabe", ["É o Gabe", "Gabe"]),
+            "Gabe",
+        )
+        # arc com pin_alias=True -> SEMPRE "arc", independente do nick atual
+        self.assertEqual(
+            relic_api.format_bound_display_alias("geladeira velha", "arc", pin_alias=True),
+            "arc",
+        )
+        self.assertEqual(
+            relic_api.format_bound_display_alias("QualquerNickNovo123", "arc", pin_alias=True),
+            "arc",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

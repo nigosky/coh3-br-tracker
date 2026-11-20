@@ -103,6 +103,7 @@ def ensure_core_roster_in_config(
         c_pid = int(core["profile_id"])
         c_orig = str(core["original_alias"])
         c_known = list(core.get("known_aliases") or [])
+        c_pin = bool(core.get("pin_alias"))
         c_merged_pid = int(core.get("merged_into_profile_id", 0) or 0)
         c_merged_sid = str(core.get("merged_into_steam_id") or "")
         c_country = str(core.get("country") or "").strip().lower()
@@ -118,6 +119,8 @@ def ensure_core_roster_in_config(
             }
             if c_country and c_country != "br":
                 new_entry["country"] = c_country
+            if c_pin:
+                new_entry["pin_alias"] = True
             if c_known:
                 new_entry["known_aliases"] = c_known
             if c_merged_pid:
@@ -135,7 +138,12 @@ def ensure_core_roster_in_config(
             if target.get("original_alias") != c_orig:
                 target["original_alias"] = c_orig
                 changed = True
-            expected_alias = format_bound_display_alias(str(target.get("alias") or c_orig), c_orig, c_known)
+            expected_alias = format_bound_display_alias(
+                str(target.get("alias") or c_orig),
+                c_orig,
+                c_known,
+                pin_alias=c_pin,
+            )
             if target.get("alias") != expected_alias:
                 target["alias"] = expected_alias
                 changed = True
@@ -148,6 +156,13 @@ def ensure_core_roster_in_config(
                     changed = True
             elif "country" in target and str(target.get("country") or "").strip().lower() != "br":
                 target.pop("country", None)
+                changed = True
+            if c_pin:
+                if not target.get("pin_alias"):
+                    target["pin_alias"] = True
+                    changed = True
+            elif "pin_alias" in target:
+                target.pop("pin_alias", None)
                 changed = True
             if c_known and target.get("known_aliases") != c_known:
                 target["known_aliases"] = c_known
