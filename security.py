@@ -32,7 +32,26 @@ WEBHOOK_REDACT_RE = re.compile(
     re.IGNORECASE,
 )
 ENV_SECRET_REDACT_RE = re.compile(
-    r"(DISCORD_WEBHOOK_URL\s*=\s*)[^\s\"'<>]+",
+    r"(DISCORD_(?:LOBBY_)?WEBHOOK_URL\s*=\s*)[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+STEAM_API_KEY_QUERY_REDACT_RE = re.compile(
+    r"([?&]key=)[^&\s\"'<>]+",
+    re.IGNORECASE,
+)
+STEAM_API_KEY_ENV_REDACT_RE = re.compile(
+    r"(STEAM_WEB_API_KEY\s*=\s*)[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+STEAM_API_KEY_HEADER_REDACT_RE = re.compile(
+    r"(x-webapi-key\s*[:=]\s*)[^\s\"'<>]+",
+    re.IGNORECASE,
+)
+GITHUB_TOKEN_REDACT_RE = re.compile(
+    r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b",
+)
+AUTH_HEADER_REDACT_RE = re.compile(
+    r"(Authorization\s*:\s*(?:Bearer|Basic|Token)\s+)[^\s\"'<>]+",
     re.IGNORECASE,
 )
 
@@ -41,19 +60,25 @@ UNSAFE_TEXT_CHARS_RE = re.compile(r"[\x00-\x1f\x7f\u200b-\u200f\u202a-\u202e\u20
 URL_FORBIDDEN_CHARS_RE = re.compile(r"[\x00-\x20\x7f]")
 
 CSV_DANGEROUS_INITIALS = ("=", "+", "-", "@", "|")
+_EXC_FORMATTER = logging.Formatter()
 
 
 def redact_secrets(text: Any) -> str:
-    """Remove qualquer URL/token de Webhook do Discord em logs, exceções ou mensagens de erro."""
+    """Remove URLs/tokens de Webhook, chaves Steam Web API, tokens GitHub e cabeçalhos Authorization de logs/erros."""
     raw = str(text or "")
     if not raw:
         return ""
     scrubbed = WEBHOOK_REDACT_RE.sub("[WEBHOOK_REDACTED]", raw)
-    return ENV_SECRET_REDACT_RE.sub(r"\1[WEBHOOK_REDACTED]", scrubbed)
+    scrubbed = ENV_SECRET_REDACT_RE.sub(r"\1[WEBHOOK_REDACTED]", scrubbed)
+    scrubbed = STEAM_API_KEY_QUERY_REDACT_RE.sub(r"\1[STEAM_KEY_REDACTED]", scrubbed)
+    scrubbed = STEAM_API_KEY_ENV_REDACT_RE.sub(r"\1[STEAM_KEY_REDACTED]", scrubbed)
+    scrubbed = STEAM_API_KEY_HEADER_REDACT_RE.sub(r"\1[STEAM_KEY_REDACTED]", scrubbed)
+    scrubbed = GITHUB_TOKEN_REDACT_RE.sub("[GH_TOKEN_REDACTED]", scrubbed)
+    return AUTH_HEADER_REDACT_RE.sub(r"\1[AUTH_REDACTED]", scrubbed)
 
 
 class SecretRedactingFilter(logging.Filter):
-    """Filtro global de logging que impede vazamento acidental de Webhooks/tokens em stdout ou Actions."""
+    """Filtro global de logging que impede vazamento acidental de Webhooks/tokens/tracebacks em stdout ou Actions."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
@@ -69,6 +94,11 @@ class SecretRedactingFilter(logging.Filter):
                     redact_secrets(a) if isinstance(a, (str, BaseException)) else a
                     for a in record.args
                 )
+        if record.exc_info:
+            record.exc_text = redact_secrets(_EXC_FORMATTER.formatException(record.exc_info))
+            record.exc_info = None
+        elif record.exc_text:
+            record.exc_text = redact_secrets(record.exc_text)
         return True
 
 
@@ -114,6 +144,23 @@ def create_hardened_ssl_context() -> ssl.SSLContext:
     return ctx
 
 
+class HttpsOnlySchemeHandler(urllib.request.BaseHandler):
+    """Bloqueia no nível do OpenerDirector qualquer esquema fora de HTTPS (defesa em profundidade anti-SSRF/LFI)."""
+
+    handler_order = 100
+
+    def default_open(self, req: Any) -> Any:
+        scheme = str(getattr(req, "type", "") or "").lower()
+        if scheme != "https":
+            raise urllib.error.URLError(f"Esquema '{scheme or '<vazio>'}' bloqueado pela política HTTPS-only.")
+        return None
+
+    http_open = default_open
+    ftp_open = default_open
+    file_open = default_open
+    data_open = default_open
+
+
 class StrictNoRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Bloqueia qualquer redirecionamento HTTP 3xx (proteção estrita contra SSRF e vazamento de headers)."""
 
@@ -128,8 +175,9 @@ class StrictNoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 def build_no_redirect_https_opener() -> urllib.request.OpenerDirector:
-    """Constrói OpenerDirector HTTPS seguro sem redirecionamentos, preservando suporte a proxy do ambiente."""
+    """Constrói OpenerDirector HTTPS-only seguro sem redirecionamentos, preservando suporte a proxy do ambiente."""
     return urllib.request.build_opener(
+        HttpsOnlySchemeHandler(),
         urllib.request.HTTPSHandler(context=create_hardened_ssl_context()),
         StrictNoRedirectHandler(),
     )

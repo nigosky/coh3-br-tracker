@@ -158,9 +158,10 @@ jobs:
             fi
           fi
 
-          # Bloqueia qualquer URL de Webhook (incluindo ptb/canary e caixa alta/baixa) em arquivos rastreados
-          if grep -RInEi "(ptb\.|canary\.)?discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+" config.json *.csv *.json *.py 2>/dev/null; then
-            echo "::error::Bloqueio de seguranca acionado: padrao de URL de Webhook detectado em arquivo rastreado!"
+          # Bloqueia qualquer URL de Webhook, chave Steam, token GitHub ou chave privada em arquivos de texto rastreados
+          SECRET_PATTERN="(ptb\.|canary\.)?discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+|STEAM_WEB_API_KEY=[A-Za-z0-9]{16,}|[?&]key=[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+          if grep -RInEi "${SECRET_PATTERN}" config.json *.csv *.json *.py .github/workflows/* 2>/dev/null; then
+            echo "::error::Bloqueio de seguranca acionado: padrao de credencial/Webhook detectado em arquivo rastreado!"
             exit 1
           fi
 
