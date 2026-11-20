@@ -305,7 +305,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "known_aliases": ["Minhoca de ferro!", "Minhoca de ferro", "Alekel"],
     },
     {"profile_id": 1114404, "steam_id": "76561198024118058", "original_alias": "Vikitor"},
-    {"profile_id": 366826, "steam_id": "76561198014985380", "original_alias": "Lem22"},
+    {"profile_id": 366826, "steam_id": "76561198014985380", "original_alias": "Lem22", "country": "us"},
     {"profile_id": 1282592, "steam_id": "76561198028644178", "original_alias": "SapoBoi_BR"},
     {"profile_id": 639157, "steam_id": "76561197979883434", "original_alias": "Itaperuna"},
     {"profile_id": 110078, "steam_id": "76561198024839791", "original_alias": "Bineto"},
@@ -1878,7 +1878,7 @@ def format_bound_display_alias(
 
 
 def _merge_roster_fields(rec: dict[str, Any], prev: dict[str, Any]) -> None:
-    for field in ("original_alias", "steam_id", "known_aliases", "merged_into_profile_id", "merged_into_steam_id"):
+    for field in ("original_alias", "steam_id", "known_aliases", "merged_into_profile_id", "merged_into_steam_id", "country"):
         if not rec.get(field) and prev.get(field):
             rec[field] = prev[field]
 
@@ -1902,6 +1902,7 @@ def build_roster_lookup_maps(
                 "known_aliases": list(item.get("known_aliases") or []),
                 "merged_into_profile_id": int(item.get("merged_into_profile_id", 0) or 0),
                 "merged_into_steam_id": str(item.get("merged_into_steam_id") or "").strip(),
+                "country": str(item.get("country") or "").strip().lower(),
             }
             if sid:
                 if sid in steam_map:

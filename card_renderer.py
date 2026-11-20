@@ -1155,7 +1155,8 @@ def _resolve_roster_participant(
             str(r_entry.get("original_alias") or ""),
             r_entry.get("known_aliases"),
         )
-        return bound_sid, disp, str(country or "br").lower(), True
+        roster_country = str(r_entry.get("country") or "").strip().lower()
+        return bound_sid, disp, (roster_country or str(country or "br").lower()), True
     return clean_sid, raw_alias, str(country or ("br" if is_tracked else "un")).lower(), is_tracked
 
 
@@ -2263,7 +2264,7 @@ def render_weekly_summary_card_png(
     else:
         num_fnt = pick_font("100%", size=16, bold=True, condensed=True)
         row_vet = get_veteranos_badge_icon(size=18)
-        flag_br = get_country_flag("br", w=20, h=14)
+        steam_map, pid_map = _DEFAULT_ROSTER_MAPS
         for idx, pl in enumerate(leaderboard, start=1):
             r_bg = (20, 23, 29, 255) if idx % 2 == 1 else (25, 28, 36, 255)
             draw.rectangle((8, y, width, y + row_h), fill=r_bg)
@@ -2274,15 +2275,20 @@ def render_weekly_summary_card_png(
             rkw = text_width(draw, rk_str, num_fnt)
             draw.text((38 - rkw / 2, y + 10), rk_str, font=num_fnt, fill=rk_col)
 
+            pl_pid = int(pl.get("profile_id", 0))
+            pl_sid = str(pl.get("steam_id") or "")
             av_im = avatar_provider.get_circular_avatar(
                 size=30,
-                profile_id=int(pl.get("profile_id", 0)),
-                steam_id=str(pl.get("steam_id") or ""),
+                profile_id=pl_pid,
+                steam_id=pl_sid,
                 alias=str(pl.get("alias") or "BR"),
                 ring_color=(245, 184, 46, 245),
             )
             img.paste(av_im, (68, y + 5), av_im)
-            img.paste(flag_br, (104, y + 13), flag_br)
+            r_entry = steam_map.get(pl_sid) or pid_map.get(pl_pid) or {}
+            pl_country = str(r_entry.get("country") or pl.get("country") or "br").strip().lower()
+            pl_flag = get_country_flag(pl_country, w=20, h=14)
+            img.paste(pl_flag, (104, y + 13), pl_flag)
 
             disp_alias, a_fnt = truncate_to_px(draw, str(pl.get("alias") or ""), max_px=258, size=16, bold=True)
             draw.text((130, y + 10), disp_alias, font=a_fnt, fill=(253, 230, 138, 255))
