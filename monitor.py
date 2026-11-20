@@ -1539,6 +1539,64 @@ def enrich_group_with_battlegroups(
     return True, bool(str_map)
 
 
+def enrich_group_with_nemesis(
+    db: MatchDatabase,
+    grp: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Calcula em tempo real a condição oficial de 1v1 Nemesis (trigger >= 2 partidas 1v1 no mesmo dia UTC
+    entre jogadores Steam; após o trigger, conta todas as partidas 1v1 contra esse oponente) e anexa ao grupo.
+    """
+    recs = grp.get("records") or [grp.get("primary") or grp]
+    primary = recs[0]
+    if str(primary.get("mode") or "").strip() != "1v1":
+        return None
+    opponents = primary.get("opponents") or []
+    if not isinstance(opponents, list) or len(opponents) != 1 or not isinstance(opponents[0], dict):
+        return None
+
+    opp = opponents[0]
+    opp_pid = int(opp.get("profile_id", 0) or 0)
+    tracked_pid = int(primary.get("tracked_profile_id", 0) or 0)
+    match_id = int(grp.get("match_id") or primary.get("match_id") or 0)
+    comp_ts = int(primary.get("completion_time", 0) or 0)
+    if opp_pid <= 0 or tracked_pid <= 0 or match_id <= 0 or comp_ts <= 0:
+        return None
+
+    # Agrupa IDs de contas secundárias mescladas (ex.: É o Gabe) para unificar o placar 1v1 Nemesis
+    pid_group: list[int] = [tracked_pid]
+    _, pid_map = roster_maps if roster_maps is not None else build_roster_lookup_maps()
+    entry = pid_map.get(tracked_pid) or {}
+    canon_pid = int(entry.get("merged_into_profile_id") or tracked_pid)
+    if canon_pid > 0 and canon_pid not in pid_group:
+        pid_group.append(canon_pid)
+    for r_pid, r_ent in pid_map.items():
+        m_pid = int(r_ent.get("merged_into_profile_id") or r_pid)
+        if m_pid == canon_pid and r_pid not in pid_group:
+            pid_group.append(r_pid)
+
+    nemesis = db.get_1v1_nemesis_status(
+        tracked_profile_ids=pid_group,
+        opponent_profile_id=opp_pid,
+        up_to_completion_time=comp_ts,
+        up_to_match_id=match_id,
+        current_opponent_alias=str(opp.get("alias") or ""),
+        current_opponent_steam_id=str(opp.get("steam_id") or ""),
+    )
+    if not nemesis:
+        return None
+
+    tracked_disp = str(entry.get("original_alias") or primary.get("tracked_alias") or f"Jogador {tracked_pid}").strip()
+    nemesis["tracked_alias"] = tracked_disp
+    grp["nemesis"] = nemesis
+    for r in recs:
+        r["nemesis"] = nemesis
+    if isinstance(grp.get("primary"), dict):
+        grp["primary"]["nemesis"] = nemesis
+    return nemesis
+
+
 def run_cycle(
     config_path: Path,
     relic: RelicAPIClient,
@@ -1819,6 +1877,17 @@ def run_cycle(
                     checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
                     if has_bg:
                         bg_enriched_new += 1
+                nem_info = enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+                if nem_info:
+                    logger.info(
+                        "[1v1 NEMESIS] %s vs %s -> %dV-%dD (%s) [#%d]",
+                        nem_info.get("tracked_alias"),
+                        nem_info.get("opponent_alias"),
+                        int(nem_info.get("wins", 0)),
+                        int(nem_info.get("losses", 0)),
+                        "NOVO TRIGGER" if nem_info.get("is_new_trigger") else "ATIVO",
+                        grp["match_id"],
+                    )
                 is_automatch = str(grp["primary"].get("mode") or "") != "Custom"
                 try:
                     msg_id = discord.send_match_card(grp)
@@ -1893,6 +1962,7 @@ def run_cycle(
                         checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, p_grp)
                         if checked_ok:
                             if has_bg:
+                                enrich_group_with_nemesis(db, p_grp, roster_maps=roster_maps)
                                 try:
                                     patched = discord.edit_match_card(p_msg_id, p_grp)
                                     if patched:
@@ -1924,6 +1994,7 @@ def run_cycle(
                         continue
                     checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, m_grp)
                     if checked_ok and has_bg:
+                        enrich_group_with_nemesis(db, m_grp, roster_maps=roster_maps)
                         existing_msg_id = next(
                             (
                                 str(r.get("discord_message_id") or "").strip()

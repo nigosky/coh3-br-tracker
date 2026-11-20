@@ -1507,6 +1507,131 @@ def _draw_two_team_columns(
 # ---------------------------------------------------------------------------
 # RENDERIZADOR 1A: Card Grande de Partida Finalizada (PT-BR, 940px)
 # ---------------------------------------------------------------------------
+def _draw_nemesis_swords_icon(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    size: int = 16,
+    color: tuple[int, int, int, int] = (255, 228, 230, 255),
+) -> None:
+    """Desenha um emblema vetorial nítido de espadas cruzadas para o selo 1v1 Nemesis."""
+    r = max(5.0, size / 2.0)
+    # Lâminas cruzadas (X)
+    draw.line([(cx - r + 1, cy - r + 1), (cx + r - 1, cy + r - 1)], fill=color, width=2)
+    draw.line([(cx + r - 1, cy - r + 1), (cx - r + 1, cy + r - 1)], fill=color, width=2)
+    # Guardas próximas aos punhos inferiores
+    g = r * 0.45
+    draw.line([(cx - r + 2, cy + r - 2 - g), (cx - r + 2 + g, cy + r - 2)], fill=color, width=2)
+    draw.line([(cx + r - 2, cy + r - 2 - g), (cx + r - 2 - g, cy + r - 2)], fill=color, width=2)
+
+
+def _draw_nemesis_footer_bar(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    y_bar: int,
+    bar_h: int,
+    nemesis: dict[str, Any],
+    tracked_alias: str,
+    is_duel: bool = False,
+) -> None:
+    """Desenha a faixa tática inferior de 1v1 Nemesis (trigger >= 2 jogos no mesmo dia UTC)."""
+    is_new = bool(nemesis.get("is_new_trigger"))
+    wins = int(nemesis.get("wins", 0) or 0)
+    losses = int(nemesis.get("losses", 0) or 0)
+    total = int(nemesis.get("total", wins + losses) or (wins + losses))
+    same_day = int(nemesis.get("same_day_games", 0) or 0)
+    wr_pct = int(round(float(nemesis.get("win_rate", 0.0) or 0.0)))
+    opp_pid = int(nemesis.get("opponent_profile_id", 0) or 0)
+    raw_opp = str(nemesis.get("opponent_alias") or "").strip()
+    opp_alias = raw_opp if raw_opp else (f"ID #{opp_pid}" if opp_pid > 0 else "Oponente")
+    br_alias = str(tracked_alias or "Veterano").strip()
+
+    bg_col = (36, 18, 22, 255) if not is_duel else (42, 24, 18, 255)
+    top_border = (190, 38, 68, 220) if is_new else (136, 36, 56, 200)
+    left_bar = (244, 63, 94, 255) if is_new else (225, 29, 72, 255)
+
+    draw.rectangle((0, y_bar, width, y_bar + bar_h), fill=bg_col)
+    draw.line([(0, y_bar), (width, y_bar)], fill=top_border, width=2)
+    draw.rectangle((0, y_bar, 8, y_bar + bar_h), fill=left_bar)
+
+    # Pílula de destaque à esquerda
+    badge_txt = "NOVO NEMESIS 1v1" if is_new else "NEMESIS 1v1"
+    badge_fnt = pick_font(badge_txt, size=13, bold=True, condensed=True)
+    badge_tw = text_width(draw, badge_txt, badge_fnt)
+    pill_x = 20
+    pill_h = 24
+    pill_y = y_bar + (bar_h - pill_h) // 2 + 1
+    pill_w = int(badge_tw + 34)
+    pill_fill = (190, 18, 60, 255) if is_new else (136, 19, 55, 255)
+    pill_outline = (251, 113, 133, 210) if is_new else (225, 29, 72, 180)
+    draw.rounded_rectangle(
+        (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h),
+        radius=6,
+        fill=pill_fill,
+        outline=pill_outline,
+        width=1,
+    )
+    _draw_nemesis_swords_icon(draw, pill_x + 13, pill_y + pill_h / 2, size=13, color=(255, 241, 242, 255))
+    draw.text((pill_x + 25, pill_y + 4), badge_txt, font=badge_fnt, fill=(255, 241, 242, 255))
+
+    # Metadados à direita (taxa de vitória + contagem de jogos)
+    if same_day >= 2 and total == same_day:
+        meta_txt = f"{wr_pct}%  •  {same_day} jogos hoje (UTC)"
+    elif same_day >= 2:
+        meta_txt = f"{wr_pct}%  •  {total} jogos ({same_day} hoje UTC)"
+    else:
+        meta_txt = f"{wr_pct}%  •  {total} jogos no histórico"
+    meta_fnt = pick_font(meta_txt, size=13, bold=True, condensed=True)
+    meta_w = text_width(draw, meta_txt, meta_fnt)
+    meta_x = width - 20 - meta_w
+    draw.text((meta_x, y_bar + 13), meta_txt, font=meta_fnt, fill=(253, 164, 175, 255))
+
+    # Placar central: <Veterano>  <W>V - <L>D  vs  <Oponente>
+    cursor_x = pill_x + pill_w + 16
+    avail_px = max(140, int(meta_x - cursor_x - 20))
+
+    w_str = f"{wins}V"
+    sep_str = " - "
+    l_str = f"{losses}D"
+    vs_str = "  vs  "
+    score_fnt = pick_font("99V - 99D", size=16, bold=True, condensed=True)
+    vs_fnt = pick_font(vs_str, size=14, bold=False)
+
+    fixed_score_w = (
+        text_width(draw, w_str, score_fnt)
+        + text_width(draw, sep_str, score_fnt)
+        + text_width(draw, l_str, score_fnt)
+        + text_width(draw, vs_str, vs_fnt)
+        + 12
+    )
+    name_budget = max(80, int(avail_px - fixed_score_w))
+    br_max = max(50, int(name_budget * 0.48))
+    opp_max = max(50, int(name_budget - br_max))
+
+    br_disp, br_fnt = truncate_to_px(draw, br_alias, max_px=br_max, size=15, bold=True)
+    opp_disp, opp_fnt = truncate_to_px(draw, opp_alias, max_px=opp_max, size=15, bold=False)
+
+    ty_name = y_bar + 12
+    ty_score = y_bar + 11
+
+    draw.text((cursor_x, ty_name), br_disp, font=br_fnt, fill=(253, 230, 138, 255) if is_duel else (125, 211, 252, 255))
+    cursor_x += text_width(draw, br_disp, br_fnt) + 12
+
+    draw.text((cursor_x, ty_score), w_str, font=score_fnt, fill=(74, 222, 128, 255))
+    cursor_x += text_width(draw, w_str, score_fnt)
+
+    draw.text((cursor_x, ty_score), sep_str, font=score_fnt, fill=(148, 163, 184, 255))
+    cursor_x += text_width(draw, sep_str, score_fnt)
+
+    draw.text((cursor_x, ty_score), l_str, font=score_fnt, fill=(248, 113, 113, 255))
+    cursor_x += text_width(draw, l_str, score_fnt)
+
+    draw.text((cursor_x, y_bar + 13), vs_str, font=vs_fnt, fill=(180, 154, 162, 255))
+    cursor_x += text_width(draw, vs_str, vs_fnt)
+
+    draw.text((cursor_x, ty_name), opp_disp, font=opp_fnt, fill=(241, 245, 249, 255))
+
+
 def render_single_match_card_png(
     grp: dict[str, Any],
     avatar_provider: SteamAvatarProvider,
@@ -1518,12 +1643,23 @@ def render_single_match_card_png(
     is_duel = _is_br_veteranos_duel(recs, axis_p, allies_p)
     has_any_bg = any(bool(p.get("battlegroup_name") or p.get("battlegroup_key")) for p in axis_p + allies_p)
 
+    nemesis_raw = grp.get("nemesis") or primary.get("nemesis")
+    nemesis_info = (
+        nemesis_raw
+        if isinstance(nemesis_raw, dict)
+        and bool(nemesis_raw.get("triggered"))
+        and format_mode_vs(str(primary.get("mode") or "")) == "1 vs 1"
+        else None
+    )
+
     duel_banner_h = 34 if is_duel else 0
     max_team = max(len(axis_p), len(allies_p), 1)
     top_bar_h = 90
     col_hdr_h = 38
     row_pitch = 62 if has_any_bg else 52
-    total_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 20
+    columns_bottom_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 20
+    nemesis_bar_h = 42 if nemesis_info is not None else 0
+    total_h = columns_bottom_h + nemesis_bar_h
 
     bg_fill = (28, 25, 20, 255) if is_duel else (26, 28, 34, 255)
     img = Image.new("RGBA", (width, total_h), bg_fill)
@@ -1550,7 +1686,7 @@ def render_single_match_card_png(
         fill=(120, 92, 28, 255) if is_duel else (52, 56, 68, 255),
         width=2,
     )
-    draw.rectangle((0, 0, 8, total_h), fill=accent_col)
+    draw.rectangle((0, 0, 8, columns_bottom_h), fill=accent_col)
 
     fac_icon = get_faction_icon(str(primary.get("tracked_faction", "Wehrmacht")), size=60)
     img.paste(fac_icon, (22, y_top + 15), fac_icon)
@@ -1592,7 +1728,7 @@ def render_single_match_card_png(
         top_bar_h=y_top + top_bar_h,
         col_hdr_h=col_hdr_h,
         row_pitch=row_pitch,
-        total_h=total_h,
+        total_h=columns_bottom_h,
         axis_p=axis_p,
         allies_p=allies_p,
         avatar_provider=avatar_provider,
@@ -1600,6 +1736,24 @@ def render_single_match_card_png(
         is_duel=is_duel,
         has_any_bg=has_any_bg,
     )
+
+    if nemesis_info is not None:
+        tracked_display = str(nemesis_info.get("tracked_alias") or "").strip()
+        if not tracked_display:
+            nem_tpid = int(nemesis_info.get("tracked_profile_id", 0) or 0)
+            tracked_display = next(
+                (str(p.get("alias") or "") for p in (allies_p + axis_p) if int(p.get("profile_id", 0)) == nem_tpid),
+                str(primary.get("tracked_alias") or "Veterano"),
+            )
+        _draw_nemesis_footer_bar(
+            draw=draw,
+            width=width,
+            y_bar=columns_bottom_h,
+            bar_h=nemesis_bar_h,
+            nemesis=nemesis_info,
+            tracked_alias=tracked_display,
+            is_duel=is_duel,
+        )
 
     if is_duel:
         draw.rectangle((0, 0, width - 1, total_h - 1), outline=(245, 184, 46, 255), width=2)
