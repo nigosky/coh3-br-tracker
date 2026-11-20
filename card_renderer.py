@@ -336,6 +336,80 @@ def truncate_to_px(
     return txt + "…", fnt
 
 
+_SMURF_ALIAS_SPLIT_RE = re.compile(r"^(.+\*)\s+\((.+)\)$")
+
+
+def _draw_player_alias(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    raw_alias: str,
+    max_px: int,
+    size: int,
+    bold: bool,
+    primary_color: tuple[int, int, int, int],
+    sub_color: tuple[int, int, int, int] | None = None,
+) -> float:
+    """
+    Desenha apelido de jogador respeitando `max_px`.
+    Para formatos `NickPrincipal* (Smurf/NovoNick)`, mantém `NickPrincipal*` em destaque e usa fonte
+    condensada menor em `(Smurf/NovoNick)` para caber por completo sem cortar o nome da conta smurf.
+    """
+    txt = strip_unsafe_chars(raw_alias) or "Desconhecido"
+    m = _SMURF_ALIAS_SPLIT_RE.match(txt)
+    if not m:
+        disp, fnt = truncate_to_px(draw, txt, max_px=max_px, size=size, bold=bold)
+        draw.text((x, y), disp, font=fnt, fill=primary_color)
+        return text_width(draw, disp, fnt)
+
+    main_part = m.group(1).strip()
+    smurf_inner = m.group(2).strip()
+    sub_col = sub_color or (
+        min(255, int(primary_color[0] * 0.85 + 32)),
+        min(255, int(primary_color[1] * 0.85 + 32)),
+        min(255, int(primary_color[2] * 0.85 + 32)),
+        255,
+    )
+    sub_full = f" ({smurf_inner})"
+
+    # Tenta combinações legíveis preservando o nome completo da smurf antes de truncar
+    attempts: list[tuple[int, bool, int]] = [
+        (size, False, max(11, size - 5)),
+        (max(12, size - 2), False, max(11, size - 6)),
+        (max(12, size - 2), True, max(11, size - 6)),
+        (max(11, size - 3), True, max(10, size - 6)),
+        (max(11, size - 3), True, max(10, size - 7)),
+    ]
+    chosen: tuple[Any, Any, str, int, int] | None = None
+    for m_sz, m_cond, s_sz in attempts:
+        m_fnt = pick_font(main_part, size=m_sz, bold=bold, condensed=m_cond)
+        s_fnt = pick_font(sub_full, size=s_sz, bold=False, condensed=True)
+        if text_width(draw, main_part, m_fnt) + text_width(draw, sub_full, s_fnt) <= max_px:
+            chosen = (m_fnt, s_fnt, sub_full, m_sz, s_sz)
+            break
+
+    if chosen is None:
+        m_sz = max(11, size - 3)
+        s_sz = max(10, size - 6)
+        m_fnt = pick_font(main_part, size=m_sz, bold=bold, condensed=True)
+        s_fnt = pick_font(sub_full, size=s_sz, bold=False, condensed=True)
+        mw = text_width(draw, main_part, m_fnt)
+        rem_px = max(24.0, float(max_px) - mw)
+        cut = smurf_inner
+        while len(cut) > 2 and text_width(draw, f" ({cut}…)", s_fnt) > rem_px:
+            cut = cut[:-1]
+        sub_disp = f" ({cut}…)" if cut != smurf_inner else sub_full
+        chosen = (m_fnt, s_fnt, sub_disp, m_sz, s_sz)
+
+    m_fnt, s_fnt, sub_disp, m_sz, s_sz = chosen
+    main_y = y + max(0, (size - m_sz) // 2)
+    sub_y = main_y + max(0, m_sz - s_sz - 1)
+    draw.text((x, main_y), main_part, font=m_fnt, fill=primary_color)
+    mw = text_width(draw, main_part, m_fnt)
+    draw.text((x + mw, sub_y), sub_disp, font=s_fnt, fill=sub_col)
+    return mw + text_width(draw, sub_disp, s_fnt)
+
+
 def _encode_rgb_png(img: Image.Image) -> bytes:
     out = io.BytesIO()
     img.convert("RGB").save(out, format="PNG", compress_level=6)
@@ -369,15 +443,34 @@ class SteamAvatarProvider:
 
         for r in CORE_BR_ROSTER:
             r_pid = int(r.get("profile_id", 0))
-            r_sid = str(r.get("steam_id") or "").strip()
+            r_sid = str(r.get("merged_into_steam_id") or r.get("steam_id") or "").strip()
             if r_pid > 0 and STEAM_ID64_VALID_RE.fullmatch(r_sid):
                 self._pid_to_steam[r_pid] = r_sid
 
         if db is not None and hasattr(db, "get_steam_id_map"):
             try:
-                self._pid_to_steam.update(db.get_steam_id_map())
+                for db_pid, db_sid in db.get_steam_id_map().items():
+                    self._pid_to_steam.setdefault(int(db_pid), str(db_sid))
             except Exception:
                 pass
+
+    @staticmethod
+    def _canonical_roster_avatar_target(profile_id: int = 0, steam_id: str = "") -> tuple[int, str]:
+        """Se a conta for smurf/mesclada no CORE_BR_ROSTER, redireciona avatar para a conta principal."""
+        clean_sid = str(steam_id or "").replace("/steam/", "").strip()
+        pid_int = int(profile_id or 0)
+        for r in CORE_BR_ROSTER:
+            r_pid = int(r.get("profile_id", 0) or 0)
+            r_sid = str(r.get("steam_id") or "").replace("/steam/", "").strip()
+            if (pid_int > 0 and r_pid == pid_int) or (clean_sid and r_sid == clean_sid):
+                m_sid = str(r.get("merged_into_steam_id") or "").replace("/steam/", "").strip()
+                m_pid = int(r.get("merged_into_profile_id", 0) or 0)
+                if STEAM_ID64_VALID_RE.fullmatch(m_sid):
+                    return (m_pid if m_pid > 0 else pid_int), m_sid
+                if m_pid > 0:
+                    return m_pid, clean_sid
+                break
+        return pid_int, clean_sid
 
     def _ensure_catalog_loaded(self) -> None:
         if self._catalog_loaded:
@@ -432,22 +525,19 @@ class SteamAvatarProvider:
         return ""
 
     def resolve_steam_id(self, profile_id: int = 0, steam_id: str = "") -> str:
-        clean_sid = str(steam_id or "").strip()
-        if clean_sid.startswith("/steam/"):
-            clean_sid = clean_sid[7:].strip()
+        canon_pid, clean_sid = self._canonical_roster_avatar_target(profile_id=profile_id, steam_id=steam_id)
         if STEAM_ID64_VALID_RE.fullmatch(clean_sid):
-            if profile_id > 0:
-                self._pid_to_steam[int(profile_id)] = clean_sid
+            if canon_pid > 0:
+                self._pid_to_steam[canon_pid] = clean_sid
             return clean_sid
-        if profile_id > 0:
-            pid_int = int(profile_id)
-            if pid_int in self._pid_to_steam:
-                return self._pid_to_steam[pid_int]
+        if canon_pid > 0:
+            if canon_pid in self._pid_to_steam:
+                return self._pid_to_steam[canon_pid]
             self._ensure_catalog_loaded()
-            if pid_int in self._pid_to_steam:
-                return self._pid_to_steam[pid_int]
-            looked_up = self._lookup_steam_id_from_relic(pid_int)
-            self._pid_to_steam[pid_int] = looked_up
+            if canon_pid in self._pid_to_steam:
+                return self._pid_to_steam[canon_pid]
+            looked_up = self._lookup_steam_id_from_relic(canon_pid)
+            self._pid_to_steam[canon_pid] = looked_up
             return looked_up
         return ""
 
@@ -513,8 +603,9 @@ class SteamAvatarProvider:
         ring_color: tuple[int, int, int, int] | None = (34, 197, 94, 230),
     ) -> Image.Image:
         """Retorna um avatar circular RGBA cacheado (real da Steam ou monograma determinístico)."""
-        sid = self.resolve_steam_id(profile_id=profile_id, steam_id=steam_id)
-        cache_key = sid or f"pid_{profile_id}_{alias[:6]}"
+        canon_pid, canon_sid = self._canonical_roster_avatar_target(profile_id=profile_id, steam_id=steam_id)
+        sid = self.resolve_steam_id(profile_id=canon_pid, steam_id=canon_sid)
+        cache_key = sid or f"pid_{canon_pid}_{alias[:6]}"
         circle_key = (cache_key, size, ring_color)
 
         cached_circle = self._circle_cache.get(circle_key)
@@ -526,7 +617,7 @@ class SteamAvatarProvider:
             png_blob: bytes | None = None
             if self.db is not None and hasattr(self.db, "get_cached_avatar"):
                 try:
-                    png_blob = self.db.get_cached_avatar(steam_id=sid, profile_id=profile_id)
+                    png_blob = self.db.get_cached_avatar(steam_id=sid, profile_id=canon_pid)
                 except Exception:
                     png_blob = None
 
@@ -536,7 +627,7 @@ class SteamAvatarProvider:
                     av_url, png_blob = fetched
                     if self.db is not None and hasattr(self.db, "save_cached_avatar"):
                         try:
-                            self.db.save_cached_avatar(sid, av_url, png_blob, profile_id=profile_id)
+                            self.db.save_cached_avatar(sid, av_url, png_blob, profile_id=canon_pid)
                         except Exception:
                             pass
 
@@ -549,7 +640,7 @@ class SteamAvatarProvider:
                     base_img = None
 
         if base_img is None:
-            det_seed = int(profile_id) if profile_id else int.from_bytes(hashlib.sha256(alias.encode("utf-8")).digest()[:4], "big")
+            det_seed = int(canon_pid) if canon_pid else int.from_bytes(hashlib.sha256(alias.encode("utf-8")).digest()[:4], "big")
             base_img = _build_fallback_avatar(alias or "BR", seed=det_seed)
             self._mem_png_cache[cache_key] = base_img
 
@@ -1147,13 +1238,15 @@ def _resolve_roster_participant(
     pid_map: dict[int, dict[str, Any]],
 ) -> tuple[str, str, str, bool]:
     clean_sid = str(steam_id or "").replace("/steam/", "").strip()
-    r_entry = steam_map.get(clean_sid) or pid_map.get(pid)
+    r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(clean_sid)
     if r_entry:
         bound_sid = str(r_entry.get("merged_into_steam_id") or clean_sid or r_entry.get("steam_id") or "")
         disp = format_bound_display_alias(
             raw_alias,
             str(r_entry.get("original_alias") or ""),
             r_entry.get("known_aliases"),
+            pin_alias=bool(r_entry.get("pin_alias")),
+            show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
         )
         roster_country = str(r_entry.get("country") or "").strip().lower()
         return bound_sid, disp, (roster_country or str(country or "br").lower()), True
@@ -1221,7 +1314,7 @@ def _resolve_participant_battlegroup(
 
 def extract_axis_and_allies_players(group: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Reconstrói todos os jogadores únicos da partida e separa em (Eixo, Aliados), incluindo Battlegroups."""
-    steam_map, pid_map = _DEFAULT_ROSTER_MAPS
+    steam_map, pid_map = build_roster_lookup_maps()
     records = group.get("records") or [group.get("primary") or group]
     primary = records[0]
     tracked_by_pid: dict[int, dict[str, Any]] = {}
@@ -1443,13 +1536,6 @@ def _draw_two_team_columns(
             nem_badge_sz = 18
             badge_reserve = ((badge_sz + 8) if is_veterano else 0) + ((nem_badge_sz + 7) if is_nemesis_opp else 0)
             alias_sz = (20 if is_veterano else 18) if has_any_bg else (21 if is_veterano else 19)
-            disp_alias, a_fnt = truncate_to_px(
-                draw,
-                str(pl.get("alias") or ""),
-                max_px=max(56, col_limit_x - name_x - badge_reserve),
-                size=alias_sz,
-                bold=is_veterano,
-            )
 
             if is_veterano:
                 alias_color = (253, 230, 138, 255) if is_duel else (125, 211, 252, 255)
@@ -1464,8 +1550,17 @@ def _draw_two_team_columns(
                 else:
                     alias_y = py + 11
 
-            draw.text((name_x, alias_y), disp_alias, font=a_fnt, fill=alias_color)
-            badge_cursor_x = int(name_x + text_width(draw, disp_alias, a_fnt) + 6)
+            alias_w = _draw_player_alias(
+                draw,
+                name_x,
+                alias_y,
+                str(pl.get("alias") or ""),
+                max_px=max(56, col_limit_x - name_x - badge_reserve),
+                size=alias_sz,
+                bold=is_veterano,
+                primary_color=alias_color,
+            )
+            badge_cursor_x = int(name_x + alias_w + 6)
             if is_veterano:
                 vet_ic = get_veteranos_badge_icon(size=badge_sz)
                 img.paste(vet_ic, (badge_cursor_x, alias_y + 1), vet_ic)
@@ -1976,23 +2071,25 @@ def render_matches_table_png(
 
                 badge_sz = 17
                 badge_reserve = (badge_sz + 6) if is_veterano else 0
-                disp_alias, a_fnt = truncate_to_px(
-                    draw,
-                    str(pl.get("alias") or ""),
-                    max_px=max(44, (col_x + 306 + bg_shift) - name_x - badge_reserve),
-                    size=16 if is_veterano else 14,
-                    bold=is_veterano,
-                )
                 if is_veterano:
                     alias_color = (253, 230, 138, 255) if is_row_duel else (125, 211, 252, 255)
                     alias_y = py + 5
                 else:
                     alias_color = (176, 184, 198, 255)
                     alias_y = py + 6
-                draw.text((name_x, alias_y), disp_alias, font=a_fnt, fill=alias_color)
+                alias_w = _draw_player_alias(
+                    draw,
+                    name_x,
+                    alias_y,
+                    str(pl.get("alias") or ""),
+                    max_px=max(44, (col_x + 306 + bg_shift) - name_x - badge_reserve),
+                    size=16 if is_veterano else 14,
+                    bold=is_veterano,
+                    primary_color=alias_color,
+                )
                 if is_veterano:
                     vet_ic = get_veteranos_badge_icon(size=badge_sz)
-                    bx = int(name_x + text_width(draw, disp_alias, a_fnt) + 5)
+                    bx = int(name_x + alias_w + 5)
                     img.paste(vet_ic, (bx, py + 5), vet_ic)
 
         m_thumb = get_tactical_map_thumb(str(primary.get("map_raw") or ""), size=52)
@@ -2487,7 +2584,7 @@ def render_weekly_summary_card_png(
     else:
         num_fnt = pick_font("100%", size=16, bold=True, condensed=True)
         row_vet = get_veteranos_badge_icon(size=18)
-        steam_map, pid_map = _DEFAULT_ROSTER_MAPS
+        steam_map, pid_map = build_roster_lookup_maps()
         for idx, pl in enumerate(leaderboard, start=1):
             r_bg = (20, 23, 29, 255) if idx % 2 == 1 else (25, 28, 36, 255)
             draw.rectangle((8, y, width, y + row_h), fill=r_bg)

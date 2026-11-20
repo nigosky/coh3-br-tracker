@@ -105,6 +105,7 @@ def ensure_core_roster_in_config(
         c_orig = str(core["original_alias"])
         c_known = list(core.get("known_aliases") or [])
         c_pin = bool(core.get("pin_alias"))
+        c_show_smurf = bool(core.get("show_smurf_alias"))
         c_merged_pid = int(core.get("merged_into_profile_id", 0) or 0)
         c_merged_sid = str(core.get("merged_into_steam_id") or "")
         c_country = str(core.get("country") or "").strip().lower()
@@ -122,6 +123,8 @@ def ensure_core_roster_in_config(
                 new_entry["country"] = c_country
             if c_pin:
                 new_entry["pin_alias"] = True
+            if c_show_smurf:
+                new_entry["show_smurf_alias"] = True
             if c_known:
                 new_entry["known_aliases"] = c_known
             if c_merged_pid:
@@ -144,6 +147,7 @@ def ensure_core_roster_in_config(
                 c_orig,
                 c_known,
                 pin_alias=c_pin,
+                show_smurf_alias=c_show_smurf,
             )
             if target.get("alias") != expected_alias:
                 target["alias"] = expected_alias
@@ -164,6 +168,13 @@ def ensure_core_roster_in_config(
                     changed = True
             elif "pin_alias" in target:
                 target.pop("pin_alias", None)
+                changed = True
+            if c_show_smurf:
+                if not target.get("show_smurf_alias"):
+                    target["show_smurf_alias"] = True
+                    changed = True
+            elif "show_smurf_alias" in target:
+                target.pop("show_smurf_alias", None)
                 changed = True
             if c_known and target.get("known_aliases") != c_known:
                 target["known_aliases"] = c_known
@@ -324,7 +335,7 @@ def merge_catalog_with_custom_players(
         sid = str(cp.get("steam_id") or "").replace("/steam/", "").strip()
         pid = int(cp.get("profile_id", 0) or 0)
         resolved = fetched_by_sid.get(sid) or fetched_by_pid.get(pid)
-        r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
+        r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(sid) or {}
         if resolved:
             cp["profile_id"] = int(resolved["profile_id"])
             if resolved.get("steam_id"):
@@ -340,6 +351,8 @@ def merge_catalog_with_custom_players(
                 str(resolved.get("current_alias") or resolved["alias"]),
                 orig,
                 r_entry.get("known_aliases") or cp.get("known_aliases"),
+                pin_alias=bool(r_entry.get("pin_alias") or cp.get("pin_alias")),
+                show_smurf_alias=bool(r_entry.get("show_smurf_alias") or cp.get("show_smurf_alias")),
             )
 
     return list(by_pid.values())

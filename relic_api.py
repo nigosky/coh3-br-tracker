@@ -288,9 +288,24 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa dos 44 jogadores brasileiros únicos monitorados (46 contas Steam vinculadas por SteamID64 imutável)
+# Lista fixa dos 44 jogadores brasileiros únicos monitorados (47 contas Steam vinculadas por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
+    {
+        "profile_id": 1333418,
+        "steam_id": "76561198698969876",
+        "original_alias": "Chacineiro",
+        "merged_into_profile_id": 79327,
+        "merged_into_steam_id": "76561197963172584",
+        "show_smurf_alias": True,
+        "known_aliases": [
+            "TacticalForceConcentration",
+            "Charles Bronson",
+            "Lord Charles Bronson",
+            "Charles Broson",
+            "Chacineiro",
+        ],
+    },
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
     {"profile_id": 1088455, "steam_id": "76561198108568598", "original_alias": "luiz_fmh"},
     {"profile_id": 735940, "steam_id": "76561198034510845", "original_alias": "Jimmy Duelista"},
@@ -375,6 +390,14 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
 
 FALLBACK_CORE_BR_ROSTER: list[dict[str, Any]] = [dict(row) for row in CORE_BR_ROSTER]
 
+# Contas smurf onde o Tracker sempre exibe 'NickPrincipal* (NickSmurf)' mantendo o avatar da conta principal
+TRACKER_SMURF_DISPLAY_PIDS: frozenset[int] = frozenset({1333418})
+
+# Contas secundárias mescladas mantidas no Tracker mesmo enquanto players_roster.json remoto ainda não as listar
+LOCAL_MERGED_ACCOUNT_FALLBACKS: tuple[dict[str, Any], ...] = tuple(
+    dict(row) for row in FALLBACK_CORE_BR_ROSTER if int(row.get("profile_id", 0) or 0) in TRACKER_SMURF_DISPLAY_PIDS
+)
+
 _COUNTRY_ISO2_RE = re.compile(r"^[a-z]{2}$")
 
 
@@ -419,6 +442,8 @@ def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
             entry["country"] = raw_ctry
         if row.get("pin_alias"):
             entry["pin_alias"] = True
+        if row.get("show_smurf_alias") or pid in TRACKER_SMURF_DISPLAY_PIDS:
+            entry["show_smurf_alias"] = True
         known = [strip_unsafe_chars(k)[:40] for k in (row.get("known_aliases") or []) if strip_unsafe_chars(k)]
         if known:
             entry["known_aliases"] = known
@@ -436,6 +461,31 @@ def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
     if not parsed_rows:
         raise ValueError("Nenhum jogador válido encontrado em players_roster.json.")
     return parsed_rows
+
+
+def _merge_local_smurf_fallbacks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Garante que smurfs configuradas no Tracker permaneçam ativas quando a conta principal está no roster compartilhado."""
+    merged = [dict(r) for r in rows]
+    present_pids = {int(r.get("profile_id", 0) or 0) for r in merged}
+    present_sids = {str(r.get("steam_id") or "").strip() for r in merged}
+    for ext in LOCAL_MERGED_ACCOUNT_FALLBACKS:
+        ext_pid = int(ext.get("profile_id", 0) or 0)
+        ext_sid = str(ext.get("steam_id") or "").strip()
+        main_pid = int(ext.get("merged_into_profile_id", 0) or 0)
+        if ext_pid <= 0 or ext_pid in present_pids or (ext_sid and ext_sid in present_sids):
+            continue
+        if main_pid > 0 and main_pid not in present_pids:
+            continue
+        insert_idx = len(merged)
+        for idx, r in enumerate(merged):
+            if int(r.get("profile_id", 0) or 0) == main_pid:
+                insert_idx = idx + 1
+                break
+        merged.insert(insert_idx, dict(ext))
+        present_pids.add(ext_pid)
+        if ext_sid:
+            present_sids.add(ext_sid)
+    return merged
 
 
 def fetch_shared_roster(
@@ -495,8 +545,9 @@ def refresh_core_br_roster(
     fetched = fetch_shared_roster(url=url, local_path=local_path)
     if not fetched:
         return False
-    CORE_BR_ROSTER[:] = fetched
-    logger.info("[ROSTER COMPARTILHADO] Base do Tracker sincronizada: %d contas (%s).", len(fetched), local_path or "GitHub")
+    final_rows = _merge_local_smurf_fallbacks(fetched) if local_path is None else fetched
+    CORE_BR_ROSTER[:] = final_rows
+    logger.info("[ROSTER COMPARTILHADO] Base do Tracker sincronizada: %d contas (%s).", len(final_rows), local_path or "GitHub")
     return True
 
 
@@ -2000,8 +2051,9 @@ def format_bound_display_alias(
     known_aliases: list[str] | tuple[str, ...] | None = None,
     *,
     pin_alias: bool = False,
+    show_smurf_alias: bool = False,
 ) -> str:
-    """Exibe o nome preferencial vinculado à conta Steam ou 'NickAnterior* (NovoNick)' se inédito (salvo pin_alias=True)."""
+    """Exibe o nome preferencial vinculado à conta Steam ou 'NickAnterior* (NovoNick)' se inédito/smurf (salvo pin_alias=True)."""
     cur = (current_alias or "").strip()
     orig = (original_alias or "").strip()
     if not orig:
@@ -2014,12 +2066,13 @@ def format_bound_display_alias(
     if cur_cf == orig_cf:
         return orig
 
-    known_cf = {str(k).strip().casefold() for k in (known_aliases or []) if str(k).strip()}
-    if cur_cf in known_cf:
-        return orig
-    for k_cf in known_cf:
-        if cur_cf.startswith(k_cf + " (") or cur_cf.startswith(k_cf + "* (") or cur_cf.endswith(f"({k_cf})"):
+    if not show_smurf_alias:
+        known_cf = {str(k).strip().casefold() for k in (known_aliases or []) if str(k).strip()}
+        if cur_cf in known_cf:
             return orig
+        for k_cf in known_cf:
+            if cur_cf.startswith(k_cf + " (") or cur_cf.startswith(k_cf + "* (") or cur_cf.endswith(f"({k_cf})"):
+                return orig
 
     if cur_cf.startswith(orig_cf + "* ("):
         return cur
@@ -2029,7 +2082,16 @@ def format_bound_display_alias(
 
 
 def _merge_roster_fields(rec: dict[str, Any], prev: dict[str, Any]) -> None:
-    for field in ("original_alias", "steam_id", "known_aliases", "merged_into_profile_id", "merged_into_steam_id", "country", "pin_alias"):
+    for field in (
+        "original_alias",
+        "steam_id",
+        "known_aliases",
+        "merged_into_profile_id",
+        "merged_into_steam_id",
+        "country",
+        "pin_alias",
+        "show_smurf_alias",
+    ):
         if not rec.get(field) and prev.get(field):
             rec[field] = prev[field]
 
@@ -2052,6 +2114,7 @@ def build_roster_lookup_maps(
                 "original_alias": str(item.get("original_alias") or item.get("alias") or "").strip(),
                 "known_aliases": list(item.get("known_aliases") or []),
                 "pin_alias": bool(item.get("pin_alias")),
+                "show_smurf_alias": bool(item.get("show_smurf_alias") or pid in TRACKER_SMURF_DISPLAY_PIDS),
                 "merged_into_profile_id": int(item.get("merged_into_profile_id", 0) or 0),
                 "merged_into_steam_id": str(item.get("merged_into_steam_id") or "").strip(),
                 "country": str(item.get("country") or "").strip().lower(),
@@ -2079,7 +2142,7 @@ def _apply_roster_identity(
     pid_map: dict[int, dict[str, Any]],
 ) -> None:
     sid = str(target.get(sid_field) or "").replace("/steam/", "").strip()
-    r_entry = steam_map.get(sid) or pid_map.get(pid)
+    r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(sid)
     if not r_entry:
         return
     if r_entry.get("merged_into_steam_id"):
@@ -2094,6 +2157,7 @@ def _apply_roster_identity(
         r_entry.get("original_alias", ""),
         r_entry.get("known_aliases"),
         pin_alias=bool(r_entry.get("pin_alias")),
+        show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
     )
     target["is_br_roster"] = True
 
@@ -2229,7 +2293,7 @@ def _ingest_personal_stat_payload(
         sg_id = int(sg["id"])
         solo_sg_to_pid[sg_id] = pid
 
-        r_entry = steam_map.get(steam_id) or pid_map.get(pid) or {}
+        r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(steam_id) or {}
         orig_alias = str(r_entry.get("original_alias") or "")
         cur_alias = str(mem.get("alias") or orig_alias or f"Player {pid}")
         disp_alias = format_bound_display_alias(
@@ -2237,6 +2301,7 @@ def _ingest_personal_stat_payload(
             orig_alias,
             r_entry.get("known_aliases"),
             pin_alias=bool(r_entry.get("pin_alias")),
+            show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
         )
 
         results_by_pid[pid] = {
@@ -2566,7 +2631,7 @@ def build_top_tracked_players(
     for pid, cp in custom_by_id.items():
         if pid not in consolidated:
             sid = str(cp.get("steam_id") or "")
-            r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
+            r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(sid) or {}
             orig_alias = str(r_entry.get("original_alias") or cp.get("original_alias") or cp.get("alias") or f"Player {pid}")
             cur_alias = str(cp.get("alias") or orig_alias)
             merged_pid = int(r_entry.get("merged_into_profile_id") or cp.get("merged_into_profile_id") or 0)
@@ -2582,6 +2647,7 @@ def build_top_tracked_players(
                     orig_alias,
                     r_entry.get("known_aliases"),
                     pin_alias=bool(r_entry.get("pin_alias")),
+                    show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
                 ),
                 "original_alias": orig_alias,
                 "steam_id": sid or str(r_entry.get("steam_id") or ""),
