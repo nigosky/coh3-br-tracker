@@ -1580,7 +1580,7 @@ def render_single_match_card_png(
     mw = text_width(draw, map_label, m_fnt)
     draw.text((thumb_x - 16 - mw, y_top + 17), map_label, font=m_fnt, fill=(253, 230, 138, 255) if is_duel else (243, 244, 246, 255))
 
-    mode_dur_str = f"{format_mode_vs(str(primary.get('mode') or ''))}   •   {format_mm_ss(int(primary.get('duration_sec', 0)))}"
+    mode_dur_str = f"{format_mode_vs(str(primary.get('mode') or ''))}   •   Duração: {format_mm_ss(int(primary.get('duration_sec', 0)))}"
     md_fnt = pick_font(mode_dur_str, size=17, bold=True)
     mdw = text_width(draw, mode_dur_str, md_fnt)
     draw.text((thumb_x - 16 - mdw, y_top + 49), mode_dur_str, font=md_fnt, fill=(214, 198, 160, 255) if is_duel else (176, 184, 196, 255))
@@ -1791,10 +1791,15 @@ def render_matches_table_png(
         mw = text_width(draw, map_label, m_fnt)
         draw.text((map_cx - mw / 2, thumb_y + 56), map_label, font=m_fnt, fill=(229, 231, 235, 255))
 
-        md_str = f"{format_mode_vs(str(primary.get('mode') or ''))} • {format_mm_ss(int(primary.get('duration_sec', 0)))}"
-        md_fnt = pick_font(md_str, size=13, bold=False)
+        md_str, md_fnt = truncate_to_px(
+            draw,
+            f"{format_mode_vs(str(primary.get('mode') or ''))} • Duração: {format_mm_ss(int(primary.get('duration_sec', 0)))}",
+            max_px=158,
+            size=12,
+            bold=False,
+        )
         mdw = text_width(draw, md_str, md_fnt)
-        draw.text((map_cx - mdw / 2, thumb_y + 73), md_str, font=md_fnt, fill=(165, 174, 188, 255))
+        draw.text((map_cx - mdw / 2, thumb_y + 74), md_str, font=md_fnt, fill=(165, 174, 188, 255))
 
         y += rh
 
