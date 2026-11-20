@@ -257,6 +257,39 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertLess(r, 80)
             db.close()
 
+    def test_smurf_steam_id_and_formatted_alias_stay_intact_across_db_syncs(self) -> None:
+        from database import MatchDatabase
+
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "smurf_sync.db")
+            players_cfg = [
+                {
+                    "profile_id": 79327,
+                    "alias": "Chacineiro",
+                    "original_alias": "Chacineiro",
+                    "steam_id": "76561197963172584",
+                },
+                {
+                    "profile_id": 1333418,
+                    "alias": "Chacineiro",
+                    "original_alias": "Chacineiro",
+                    "steam_id": "76561198698969876",
+                },
+            ]
+            db.sync_tracked_players(players_cfg)
+            # Simula primeira sincronização recebendo alias formatado da smurf e tentativa de passar steam_id da conta principal
+            db.mark_baseline_synced(1333418, "Chacineiro* (Charles Bronson)", steam_id="76561197963172584")
+            row = next(p for p in db.get_active_players() if int(p["profile_id"]) == 1333418)
+            self.assertEqual(row["steam_id"], "76561198698969876")
+            self.assertEqual(row["alias"], "Chacineiro* (Charles Bronson)")
+
+            # Nova rodada de sync_tracked_players NÃO deve apagar o sufixo '* (Charles Bronson)' nem corromper o steam_id
+            db.sync_tracked_players(players_cfg)
+            row2 = next(p for p in db.get_active_players() if int(p["profile_id"]) == 1333418)
+            self.assertEqual(row2["steam_id"], "76561198698969876")
+            self.assertEqual(row2["alias"], "Chacineiro* (Charles Bronson)")
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

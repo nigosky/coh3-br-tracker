@@ -9,6 +9,8 @@ RUN apt-get update \
         ca-certificates \
         fonts-dejavu-core \
         fonts-liberation \
+        fonts-roboto \
+        fonts-noto-cjk \
         python3-pil \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 appgroup \
@@ -28,7 +30,6 @@ COPY --chown=10001:10001 \
     manage.py \
     config.json \
     jogadores_br_steam.json \
-    top20_br_por_modo.json \
     ./
 COPY --chown=10001:10001 assets ./assets
 

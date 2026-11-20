@@ -53,8 +53,14 @@ class TestTrackerSecurity(unittest.TestCase):
             read_bounded_http_body(resp, max_bytes=65_536)
 
         valid_payload = b'{"ok": true, "matches": 12}'
-        valid_resp = _FakeHttpResponse(gzip.compress(valid_payload), {"Content-Encoding": "gzip"})
+        valid_gz = gzip.compress(valid_payload)
+        valid_resp = _FakeHttpResponse(valid_gz, {"Content-Encoding": "gzip"})
         self.assertEqual(read_bounded_http_body(valid_resp, max_bytes=4096), valid_payload)
+
+        # Gzip truncado/corrompido deve ser rejeitado (decomp.eof == False)
+        truncated_resp = _FakeHttpResponse(valid_gz[:-4], {"Content-Encoding": "gzip"})
+        with self.assertRaises(RuntimeError):
+            read_bounded_http_body(truncated_resp, max_bytes=4096)
 
     def test_validate_https_endpoint_blocks_ssrf_vectors(self) -> None:
         for bad in (
@@ -63,12 +69,36 @@ class TestTrackerSecurity(unittest.TestCase):
             "https://user:pass@discord.com/api/v10/resource",
             "https://discord.com:8443/api/v10/resource",
             "https://discord.com/other/path",
+            "https://discord.com/api/../admin",
+            "https://discord.com/api/%2e%2e/admin",
+            "https://discord.com/api/v10/resource#frag",
+            "https://discord.com/api/v10/resource;param=1",
             "https://discord.com/api/v10/resource\r\nX-Injected: 1",
         ):
             with self.assertRaises(ValueError, msg=f"URL insegura não bloqueada: {bad!r}"):
                 validate_https_endpoint(bad, ALLOWED_DISCORD_HOSTS, path_prefix="/api/")
 
+        with self.assertRaises(ValueError):
+            validate_https_endpoint(
+                "https://discord.com/api/v10/resource?key=leak",
+                ALLOWED_DISCORD_HOSTS,
+                path_prefix="/api/",
+                allow_query=False,
+            )
+
         self.assertFalse(validate_discord_webhook_url("https://evil.example/api/webhooks/123456789012345678/tok"))
+        sample_wh = "https://discord.com" + "/api/" + "webhooks/" + "123456789012345678/" + ("B" * 32)
+        self.assertTrue(validate_discord_webhook_url(sample_wh))
+        self.assertFalse(validate_discord_webhook_url(sample_wh + "?wait=true", allow_message_subpath=False))
+        self.assertTrue(validate_discord_webhook_url(sample_wh + "?wait=true", allow_message_subpath=True))
+        self.assertFalse(validate_discord_webhook_url(sample_wh + "?wait=true&extra=1", allow_message_subpath=True))
+
+    def test_steam_xml_opener_blocks_non_https_schemes(self) -> None:
+        import card_renderer
+
+        for bad_url in ("file:///etc/passwd", "http://steamcommunity.com/profiles/76561197963172584/?xml=1"):
+            with self.assertRaises(urllib.error.URLError):
+                card_renderer._STEAM_XML_OPENER.open(bad_url, timeout=2)
 
     def test_redact_secrets_scrubs_webhooks_steam_keys_tokens_and_tracebacks(self) -> None:
         fake_host = "https://discord.com"
@@ -76,19 +106,23 @@ class TestTrackerSecurity(unittest.TestCase):
         fake_steam_key = "ABCDEF1234567890" + "FEDCBA0987654321"
         fake_gh_tok = "ghp_" + ("X" * 36)
         fake_bearer = "tok_live_" + ("Z" * 24)
+        fake_disp_tok = "disp_sec_" + ("Q" * 20)
         leaked = (
             f"Erro {fake_host}{fake_path} DISCORD_WEBHOOK_URL=secret123 "
             f"https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key={fake_steam_key}&steamids=76561197963172584 "
             f"STEAM_WEB_API_KEY={fake_steam_key} x-webapi-key: {fake_steam_key} "
+            f"TRACKER_DISPATCH_TOKEN={fake_disp_tok} "
             f"token={fake_gh_tok} Authorization: Bearer {fake_bearer}"
         )
         scrubbed = redact_secrets(leaked)
         self.assertNotIn("999999999999999999", scrubbed)
         self.assertNotIn("secret123", scrubbed)
         self.assertNotIn(fake_steam_key, scrubbed)
+        self.assertNotIn(fake_disp_tok, scrubbed)
         self.assertNotIn(fake_gh_tok, scrubbed)
         self.assertNotIn(fake_bearer, scrubbed)
         self.assertIn("[WEBHOOK_REDACTED]", scrubbed)
+        self.assertIn("[TOKEN_REDACTED]", scrubbed)
         self.assertIn("[STEAM_KEY_REDACTED]", scrubbed)
         self.assertIn("[GH_TOKEN_REDACTED]", scrubbed)
         self.assertIn("[AUTH_REDACTED]", scrubbed)

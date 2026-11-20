@@ -158,9 +158,9 @@ jobs:
             fi
           fi
 
-          # Bloqueia qualquer URL de Webhook, chave Steam, token GitHub ou chave privada em arquivos de texto rastreados
-          SECRET_PATTERN="(ptb\.|canary\.)?discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+|STEAM_WEB_API_KEY=[A-Za-z0-9]{16,}|[?&]key=[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
-          if grep -RInEi "${SECRET_PATTERN}" config.json *.csv *.json *.py .github/workflows/* 2>/dev/null; then
+          # Bloqueia qualquer URL de Webhook, chave Steam, token GitHub/dispatch ou chave privada em TODOS os arquivos rastreados
+          SECRET_PATTERN="(ptb\.|canary\.)?discord(app)?\.com/api/(v[0-9]+/)?webhooks/[0-9]+|STEAM_WEB_API_KEY=[A-Za-z0-9]{16,}|x-webapi-key[:=][[:space:]]*[A-Za-z0-9]{16,}|[?&]key=[A-Za-z0-9]{16,}|TRACKER_DISPATCH_TOKEN=[A-Za-z0-9_.-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+          if git ls-files -z | xargs -0 grep -InEi "${SECRET_PATTERN}" 2>/dev/null; then
             echo "::error::Bloqueio de seguranca acionado: padrao de credencial/Webhook detectado em arquivo rastreado!"
             exit 1
           fi

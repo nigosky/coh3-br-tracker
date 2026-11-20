@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import hashlib
 import json
 import logging
 import os
@@ -16,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from database import MatchDatabase, PENDING_DISCORD_MARKER, SEEDED_DISCORD_MARKER
+from database import MatchDatabase, PENDING_DISCORD_MARKER, PRUNED_DISCORD_MARKER, SEEDED_DISCORD_MARKER
 from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
     AUTOMATCH_MODES,
@@ -26,10 +25,6 @@ from relic_api import (
     RelicAPIClient,
     VeteransRadarClient,
     build_roster_lookup_maps,
-    build_top_tracked_players,
-    compute_merged_mode_rankings,
-    export_merged_top_rankings,
-    export_players_files,
     fetch_custom_players_stats,
     format_bound_display_alias,
     refresh_core_br_roster,
@@ -110,7 +105,7 @@ def ensure_core_roster_in_config(
         c_merged_sid = str(core.get("merged_into_steam_id") or "")
         c_country = str(core.get("country") or "").strip().lower()
 
-        target = by_sid.get(c_sid) or by_pid.get(c_pid)
+        target = by_pid.get(c_pid) or by_sid.get(c_sid)
         if target is None:
             new_entry: dict[str, Any] = {
                 "profile_id": c_pid,
@@ -322,7 +317,7 @@ def merge_catalog_with_custom_players(
     merged_away_pids: list[int] = []
     for pid, p_obj in list(by_pid.items()):
         sid = str(p_obj.get("steam_id") or "")
-        r_entry = steam_map.get(sid) or pid_map.get(pid) or {}
+        r_entry = (pid_map.get(pid) if pid > 0 else None) or steam_map.get(sid) or {}
         target_pid = int(p_obj.get("merged_into_profile_id") or r_entry.get("merged_into_profile_id") or 0)
         if target_pid > 0 and target_pid != pid and target_pid in by_pid:
             _merge_player_stat_records(by_pid[target_pid], p_obj)
@@ -356,161 +351,6 @@ def merge_catalog_with_custom_players(
             )
 
     return list(by_pid.values())
-
-
-def _player_identity_key(entry: dict[str, Any]) -> str:
-    sid = str(entry.get("steam_id") or "").replace("/steam/", "").strip()
-    return f"steam:{sid}" if sid else f"pid:{int(entry.get('profile_id', 0))}"
-
-
-def detect_and_apply_ranking_movements(
-    db: MatchDatabase,
-    full_rankings: dict[str, list[dict[str, Any]]],
-    top_n: int = 20,
-    custom_players: list[dict[str, Any]] | None = None,
-) -> tuple[dict[str, list[dict[str, Any]]], bool]:
-    """Compara a posição atual com o último snapshot salvo e aplica rank_delta (+N ▲ / -N ▼)."""
-    custom_ids = {int(cp["profile_id"]) for cp in (custom_players or []) if int(cp.get("profile_id", 0)) > 0}
-    custom_sids = {str(cp.get("steam_id") or "") for cp in (custom_players or []) if cp.get("steam_id")}
-
-    prev_snap_raw = db.get_state("ranking_snapshot_v5")
-    last_deltas_raw = db.get_state("ranking_last_deltas_v5")
-
-    prev_snap: dict[str, dict[str, int]] = {}
-    had_previous_snapshot = False
-    if prev_snap_raw:
-        try:
-            parsed = json.loads(prev_snap_raw)
-            if isinstance(parsed, dict) and parsed:
-                prev_snap = parsed
-                had_previous_snapshot = True
-        except Exception:
-            prev_snap = {}
-
-    last_deltas: dict[str, dict[str, dict[str, int]]] = {}
-    if last_deltas_raw:
-        try:
-            parsed_d = json.loads(last_deltas_raw)
-            if isinstance(parsed_d, dict):
-                last_deltas = parsed_d
-        except Exception:
-            last_deltas = {}
-
-    new_snap: dict[str, dict[str, int]] = {}
-    movements_by_mode: dict[str, list[dict[str, Any]]] = {}
-    has_new_movements = False
-
-    for mode, entries in full_rankings.items():
-        mode_prev = prev_snap.get(mode, {})
-        mode_curr_snap: dict[str, int] = {}
-        mode_moves: list[dict[str, Any]] = []
-        mode_new_deltas: dict[str, dict[str, int]] = {}
-
-        for idx, e in enumerate(entries):
-            key = _player_identity_key(e)
-            curr_rank = int(e["br_rank"])
-            mode_curr_snap[key] = curr_rank
-
-            sid = str(e.get("steam_id") or "")
-            in_tracked_table = (
-                idx < top_n
-                or int(e["profile_id"]) in custom_ids
-                or (bool(sid) and sid in custom_sids)
-                or bool(e.get("is_custom"))
-            )
-            if not in_tracked_table:
-                continue
-
-            if had_previous_snapshot and key in mode_prev:
-                prev_rank = int(mode_prev[key])
-                delta = prev_rank - curr_rank
-                if delta != 0:
-                    e["rank_delta"] = delta
-                    e["prev_rank"] = prev_rank
-                    mode_new_deltas[key] = {"rank_delta": delta, "prev_rank": prev_rank}
-                    mode_moves.append(dict(e))
-            elif (
-                had_previous_snapshot
-                and key not in mode_prev
-                and not bool(e.get("inactive_fallback"))
-                and idx < top_n
-            ):
-                e["is_new_entry"] = True
-                e["rank_delta"] = 0
-                mode_moves.append(dict(e))
-
-        if mode_moves:
-            has_new_movements = True
-            mode_moves.sort(key=lambda x: (-abs(int(x.get("rank_delta", 0))), int(x.get("br_rank", 999))))
-            movements_by_mode[mode] = mode_moves
-            last_deltas[mode] = mode_new_deltas
-        else:
-            saved_mode_deltas = last_deltas.get(mode, {})
-            for e in entries:
-                key = _player_identity_key(e)
-                if key in saved_mode_deltas:
-                    e["rank_delta"] = int(saved_mode_deltas[key].get("rank_delta", 0))
-                    e["prev_rank"] = saved_mode_deltas[key].get("prev_rank")
-
-        new_snap[mode] = mode_curr_snap
-
-    db.set_state("ranking_snapshot_v5", json.dumps(new_snap, separators=(",", ":")))
-    db.set_state("ranking_last_deltas_v5", json.dumps(last_deltas, separators=(",", ":")))
-    return movements_by_mode, has_new_movements
-
-
-def load_cached_rankings(base_dir: Path, top_n: int = 20) -> dict[str, list[dict[str, Any]]] | None:
-    for candidate_dir in (resolve_data_dir(base_dir), base_dir):
-        rank_file = candidate_dir / f"top{top_n}_br_por_modo.json"
-        if rank_file.is_file():
-            try:
-                doc = json.loads(rank_file.read_text(encoding="utf-8"))
-                return doc.get("rankings_by_mode")
-            except Exception:
-                continue
-    return None
-
-
-def _compute_rankings_digest(rankings_by_mode: dict[str, list[dict[str, Any]]] | None) -> str:
-    if not rankings_by_mode:
-        return ""
-    rows_sig = [
-        (
-            mode,
-            int(e.get("profile_id", 0)),
-            int(e.get("br_rank", 0)),
-            round(float(e.get("avg_elo", 0.0)), 1),
-            int(e.get("wins", 0)),
-            int(e.get("losses", 0)),
-            int(e.get("streak", 0)),
-            int(e.get("last_match_date", 0)),
-            str(e.get("alias", "")),
-            int(e.get("rank_delta", 0) or 0),
-        )
-        for mode in ("1v1", "2v2", "Team Games")
-        for e in rankings_by_mode.get(mode, [])
-    ]
-    payload = json.dumps(rows_sig, ensure_ascii=False, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _should_run_daily_ranking_scan(
-    now_ts: int,
-    last_scan_date_brt: str | None,
-    last_scan_ts: int,
-    cutoff_hour_brt: int = 0,
-    cutoff_minute_brt: int = 1,
-) -> tuple[bool, str]:
-    """Determina se o ranking diário deve rodar hoje (apenas 1x ao dia, a partir das 00:01 BRT)."""
-    now_brt = datetime.fromtimestamp(int(now_ts), tz=BRT_TZ)
-    today_brt = now_brt.strftime("%Y-%m-%d")
-
-    effective_last_date = (last_scan_date_brt or "").strip()
-    if not effective_last_date and last_scan_ts > 0:
-        effective_last_date = datetime.fromtimestamp(int(last_scan_ts), tz=BRT_TZ).strftime("%Y-%m-%d")
-
-    past_cutoff = (now_brt.hour, now_brt.minute) >= (int(cutoff_hour_brt), int(cutoff_minute_brt))
-    return (past_cutoff and effective_last_date != today_brt), today_brt
 
 
 def _should_run_weekly_summary(
@@ -686,168 +526,6 @@ def reset_and_clean_discord_channel(
     return deleted
 
 
-def maybe_refresh_top_rankings(
-    config_path: Path,
-    cfg: dict[str, Any],
-    db: MatchDatabase,
-    relic: RelicAPIClient,
-    discord: DiscordWebhookClient,
-    force: bool = False,
-    is_oneshot: bool = False,
-) -> tuple[bool, dict[str, list[dict[str, Any]]] | None]:
-    """Revarre leaderboards da Relic 1x/dia após 00:01 BRT (ou quando forçado) e retorna (alterou, rankings_em_memoria)."""
-    cfg_upgraded = ensure_core_roster_in_config(cfg)
-
-    if not cfg.get("auto_follow_top_br", True) and not force and not cfg_upgraded:
-        return False, None
-
-    refresh_mins = max(5, int(cfg.get("leaderboard_refresh_minutes", 15)))
-    top_n = int(cfg.get("top_n_per_mode", 20))
-    only_custom = bool(cfg.get("monitor_only_custom_matches", True))
-    remove_dropped = bool(cfg.get("remove_if_drops_out_of_top", False))
-    custom_players: list[dict[str, Any]] = cfg.get("custom_players", [])
-
-    now = int(time.time())
-    last_scan_str = db.get_state("last_leaderboard_scan_ts")
-    last_scan_ts = int(last_scan_str) if last_scan_str and last_scan_str.isdigit() else 0
-    ranking_mode = str(cfg.get("ranking_update_mode", "daily")).strip().lower()
-    cutoff_h = max(0, min(23, int(cfg.get("ranking_daily_hour_brt", 0))))
-    cutoff_m = max(0, min(59, int(cfg.get("ranking_daily_minute_brt", 1))))
-    due_daily, today_brt = _should_run_daily_ranking_scan(
-        now_ts=now,
-        last_scan_date_brt=db.get_state("last_leaderboard_scan_date_brt"),
-        last_scan_ts=last_scan_ts,
-        cutoff_hour_brt=cutoff_h,
-        cutoff_minute_brt=cutoff_m,
-    )
-
-    if not force and not cfg_upgraded:
-        if ranking_mode == "daily":
-            if not due_daily:
-                return False, None
-        else:
-            effective_refresh_mins = max(refresh_mins, 30) if is_oneshot else refresh_mins
-            if last_scan_ts > 0 and (now - last_scan_ts) < (effective_refresh_mins * 60):
-                return False, None
-
-    unique_cnt = sum(1 for cp in custom_players if not cp.get("merged_into_profile_id"))
-    logger.info(
-        "Atualizando Ranking BR diário (Top %d + %d monitorados únicos / %d contas Steam: 1v1, 2v2, Jogos em Equipe)...",
-        top_n,
-        unique_cnt,
-        len(custom_players),
-    )
-
-    players = relic.fetch_brazilian_players()
-    data_dir = resolve_data_dir(config_path.parent)
-    export_players_files(players, data_dir / "jogadores_br_steam.json", data_dir / "jogadores_br_steam.csv")
-
-    merged_players = merge_catalog_with_custom_players(players, custom_players, relic)
-    custom_ids = {int(cp["profile_id"]) for cp in custom_players if int(cp.get("profile_id", 0)) > 0}
-    custom_sids = {str(cp["steam_id"]) for cp in custom_players if cp.get("steam_id")}
-
-    post_ranking_movements = bool(cfg.get("post_ranking_movements", False))
-    rankings = compute_merged_mode_rankings(
-        merged_players,
-        custom_ids=custom_ids,
-        custom_steam_ids=custom_sids,
-    )
-    if post_ranking_movements:
-        movements_by_mode, has_new_movements = detect_and_apply_ranking_movements(
-            db=db,
-            full_rankings=rankings,
-            top_n=top_n,
-            custom_players=custom_players,
-        )
-    else:
-        movements_by_mode, has_new_movements = {}, False
-
-    exported_rankings = export_merged_top_rankings(
-        rankings,
-        top_n=top_n,
-        json_path=data_dir / f"top{top_n}_br_por_modo.json",
-        csv_path=data_dir / f"top{top_n}_br_por_modo.csv",
-        custom_players=custom_players,
-    )
-
-    new_digest = _compute_rankings_digest(exported_rankings)
-    prev_digest = db.get_state("ranking_digest_v5") or ""
-    table_stats_changed = bool(new_digest and new_digest != prev_digest)
-    if new_digest:
-        db.set_state("ranking_digest_v5", new_digest)
-
-    current_tracked = build_top_tracked_players(
-        rankings,
-        top_n=top_n,
-        custom_players=custom_players,
-        only_custom=only_custom,
-    )
-    existing_by_id: dict[int, dict[str, Any]] = {
-        int(p["profile_id"]): p for p in cfg.get("tracked_players", []) if "profile_id" in p
-    }
-    was_already_populated = len(existing_by_id) > 0
-    newly_entered: list[dict[str, Any]] = []
-
-    updated_by_id: dict[int, dict[str, Any]] = {} if (only_custom or remove_dropped) else dict(existing_by_id)
-    for tp in current_tracked:
-        pid = int(tp["profile_id"])
-        if not only_custom and pid not in existing_by_id and not tp.get("is_custom"):
-            newly_entered.append(tp)
-        rec_tp: dict[str, Any] = {
-            "profile_id": pid,
-            "alias": tp["alias"],
-            "original_alias": str(tp.get("original_alias") or tp["alias"]),
-            "steam_id": str(tp.get("steam_id") or existing_by_id.get(pid, {}).get("steam_id") or ""),
-            "placements": tp["placements"],
-            "is_custom": bool(tp.get("is_custom")) or (pid in custom_ids),
-        }
-        if tp.get("merged_into_profile_id"):
-            rec_tp["merged_into_profile_id"] = int(tp["merged_into_profile_id"])
-        updated_by_id[pid] = rec_tp
-
-    db.set_state("last_leaderboard_scan_ts", str(now))
-    db.set_state("last_leaderboard_scan_date_brt", today_brt)
-    db.prune_expired_avatars()
-    if has_new_movements or table_stats_changed or not prev_digest or force or cfg_upgraded:
-        db.set_state("rankings_updated_flag", "1")
-
-    cfg["custom_players"] = custom_players
-    cfg["tracked_players"] = list(updated_by_id.values())
-    save_config_file(config_path, cfg)
-
-    if post_ranking_movements and has_new_movements:
-        for mode_k, mv_list in movements_by_mode.items():
-            for mv in mv_list:
-                d = int(mv.get("rank_delta", 0))
-                arrow = "NOVO" if mv.get("is_new_entry") else (f"▲ +{d}" if d > 0 else f"▼ {d}")
-                logger.info(
-                    "[MOVIMENTAÇÃO RANKING %s] %s: #%s -> #%d (%s)",
-                    mode_k,
-                    mv["alias"],
-                    mv.get("prev_rank", "—"),
-                    mv["br_rank"],
-                    arrow,
-                )
-        if discord.is_configured:
-            try:
-                mv_msg_id = discord.send_ranking_movement_card(movements_by_mode)
-                if mv_msg_id:
-                    db.record_ephemeral_message(mv_msg_id, kind="ranking_movement")
-            except Exception as exc:
-                logger.error("Erro ao enviar Card de Movimentação do Ranking ao Discord: %s", redact_secrets(exc))
-
-    if not only_custom and newly_entered and was_already_populated and discord.is_configured:
-        try:
-            ent_msg_id = discord.send_new_top_entrant_card(newly_entered, top_n=top_n)
-            if ent_msg_id:
-                db.record_ephemeral_message(ent_msg_id, kind="new_top_entrant")
-        except Exception as exc:
-            logger.error("Erro ao notificar novo integrante Top %d no Discord: %s", top_n, redact_secrets(exc))
-
-    changed = has_new_movements or table_stats_changed or cfg_upgraded or bool(newly_entered)
-    return changed, exported_rankings
-
-
 def _merge_match_records(primary: dict[str, Any], secondary: dict[str, Any]) -> dict[str, Any]:
     """Combina metadados mais completos (ELO, replay, SteamID, país) quando Relic Direta e coh3stats retornam a mesma partida."""
     merged = dict(primary)
@@ -919,6 +597,111 @@ def _load_audited_open_data_days(db: MatchDatabase) -> set[int]:
 def _save_audited_open_data_days(db: MatchDatabase, audited_days: set[int]) -> None:
     recent_days = sorted({int(d) for d in audited_days if int(d) > 0})[-14:]
     db.set_state("coh3stats_audited_days_json", json.dumps(recent_days, separators=(",", ":")))
+
+
+def _reconcile_recovered_matches(
+    db: MatchDatabase,
+    candidate_pairs: dict[tuple[int, int], tuple[dict[str, Any], str]],
+    newly_finished: list[dict[str, Any]],
+    live_marker: str | None,
+    pending_max_age_sec: int,
+    log_prefix: str,
+) -> tuple[dict[int, set[str]], int, int, int]:
+    """
+    Reconcilia partidas recuperadas pela 3ª ou 4ª checagem contra o SQLite sem jamais duplicar
+    entregas confirmadas (Snowflake), PRUNED ou SEEDED.
+    Retorna `(recovered_match_sources, recovered_rows, requeued_undelivered, synced_siblings)`.
+    """
+    recovered_match_sources: dict[int, set[str]] = {}
+    recovered_rows = 0
+    requeued_undelivered = 0
+    synced_siblings = 0
+    if not candidate_pairs:
+        return recovered_match_sources, recovered_rows, requeued_undelivered, synced_siblings
+
+    all_candidate_mids = sorted({mid for mid, _ in candidate_pairs})
+    delivery_map = db.get_match_delivery_map(all_candidate_mids)
+    now_ts = int(time.time())
+    existing_new_keys = {(int(m["match_id"]), int(m["tracked_profile_id"])) for m in newly_finished}
+    requeued_mids: set[int] = set()
+
+    ordered_items = sorted(
+        candidate_pairs.items(),
+        key=lambda kv: (int(kv[1][0].get("completion_time", 0)), kv[0][0], kv[0][1]),
+    )
+
+    for (mid, pid), (match_obj, source_tag) in ordered_items:
+        src_suffix = f" ({source_tag})" if source_tag else ""
+        info = delivery_map.get(mid)
+        if info is not None:
+            if info["handled_non_live"]:
+                continue
+
+            existing_snowflake = info["snowflake"]
+            if existing_snowflake:
+                if pid not in info["rows"]:
+                    if db.insert_match(match_obj, discord_message_id=existing_snowflake):
+                        synced_siblings += 1
+                continue
+
+            if pid in info["rows"]:
+                cur_msg_id, cur_rec_at = info["rows"][pid]
+                if cur_msg_id == PENDING_DISCORD_MARKER and (now_ts - cur_rec_at) < pending_max_age_sec:
+                    continue
+                if (
+                    live_marker == PENDING_DISCORD_MARKER
+                    and mid not in requeued_mids
+                    and db.requeue_undelivered_match(mid)
+                ):
+                    requeued_mids.add(mid)
+                    requeued_undelivered += 1
+                    recovered_rows += 1
+                    recovered_match_sources.setdefault(mid, set()).add(source_tag)
+                    if (mid, pid) not in existing_new_keys:
+                        newly_finished.append(match_obj)
+                        existing_new_keys.add((mid, pid))
+                    logger.info(
+                        "[%s - REENFILEIRADA%s] %s (%s) -> %s em %s (%s) [#%d]",
+                        log_prefix,
+                        src_suffix,
+                        match_obj["tracked_alias"],
+                        match_obj["tracked_faction_short"],
+                        "VITÓRIA" if match_obj["win"] else "DERROTA",
+                        match_obj["map_clean"],
+                        match_obj["mode"],
+                        mid,
+                    )
+                continue
+
+            has_active_pending = any(
+                msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
+                for msg_id, rec_at in info["rows"].values()
+            )
+        else:
+            has_active_pending = False
+
+        if db.insert_match(match_obj, discord_message_id=live_marker):
+            if (mid, pid) not in existing_new_keys:
+                newly_finished.append(match_obj)
+                existing_new_keys.add((mid, pid))
+            if has_active_pending:
+                synced_siblings += 1
+            else:
+                recovered_rows += 1
+                recovered_match_sources.setdefault(mid, set()).add(source_tag)
+                logger.info(
+                    "[%s - RECUPERADA%s] %s (%s) -> %s em %s (%s) [#%d]",
+                    log_prefix,
+                    src_suffix,
+                    match_obj["tracked_alias"],
+                    match_obj["tracked_faction_short"],
+                    "VITÓRIA" if match_obj["win"] else "DERROTA",
+                    match_obj["map_clean"],
+                    match_obj["mode"],
+                    mid,
+                )
+
+    return recovered_match_sources, recovered_rows, requeued_undelivered, synced_siblings
 
 
 def run_third_cross_check(
@@ -1050,86 +833,17 @@ def run_third_cross_check(
             combined_pairs[key] = (c_rec, "coh3stats")
 
     if combined_pairs:
-        all_candidate_mids = sorted({mid for mid, _ in combined_pairs})
-        delivery_map = db.get_match_delivery_map(all_candidate_mids)
-        now_ts = int(time.time())
-        existing_new_keys = {(int(m["match_id"]), int(m["tracked_profile_id"])) for m in newly_finished}
-        recovered_match_sources: dict[int, set[str]] = {}
-        requeued_mids: set[int] = set()
-
-        ordered_items = sorted(
-            combined_pairs.items(),
-            key=lambda kv: (int(kv[1][0].get("completion_time", 0)), kv[0][0], kv[0][1]),
+        recovered_match_sources, rec_rows, req_cnt, sib_cnt = _reconcile_recovered_matches(
+            db=db,
+            candidate_pairs=combined_pairs,
+            newly_finished=newly_finished,
+            live_marker=live_marker,
+            pending_max_age_sec=pending_max_age_sec,
+            log_prefix="3ª CHECAGEM",
         )
-
-        for (mid, pid), (match_obj, source_tag) in ordered_items:
-            info = delivery_map.get(mid)
-            if info is not None:
-                if info["handled_non_live"]:
-                    continue
-
-                existing_snowflake = info["snowflake"]
-                if existing_snowflake:
-                    if pid not in info["rows"]:
-                        if db.insert_match(match_obj, discord_message_id=existing_snowflake):
-                            stats["synced_siblings"] += 1
-                    continue
-
-                if pid in info["rows"]:
-                    cur_msg_id, cur_rec_at = info["rows"][pid]
-                    if cur_msg_id == PENDING_DISCORD_MARKER and (now_ts - cur_rec_at) < pending_max_age_sec:
-                        continue
-                    if (
-                        live_marker == PENDING_DISCORD_MARKER
-                        and mid not in requeued_mids
-                        and db.requeue_undelivered_match(mid)
-                    ):
-                        requeued_mids.add(mid)
-                        stats["requeued_undelivered"] += 1
-                        stats["recovered_rows"] += 1
-                        recovered_match_sources.setdefault(mid, set()).add(source_tag)
-                        if (mid, pid) not in existing_new_keys:
-                            newly_finished.append(match_obj)
-                            existing_new_keys.add((mid, pid))
-                        logger.info(
-                            "[3ª CHECAGEM - REENFILEIRADA (%s)] %s (%s) -> %s em %s (%s) [#%d]",
-                            source_tag,
-                            match_obj["tracked_alias"],
-                            match_obj["tracked_faction_short"],
-                            "VITÓRIA" if match_obj["win"] else "DERROTA",
-                            match_obj["map_clean"],
-                            match_obj["mode"],
-                            mid,
-                        )
-                    continue
-
-                has_active_pending = any(
-                    msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
-                    for msg_id, rec_at in info["rows"].values()
-                )
-            else:
-                has_active_pending = False
-
-            if db.insert_match(match_obj, discord_message_id=live_marker):
-                if (mid, pid) not in existing_new_keys:
-                    newly_finished.append(match_obj)
-                    existing_new_keys.add((mid, pid))
-                if has_active_pending:
-                    stats["synced_siblings"] += 1
-                else:
-                    stats["recovered_rows"] += 1
-                    recovered_match_sources.setdefault(mid, set()).add(source_tag)
-                    logger.info(
-                        "[3ª CHECAGEM - RECUPERADA (%s)] %s (%s) -> %s em %s (%s) [#%d]",
-                        source_tag,
-                        match_obj["tracked_alias"],
-                        match_obj["tracked_faction_short"],
-                        "VITÓRIA" if match_obj["win"] else "DERROTA",
-                        match_obj["map_clean"],
-                        match_obj["mode"],
-                        mid,
-                    )
-
+        stats["recovered_rows"] += rec_rows
+        stats["requeued_undelivered"] += req_cnt
+        stats["synced_siblings"] += sib_cnt
         stats["recovered_unique"] = len(recovered_match_sources)
         for sources in recovered_match_sources.values():
             if "Relic+coh3stats" in sources or ("Relic Direta" in sources and "coh3stats" in sources):
@@ -1318,7 +1032,7 @@ def run_fourth_radar_check(
             rec_at = int(latest.get("recorded_at") or 0)
             is_delivered = bool(latest.get("is_delivered_snowflake"))
             is_active_pending = msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
-            is_non_live = msg_id in (SEEDED_DISCORD_MARKER, "PRUNED")
+            is_non_live = msg_id in (SEEDED_DISCORD_MARKER, PRUNED_DISCORD_MARKER)
             if not is_delivered and not is_active_pending and not is_non_live:
                 latest_undelivered = True
 
@@ -1382,78 +1096,17 @@ def run_fourth_radar_check(
                 )
 
         if candidate_pairs:
-            all_mids = sorted({mid for mid, _ in candidate_pairs})
-            delivery_map = db.get_match_delivery_map(all_mids)
-            existing_new_keys = {(int(m["match_id"]), int(m["tracked_profile_id"])) for m in newly_finished}
-            recovered_mids: set[int] = set()
-            requeued_mids: set[int] = set()
-
-            ordered = sorted(
-                candidate_pairs.items(),
-                key=lambda kv: (int(kv[1].get("completion_time", 0)), kv[0][0], kv[0][1]),
+            recovered_sources, _, req_cnt, sib_cnt = _reconcile_recovered_matches(
+                db=db,
+                candidate_pairs={k: (m_obj, "") for k, m_obj in candidate_pairs.items()},
+                newly_finished=newly_finished,
+                live_marker=live_marker,
+                pending_max_age_sec=pending_max_age_sec,
+                log_prefix="4ª CHECAGEM RADAR",
             )
-            for (mid, pid), match_obj in ordered:
-                info = delivery_map.get(mid)
-                if info is not None:
-                    if info["handled_non_live"]:
-                        continue
-                    existing_snowflake = info["snowflake"]
-                    if existing_snowflake:
-                        if pid not in info["rows"]:
-                            if db.insert_match(match_obj, discord_message_id=existing_snowflake):
-                                stats["synced_siblings"] += 1
-                        continue
-                    if pid in info["rows"]:
-                        cur_msg_id, cur_rec_at = info["rows"][pid]
-                        if cur_msg_id == PENDING_DISCORD_MARKER and (now_ts - cur_rec_at) < pending_max_age_sec:
-                            continue
-                        if (
-                            live_marker == PENDING_DISCORD_MARKER
-                            and mid not in requeued_mids
-                            and db.requeue_undelivered_match(mid)
-                        ):
-                            requeued_mids.add(mid)
-                            recovered_mids.add(mid)
-                            stats["requeued_undelivered"] += 1
-                            if (mid, pid) not in existing_new_keys:
-                                newly_finished.append(match_obj)
-                                existing_new_keys.add((mid, pid))
-                            logger.info(
-                                "[4ª CHECAGEM RADAR - REENFILEIRADA] %s (%s) -> %s em %s (%s) [#%d]",
-                                match_obj["tracked_alias"],
-                                match_obj["tracked_faction_short"],
-                                "VITÓRIA" if match_obj["win"] else "DERROTA",
-                                match_obj["map_clean"],
-                                match_obj["mode"],
-                                mid,
-                            )
-                        continue
-                    has_active_pending = any(
-                        msg_id == PENDING_DISCORD_MARKER and (now_ts - rec_at) < pending_max_age_sec
-                        for msg_id, rec_at in info["rows"].values()
-                    )
-                else:
-                    has_active_pending = False
-
-                if db.insert_match(match_obj, discord_message_id=live_marker):
-                    if (mid, pid) not in existing_new_keys:
-                        newly_finished.append(match_obj)
-                        existing_new_keys.add((mid, pid))
-                    if has_active_pending:
-                        stats["synced_siblings"] += 1
-                    else:
-                        recovered_mids.add(mid)
-                        logger.info(
-                            "[4ª CHECAGEM RADAR - RECUPERADA] %s (%s) -> %s em %s (%s) [#%d]",
-                            match_obj["tracked_alias"],
-                            match_obj["tracked_faction_short"],
-                            "VITÓRIA" if match_obj["win"] else "DERROTA",
-                            match_obj["map_clean"],
-                            match_obj["mode"],
-                            mid,
-                        )
-
-            stats["recovered_unique"] = len(recovered_mids)
+            stats["requeued_undelivered"] += req_cnt
+            stats["synced_siblings"] += sib_cnt
+            stats["recovered_unique"] = len(recovered_sources)
 
     # Reavalia confirmação pós-checagem e identifica eventual atraso de indexação da Relic
     new_lagging_pids: set[int] = set()
@@ -1744,8 +1397,8 @@ def run_cycle(
             if migrated_maps > 0:
                 logger.info("Nomes oficiais de mapas atualizados no catálogo SQLite (%d registro(s)).", migrated_maps)
 
-        layout_needs_upgrade = db.get_state("summary_layout_version") != CURRENT_SUMMARY_LAYOUT_VERSION
         roster_maps = build_roster_lookup_maps(custom_players)
+        _, roster_pid_map = roster_maps
 
         db.sync_tracked_players(cfg.get("tracked_players", []))
         active_players = db.get_active_players()
@@ -1753,7 +1406,6 @@ def run_cycle(
         only_automatch = bool(cfg.get("only_automatch", False))
         seed_limit = int(cfg.get("initial_seed_per_player", 3))
         summary_size = int(cfg.get("summary_list_size", 15))
-        top_n = int(cfg.get("top_n_per_mode", 20))
         cleanup_hours = max(0, int(cfg.get("discord_cleanup_hours", DEFAULT_DISCORD_CLEANUP_HOURS)))
         window_sec = cleanup_hours * 3600 if cleanup_hours > 0 else 86400
         pending_max_age_sec = max(21600, window_sec)
@@ -1818,10 +1470,15 @@ def run_cycle(
                 continue
 
             resolved_alias = recent_matches[0]["tracked_alias"] if recent_matches else alias
+            r_entry = roster_pid_map.get(pid) or {}
+            own_roster_sid = str(r_entry.get("steam_id") or "").strip()
+            existing_player_sid = str(player.get("steam_id") or "").strip()
+            is_merged_avatar = bool(r_entry.get("merged_into_steam_id"))
+            # Nunca sobrescrever o SteamID64 real da conta secundária/smurf com merged_into_steam_id (usado só no avatar)
             resolved_steam_id = (
-                recent_matches[0].get("tracked_steam_id", "")
-                if recent_matches
-                else str(player.get("steam_id") or "")
+                own_roster_sid
+                or existing_player_sid
+                or ("" if is_merged_avatar else str(recent_matches[0].get("tracked_steam_id") or "") if recent_matches else "")
             )
 
             if not is_baseline_done:
@@ -1859,7 +1516,7 @@ def run_cycle(
                                 m["mode"],
                                 m["match_id"],
                             )
-                if resolved_alias != alias or (resolved_steam_id and not player.get("steam_id")):
+                if resolved_alias != alias or (resolved_steam_id and not existing_player_sid):
                     db.mark_baseline_synced(pid, resolved_alias, steam_id=resolved_steam_id or None)
                     players_changed = True
 
@@ -2115,8 +1772,6 @@ def run_cycle(
             panel_status = "inalterado"
 
             if summary_needs_refresh or not summary_msg_id or layout_needs_upgrade or content_needs_refresh:
-                display_since_raw = db.get_state("display_since_ts") or "0"
-                display_since_ts = int(display_since_raw) if display_since_raw.isdigit() else 0
                 latest_catalog = db.get_recent_recorded_matches(
                     limit=max(40, summary_size * 3),
                     only_active_players=True,
@@ -2131,9 +1786,7 @@ def run_cycle(
                             matches=latest_catalog,
                             tracked_players=updated_players,
                             existing_message_id=summary_msg_id,
-                            rankings_by_mode=None,
                             custom_players=custom_players,
-                            top_n=top_n,
                             recreate_message=layout_needs_upgrade,
                         )
                         if new_summary_id:
