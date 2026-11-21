@@ -49,6 +49,9 @@ CURRENT_SUMMARY_CONTENT_VERSION = "v7_17_duration_label"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
+DEFAULT_QUIET_AUDIT_HOURS = 3
+DEFAULT_QUIET_AUDIT_COOLDOWN_HOURS = 3
+QUIET_AUDIT_STAT_TOLERANCE_SEC = 60
 
 
 def ensure_core_roster_in_config(
@@ -1154,6 +1157,268 @@ def run_fourth_radar_check(
     return stats
 
 
+def run_quiet_period_deep_audit(
+    db: MatchDatabase,
+    relic: RelicAPIClient,
+    coh3stats: Coh3StatsAPIClient | None,
+    synced_players: list[dict[str, Any]],
+    newly_finished: list[dict[str, Any]],
+    only_automatch: bool,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    recovery_min_completion_ts: int,
+    live_marker: str | None,
+    pending_max_age_sec: int = 21600,
+    window_sec: int = 259200,
+    pass1_failed_pids: set[int] | None = None,
+    expected_custom_count: int = 0,
+    silence_threshold_sec: int = DEFAULT_QUIET_AUDIT_HOURS * 3600,
+    cooldown_sec: int = DEFAULT_QUIET_AUDIT_COOLDOWN_HOURS * 3600,
+    coh3stats_audited_this_cycle: bool = False,
+    force: bool = False,
+    now_ts: int | None = None,
+) -> dict[str, Any]:
+    """
+    5ª Checagem Automática — Auditoria de Silêncio (Quiet-Period Deep Sweep):
+    Dispara automaticamente sempre que passam `silence_threshold_sec` (padrão 3h) sem nenhuma partida nova
+    no banco (respeitando cooldown de 3h), ou quando forçada manualmente:
+      1. Cruza `getPersonalStat.lastmatchdate` em 100% do elenco (inclusive Steam privado que o Radar não vê)
+         contra o maior `completion_time` salvo no SQLite por jogador.
+      2. Reconsulta ambos os endpoints da Relic (`getRecentMatchHistoryByProfileId` + `getRecentMatchHistory`)
+         para qualquer conta divergente ou com falha na Passada 1.
+      3. Varre o próprio SQLite na janela ativa (72h) atrás de partidas sem entrega confirmada (NULL, vazias
+         ou PENDING expiradas) e reenfileira automaticamente para envio ao Discord.
+      4. Reaudita 1x/dia o arquivo `coh3stats.com` Open Data de ontem (UTC) caso tenha sido republicado
+         depois da 1ª checagem.
+      5. Valida paridade do elenco sem gerar spam no Discord quando realmente não houve partidas.
+    """
+    now = int(now_ts) if now_ts is not None else int(time.time())
+    latest_match_ts = db.get_latest_recorded_match_ts(only_active_players=True)
+    silence_sec = max(0, now - latest_match_ts) if latest_match_ts > 0 else 0
+    last_audit_raw = (db.get_state("last_quiet_audit_ts") or "").strip()
+    last_audit_ts = int(last_audit_raw) if last_audit_raw.isdigit() else 0
+
+    stats: dict[str, Any] = {
+        "ran": False,
+        "silence_hours": round(silence_sec / 3600.0, 1),
+        "checked_accounts": len(synced_players),
+        "stat_ok_accounts": 0,
+        "divergent_accounts": 0,
+        "rechecked_accounts": 0,
+        "sqlite_requeued": 0,
+        "coh3stats_reaudited": False,
+        "recovered_unique": 0,
+        "recovered_rows": 0,
+        "roster_parity_ok": True,
+    }
+
+    if not synced_players:
+        return stats
+    if not force:
+        if newly_finished:
+            return stats
+        if latest_match_ts <= 0 or silence_sec < max(1800, int(silence_threshold_sec)):
+            return stats
+        if last_audit_ts > 0 and (now - last_audit_ts) < max(1800, int(cooldown_sec)):
+            return stats
+
+    stats["ran"] = True
+    by_pid = {int(pl["profile_id"]): pl for pl in synced_players if int(pl.get("profile_id", 0) or 0) > 0}
+    all_pids = sorted(by_pid.keys())
+    failed_set = {int(p) for p in (pass1_failed_pids or set()) if int(p) in by_pid}
+
+    if expected_custom_count > 0 and len(by_pid) < expected_custom_count:
+        stats["roster_parity_ok"] = False
+        logger.warning(
+            "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Divergência de elenco detectada: %d ativa(s) vs %d configurada(s).",
+            len(by_pid),
+            expected_custom_count,
+        )
+
+    # 1. Varredura `getPersonalStat` em 100% do elenco (inclusive Steam privado)
+    db_latest_by_pid = db.get_latest_match_ts_by_player(all_pids)
+    stat_lmd_by_pid: dict[int, int] = {}
+    if callable(getattr(relic, "fetch_players_latest_stat_timestamps", None)):
+        try:
+            stat_lmd_by_pid = relic.fetch_players_latest_stat_timestamps(synced_players)
+        except Exception as exc:
+            logger.warning(
+                "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Falha ao consultar getPersonalStat completo: %s",
+                redact_secrets(exc),
+            )
+    stats["stat_ok_accounts"] = len(stat_lmd_by_pid)
+
+    recent_stat_window = max(int(window_sec), 72 * 3600)
+    divergent_pids: set[int] = set()
+    for pid in all_pids:
+        stat_lmd = int(stat_lmd_by_pid.get(pid, 0) or 0)
+        db_ct = int(db_latest_by_pid.get(pid, 0) or 0)
+        if (
+            stat_lmd > 0
+            and (now - stat_lmd) <= recent_stat_window
+            and stat_lmd > (db_ct + QUIET_AUDIT_STAT_TOLERANCE_SEC)
+        ):
+            divergent_pids.add(pid)
+
+    stats["divergent_accounts"] = len(divergent_pids)
+    recheck_pids = sorted(divergent_pids | failed_set)
+    stats["rechecked_accounts"] = len(recheck_pids)
+
+    candidate_pairs: dict[tuple[int, int], tuple[dict[str, Any], str]] = {}
+
+    # 2. Rechecagem dupla (ambos endpoints Relic) para contas divergentes ou com falha na Passada 1
+    if recheck_pids:
+        if divergent_pids:
+            time.sleep(1.5)
+        recheck_players = [by_pid[pid] for pid in recheck_pids]
+        pair_map: dict[tuple[int, int], dict[str, Any]] = {}
+
+        for pl in recheck_players:
+            pid = int(pl["profile_id"])
+            try:
+                rows = relic.fetch_player_recent_matches(
+                    profile_id=pid,
+                    fallback_alias=str(pl.get("original_alias") or pl["alias"]),
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                )
+                for m in rows:
+                    mid = int(m.get("match_id", 0) or 0)
+                    comp_ts = int(m.get("completion_time", 0) or 0)
+                    if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                        pair_map[(mid, pid)] = m
+            except Exception as exc:
+                logger.warning(
+                    "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Falha na rechecagem ByProfileId de %s (#%d): %s",
+                    pl.get("alias", pid),
+                    pid,
+                    redact_secrets(exc),
+                )
+
+        if callable(getattr(relic, "fetch_recent_matches_direct_batch", None)):
+            try:
+                direct_by_pid, _failed = relic.fetch_recent_matches_direct_batch(
+                    players=recheck_players,
+                    only_automatch=only_automatch,
+                    roster_maps=roster_maps,
+                    batch_size=1,
+                )
+                for pid, rows in direct_by_pid.items():
+                    for m in rows:
+                        mid = int(m.get("match_id", 0) or 0)
+                        comp_ts = int(m.get("completion_time", 0) or 0)
+                        if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                            key = (mid, int(pid))
+                            if key in pair_map:
+                                pair_map[key] = _merge_match_records(pair_map[key], m)
+                            else:
+                                pair_map[key] = m
+            except Exception as exc:
+                logger.warning(
+                    "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Falha na rechecagem direta da Relic: %s",
+                    redact_secrets(exc),
+                )
+
+        for key, m_obj in pair_map.items():
+            candidate_pairs[key] = (m_obj, "Auditoria Silêncio/Relic")
+
+    # 3. Reauditoria diária (1x/dia UTC após 04:00 UTC) do arquivo Open Data de ontem no coh3stats.com
+    now_utc = datetime.fromtimestamp(now, tz=timezone.utc)
+    yesterday_utc = int(datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc).timestamp()) - 86400
+    last_reaudit_day = (db.get_state("quiet_audit_c3s_reaudited_day") or "").strip()
+    should_reaudit_c3s = (
+        coh3stats is not None
+        and callable(getattr(coh3stats, "fetch_open_data_days_matches", None))
+        and not coh3stats_audited_this_cycle
+        and (yesterday_utc + 86400) > recovery_min_completion_ts
+        and now_utc.hour >= 4
+        and last_reaudit_day != str(yesterday_utc)
+    )
+    if should_reaudit_c3s:
+        try:
+            c3s_by_pid, ok_days, _scanned, _fail_days = coh3stats.fetch_open_data_days_matches(
+                day_timestamps=[yesterday_utc],
+                players=synced_players,
+                only_automatch=only_automatch,
+                roster_maps=roster_maps,
+                races=getattr(relic, "races", None) or None,
+                match_types=getattr(relic, "match_types", None) or None,
+            )
+            if ok_days:
+                stats["coh3stats_reaudited"] = True
+                db.set_state("quiet_audit_c3s_reaudited_day", str(yesterday_utc))
+                for pid, rows in c3s_by_pid.items():
+                    for m in rows:
+                        mid = int(m.get("match_id", 0) or 0)
+                        comp_ts = int(m.get("completion_time", 0) or 0)
+                        if mid > 0 and comp_ts >= recovery_min_completion_ts:
+                            key = (mid, int(pid))
+                            if key in candidate_pairs:
+                                candidate_pairs[key] = (
+                                    _merge_match_records(candidate_pairs[key][0], m),
+                                    "Auditoria Silêncio/Relic+coh3stats",
+                                )
+                            else:
+                                candidate_pairs[key] = (m, "Auditoria Silêncio/coh3stats")
+        except Exception as exc:
+            logger.warning(
+                "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Reauditoria coh3stats Open Data adiada: %s",
+                redact_secrets(exc),
+            )
+
+    recovered_mids: set[int] = set()
+    if candidate_pairs:
+        rec_sources, rec_rows, req_cnt, _sib_cnt = _reconcile_recovered_matches(
+            db=db,
+            candidate_pairs=candidate_pairs,
+            newly_finished=newly_finished,
+            live_marker=live_marker,
+            pending_max_age_sec=pending_max_age_sec,
+            log_prefix="5ª CHECAGEM SILÊNCIO",
+        )
+        stats["recovered_rows"] += rec_rows
+        recovered_mids.update(int(mid) for mid in rec_sources.keys())
+        stats["sqlite_requeued"] += req_cnt
+
+    # 4. Varredura interna do SQLite: recupera qualquer partida <72h salva sem entrega confirmada no Discord
+    if live_marker == PENDING_DISCORD_MARKER:
+        undelivered_mids = db.get_undelivered_recent_match_ids(
+            min_completion_time=recovery_min_completion_ts,
+            pending_max_age_sec=pending_max_age_sec,
+            limit=30,
+            now_ts=now,
+        )
+        for umid in undelivered_mids:
+            if umid in recovered_mids:
+                continue
+            if db.requeue_undelivered_match(umid):
+                recovered_mids.add(umid)
+                stats["sqlite_requeued"] += 1
+                logger.info(
+                    "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Partida #%d sem entrega confirmada no SQLite reenfileirada para o Discord.",
+                    umid,
+                )
+
+    stats["recovered_unique"] = len(recovered_mids)
+
+    db.set_state("last_quiet_audit_ts", str(now))
+
+    div_names = ", ".join(str(by_pid[p].get("alias", p)) for p in sorted(divergent_pids)[:5]) or "nenhuma"
+    c3s_tag = "reauditado OK" if stats["coh3stats_reaudited"] else "em dia"
+    logger.info(
+        "[5ª CHECAGEM — AUDITORIA DE SILÊNCIO] Silêncio há %.1fh | PersonalStat: %d/%d contas | Divergências: %d (%s) | Rechecadas: %d | coh3stats: %s | SQLite reenfileiradas: %d | Recuperadas p/ Discord: +%d",
+        stats["silence_hours"],
+        stats["stat_ok_accounts"],
+        stats["checked_accounts"],
+        stats["divergent_accounts"],
+        div_names,
+        stats["rechecked_accounts"],
+        c3s_tag,
+        stats["sqlite_requeued"],
+        stats["recovered_unique"],
+    )
+    return stats
+
+
 def enrich_group_with_battlegroups(
     db: MatchDatabase,
     cohdb: CohDBClient | None,
@@ -1332,11 +1597,13 @@ def run_cycle(
     enable_third_check: bool = True,
     radar: VeteransRadarClient | None = None,
     enable_fourth_check: bool = True,
+    enable_quiet_audit: bool = True,
+    force_quiet_audit: bool = False,
     cohdb: CohDBClient | None = None,
     enable_battlegroups: bool = True,
     force_weekly_summary: bool = False,
 ) -> tuple[int, int]:
-    """Executa um ciclo completo com quádrupla checagem (Relic + Relic Direta × coh3stats.com × Radar Veteranos × Discord), Battlegroups (cohdb), Resumo Semanal e compactação SQLite."""
+    """Executa um ciclo completo com quíntupla checagem (Relic + Relic Direta × coh3stats.com × Radar Veteranos × Auditoria de Silêncio × Discord), Battlegroups (cohdb), Resumo Semanal e compactação SQLite."""
     cfg = load_config(config_path, ensure_roster=False)
     db_path = resolve_safe_db_path(config_path.parent, cfg.get("sqlite_db_path"))
     data_dir = resolve_data_dir(config_path.parent)
@@ -1593,6 +1860,41 @@ def run_cycle(
                 live_marker=live_marker,
                 pending_max_age_sec=pending_max_age_sec,
                 pass1_failed_pids=pass1_failed_pids,
+            )
+
+        # 5ª Checagem Automática — Auditoria de Silêncio (quando passam >=3h sem partidas)
+        quiet_audit_stats: dict[str, Any] = {
+            "ran": False,
+            "silence_hours": 0.0,
+            "divergent_accounts": 0,
+            "recovered_unique": 0,
+            "sqlite_requeued": 0,
+        }
+        if enable_quiet_audit and synced_for_audit:
+            raw_qa_hours = cfg.get("quiet_audit_hours", DEFAULT_QUIET_AUDIT_HOURS)
+            qa_hours = max(1, int(DEFAULT_QUIET_AUDIT_HOURS if raw_qa_hours is None else raw_qa_hours))
+            raw_qa_cd = cfg.get("quiet_audit_cooldown_hours", DEFAULT_QUIET_AUDIT_COOLDOWN_HOURS)
+            qa_cd_hours = max(1, int(DEFAULT_QUIET_AUDIT_COOLDOWN_HOURS if raw_qa_cd is None else raw_qa_cd))
+            qa_c3s_client = coh3stats if coh3stats is not None else (Coh3StatsAPIClient() if enable_third_check else None)
+            quiet_audit_stats = run_quiet_period_deep_audit(
+                db=db,
+                relic=relic,
+                coh3stats=qa_c3s_client,
+                synced_players=synced_for_audit,
+                newly_finished=newly_finished,
+                only_automatch=only_automatch,
+                roster_maps=roster_maps,
+                recovery_min_completion_ts=recovery_min_completion_ts,
+                live_marker=live_marker,
+                pending_max_age_sec=pending_max_age_sec,
+                window_sec=window_sec,
+                pass1_failed_pids=pass1_failed_pids,
+                expected_custom_count=len(synced_tracked),
+                silence_threshold_sec=qa_hours * 3600,
+                cooldown_sec=qa_cd_hours * 3600,
+                coh3stats_audited_this_cycle=bool(third_check_stats.get("coh3stats_days_audited", 0) > 0),
+                force=force_quiet_audit,
+                now_ts=now_ts,
             )
 
         newly_finished.sort(key=lambda x: x["completion_time"])
@@ -1881,8 +2183,13 @@ def run_cycle(
             else:
                 radar_final_label = f"{fourth_check_stats.get('confirmed_count', 0)}/{fourth_check_stats.get('flagged_count', 0)} OK"
 
+            quiet_final_label = (
+                f"OK ({quiet_audit_stats.get('silence_hours', 0.0):.1f}h): +{quiet_audit_stats.get('recovered_unique', 0)}"
+                if quiet_audit_stats.get("ran")
+                else "inativa"
+            )
             logger.info(
-                "[QUÁDRUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | Battlegroups (cohdb): +%d novo(s)/%d patch | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[QUÍNTUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | 5ª Checagem Silêncio (%s) | Battlegroups (cohdb): +%d novo(s)/%d patch | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
                 third_check_stats.get("relic_direct_ok_accounts", 0),
@@ -1891,6 +2198,7 @@ def run_cycle(
                 third_check_stats.get("recovered_unique", 0),
                 radar_final_label,
                 fourth_check_stats.get("recovered_unique", 0),
+                quiet_final_label,
                 bg_enriched_new,
                 bg_patched_cards,
                 cards_confirmed,
@@ -1915,7 +2223,7 @@ def run_cycle(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.9 -> SQLite + Quádrupla Checagem (Relic × coh3stats × Radar Veteranos) + Battlegroups (cohdb) + Resumo Semanal + Discord Privado")
+    parser = argparse.ArgumentParser(description="Monitor CoH3 Brasil v7.9 -> SQLite + Quíntupla Checagem (Relic × coh3stats × Radar Veteranos × Auditoria de Silêncio) + Battlegroups (cohdb) + Resumo Semanal + Discord Privado")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH, help="Caminho para config.json")
     parser.add_argument("--once", action="store_true", help="Executa apenas 1 ciclo de checagem e encerra")
     parser.add_argument(
@@ -1927,6 +2235,11 @@ def main() -> int:
         "--force-weekly-summary",
         action="store_true",
         help="Publica imediatamente o Card de Resumo Semanal dos Veteranos BR neste ciclo",
+    )
+    parser.add_argument(
+        "--force-quiet-audit",
+        action="store_true",
+        help="Força a 5ª checagem profunda (Auditoria de Silêncio em 100% do elenco + SQLite + coh3stats) neste ciclo",
     )
     parser.add_argument(
         "--verify-discord",
@@ -1975,6 +2288,7 @@ def main() -> int:
                 radar=radar,
                 cohdb=cohdb,
                 force_weekly_summary=(bool(args.force_weekly_summary) and first_iter),
+                force_quiet_audit=(bool(args.force_quiet_audit) and first_iter),
             )
             first_iter = False
             logger.info("Ciclo concluído: %d partida(s) única(s) nova(s), %d inicial(is).", new_cnt, seed_cnt)
