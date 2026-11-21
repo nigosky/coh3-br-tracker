@@ -887,6 +887,103 @@ class MatchDatabase:
             )
         return cur.rowcount > 0
 
+    def get_latest_recorded_match_ts(self, only_active_players: bool = True) -> int:
+        """Retorna o maior `completion_time` registrado no banco para detectar períodos prolongados sem partidas."""
+        conn = self._connect()
+        if only_active_players:
+            row = conn.execute(
+                """
+                SELECT MAX(rm.completion_time) AS latest_ct
+                FROM recorded_matches rm
+                JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+                WHERE tp.active = 1
+                """
+            ).fetchone()
+        else:
+            row = conn.execute("SELECT MAX(completion_time) AS latest_ct FROM recorded_matches").fetchone()
+        return int(row["latest_ct"] or 0) if row else 0
+
+    def get_latest_match_ts_by_player(self, profile_ids: list[int] | None = None) -> dict[int, int]:
+        """Retorna `{tracked_profile_id: MAX(completion_time)}` em uma única consulta para auditoria contra getPersonalStat."""
+        conn = self._connect()
+        if profile_ids is not None:
+            clean_pids = sorted({int(p) for p in profile_ids if int(p) > 0})
+            if not clean_pids:
+                return {}
+            placeholders = ",".join("?" for _ in clean_pids)
+            rows = conn.execute(
+                f"""
+                SELECT tracked_profile_id, MAX(completion_time) AS latest_ct
+                FROM recorded_matches
+                WHERE tracked_profile_id IN ({placeholders})
+                GROUP BY tracked_profile_id
+                """,
+                clean_pids,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT tracked_profile_id, MAX(completion_time) AS latest_ct
+                FROM recorded_matches
+                GROUP BY tracked_profile_id
+                """
+            ).fetchall()
+        return {int(r["tracked_profile_id"]): int(r["latest_ct"] or 0) for r in rows}
+
+    def get_undelivered_recent_match_ids(
+        self,
+        min_completion_time: int,
+        pending_max_age_sec: int = 21600,
+        limit: int = 30,
+        now_ts: int | None = None,
+    ) -> list[int]:
+        """
+        Retorna `match_id`s dentro da janela ativa (`completion_time >= min_completion_time`) que estão
+        gravados no SQLite sem entrega confirmada no Discord (NULL, vazio ou PENDING expirado) e sem
+        nenhum registro irmão já confirmado (Snowflake), PRUNED ou SEEDED.
+        """
+        min_ct = max(0, int(min_completion_time or 0))
+        safe_limit = max(1, min(int(limit), 100))
+        now = int(now_ts) if now_ts is not None else int(time.time())
+        expired_pending_cutoff = now - max(60, int(pending_max_age_sec))
+        rows = self._connect().execute(
+            """
+            SELECT DISTINCT rm.match_id, MAX(rm.completion_time) AS latest_ct
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.completion_time >= ?
+              AND (
+                rm.discord_message_id IS NULL
+                OR rm.discord_message_id = ''
+                OR (rm.discord_message_id = ? AND rm.recorded_at < ?)
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM recorded_matches s
+                WHERE s.match_id = rm.match_id
+                  AND (
+                    (s.discord_message_id IS NOT NULL
+                     AND length(s.discord_message_id) >= 15
+                     AND s.discord_message_id NOT GLOB '*[^0-9]*')
+                    OR s.discord_message_id IN (?, ?)
+                  )
+              )
+            GROUP BY rm.match_id
+            ORDER BY latest_ct ASC
+            LIMIT ?
+            """,
+            (
+                min_ct,
+                PENDING_DISCORD_MARKER,
+                expired_pending_cutoff,
+                PRUNED_DISCORD_MARKER,
+                SEEDED_DISCORD_MARKER,
+                safe_limit,
+            ),
+        ).fetchall()
+        return [int(r["match_id"]) for r in rows]
+
     def record_ephemeral_message(
         self,
         message_id: str,
