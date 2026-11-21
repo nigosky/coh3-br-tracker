@@ -2239,7 +2239,7 @@ def main() -> int:
     parser.add_argument(
         "--force-quiet-audit",
         action="store_true",
-        help="Força a 5ª checagem profunda (Auditoria de Silêncio em 100% do elenco + SQLite + coh3stats) neste ciclo",
+        help="Força a 5ª checagem profunda (Auditoria de Silêncio em todo o elenco + SQLite + coh3stats) neste ciclo",
     )
     parser.add_argument(
         "--verify-discord",
