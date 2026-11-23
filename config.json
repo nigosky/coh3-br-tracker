@@ -703,8 +703,7 @@
         "gabe444arg",
         "gabe44arg (Gabe)",
         "gabe44arg (Smurf: Gabe)"
-      ],
-      "pin_alias": true
+      ]
     },
     {
       "profile_id": 26910,
@@ -821,8 +820,7 @@
         "uncle hans",
         "geladeira velha (arc)",
         "geladeira velha (Smurf: arc)"
-      ],
-      "pin_alias": true
+      ]
     },
     {
       "profile_id": 1333418,
@@ -837,8 +835,7 @@
         "TacticalForceConcentration",
         "Charles Bronson (Chacineiro)",
         "Charles Bronson (Smurf: Chacineiro)"
-      ],
-      "pin_alias": true
+      ]
     },
     {
       "profile_id": 1390350,
@@ -846,7 +843,6 @@
       "original_alias": "TearsInTheRain (Smurf: Chacineiro)",
       "alias": "TearsInTheRain (Smurf: Chacineiro)",
       "is_core_roster": true,
-      "pin_alias": true,
       "known_aliases": [
         "TearsInTheRain",
         "TearsInTheRain (Chacineiro)",
@@ -859,7 +855,6 @@
       "original_alias": "Lucielle (Smurf: Colossus)",
       "alias": "Lucielle (Smurf: Colossus)",
       "is_core_roster": true,
-      "pin_alias": true,
       "known_aliases": [
         "Lucielle",
         "Lucifer",
