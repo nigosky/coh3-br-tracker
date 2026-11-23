@@ -289,7 +289,7 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa das 48 contas Steam brasileiras monitoradas (48 Veteranos únicos vinculados por SteamID64 imutável)
+# Lista fixa das 46 contas Steam brasileiras monitoradas (46 Veteranos únicos vinculados por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {
@@ -399,20 +399,6 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "known_aliases": ["Leite Moço", "Leite Moço (『V』SKOBADARK)"],
     },
     {
-        "profile_id": 1297821,
-        "steam_id": "76561198722284920",
-        "original_alias": "Smurf 1 (General Winter)",
-        "pin_alias": True,
-        "known_aliases": ["General Winter", "Dick of the Galaxies", "Smurf 1 (General Winter)"],
-    },
-    {
-        "profile_id": 1318162,
-        "steam_id": "76561198708550887",
-        "original_alias": "Smurf 2 (General Winter)",
-        "pin_alias": True,
-        "known_aliases": ["General Winter", ".", "Smurf 2 (General Winter)"],
-    },
-    {
         "profile_id": 1076221,
         "steam_id": "76561198815935562",
         "original_alias": "Lucielle (Colossus)",
@@ -422,6 +408,51 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
 ]
 
 FALLBACK_CORE_BR_ROSTER: list[dict[str, Any]] = [dict(row) for row in CORE_BR_ROSTER]
+
+# Outros Brasileiros com rótulo/bandeira manual em players_roster.json (`manual_other_br`):
+# usado apenas para exibir apelido/bandeira corretos quando aparecem em partidas de Veteranos (NÃO monitorados/ranqueados).
+MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
+    {"profile_id": 33487, "steam_id": "76561197995712470", "original_alias": "Generick", "country": "us"},
+    {
+        "profile_id": 16867,
+        "steam_id": "76561198874381986",
+        "original_alias": "Golden Cobra",
+        "known_aliases": ["COHBRAMACHINE", "Golden Cobra"],
+    },
+    {"profile_id": 19747, "steam_id": "76561198058548575", "original_alias": "twitch.tv/luck22ai"},
+    {
+        "profile_id": 23250,
+        "steam_id": "76561198028378060",
+        "original_alias": "Nargoth",
+        "known_aliases": ["Nargoth de Bebbanburg", "Nargoth"],
+    },
+    {"profile_id": 28937, "steam_id": "76561198089948995", "original_alias": "Mjr Bruno"},
+    {"profile_id": 81751, "steam_id": "76561198080023560", "original_alias": "Razi"},
+    {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
+    {
+        "profile_id": 462597,
+        "steam_id": "76561198133760614",
+        "original_alias": "General Winter (Principal)",
+        "pin_alias": True,
+        "known_aliases": ["General Winter", "General Winter (Principal)"],
+    },
+    {
+        "profile_id": 1297821,
+        "steam_id": "76561198722284920",
+        "original_alias": "General Winter (Smurf 1)",
+        "pin_alias": True,
+        "known_aliases": ["General Winter", "Dick of the Galaxies", "General Winter (Smurf 1)"],
+    },
+    {
+        "profile_id": 1318162,
+        "steam_id": "76561198708550887",
+        "original_alias": "General Winter (Smurf 2)",
+        "pin_alias": True,
+        "known_aliases": ["General Winter", ".", "General Winter (Smurf 2)"],
+    },
+]
+
+FALLBACK_MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [dict(row) for row in MANUAL_OTHER_BR_DISPLAY]
 
 # Contas smurf onde o Tracker força 'NickPrincipal* (NickSmurf)' (vazio: smurfs agora são contas independentes com pin_alias)
 TRACKER_SMURF_DISPLAY_PIDS: frozenset[int] = frozenset()
@@ -434,18 +465,13 @@ LOCAL_MERGED_ACCOUNT_FALLBACKS: tuple[dict[str, Any], ...] = tuple(
 _COUNTRY_ISO2_RE = re.compile(r"^[a-z]{2}$")
 
 
-def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Valida e normaliza a seção `veteranos` da base única compartilhada `players_roster.json`."""
-    if not isinstance(data, dict) or int(data.get("schema_version", 0) or 0) < 1:
-        raise ValueError("Formato inválido de players_roster.json.")
-    raw_vets = data.get("veteranos")
-    if not isinstance(raw_vets, list) or not raw_vets:
-        raise ValueError("Lista 'veteranos' ausente ou vazia em players_roster.json.")
-
+def _parse_roster_section_entries(raw_rows: Any, *, apply_smurf_display: bool = True) -> list[dict[str, Any]]:
+    if not isinstance(raw_rows, list):
+        return []
     parsed_rows: list[dict[str, Any]] = []
     seen_pids: set[int] = set()
     seen_sids: set[str] = set()
-    for row in raw_vets:
+    for row in raw_rows:
         if not isinstance(row, dict):
             continue
         try:
@@ -475,7 +501,7 @@ def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
             entry["country"] = raw_ctry
         if row.get("pin_alias"):
             entry["pin_alias"] = True
-        if row.get("show_smurf_alias") or pid in TRACKER_SMURF_DISPLAY_PIDS:
+        if apply_smurf_display and (row.get("show_smurf_alias") or pid in TRACKER_SMURF_DISPLAY_PIDS):
             entry["show_smurf_alias"] = True
         known = [strip_unsafe_chars(k)[:40] for k in (row.get("known_aliases") or []) if strip_unsafe_chars(k)]
         if known:
@@ -490,10 +516,28 @@ def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
             if STEAM_ID64_VALID_RE.fullmatch(msid):
                 entry["merged_into_steam_id"] = msid
         parsed_rows.append(entry)
+    return parsed_rows
 
+
+def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Valida e normaliza a seção `veteranos` da base única compartilhada `players_roster.json`."""
+    if not isinstance(data, dict) or int(data.get("schema_version", 0) or 0) < 1:
+        raise ValueError("Formato inválido de players_roster.json.")
+    raw_vets = data.get("veteranos")
+    if not isinstance(raw_vets, list) or not raw_vets:
+        raise ValueError("Lista 'veteranos' ausente ou vazia em players_roster.json.")
+
+    parsed_rows = _parse_roster_section_entries(raw_vets, apply_smurf_display=True)
     if not parsed_rows:
         raise ValueError("Nenhum jogador válido encontrado em players_roster.json.")
     return parsed_rows
+
+
+def parse_shared_manual_other_br_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Extrai a seção `manual_other_br` (apenas exibição passiva de apelido/bandeira em cards, sem monitoramento)."""
+    if not isinstance(data, dict) or int(data.get("schema_version", 0) or 0) < 1:
+        return []
+    return _parse_roster_section_entries(data.get("manual_other_br"), apply_smurf_display=False)
 
 
 def _merge_local_smurf_fallbacks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -521,20 +565,16 @@ def _merge_local_smurf_fallbacks(rows: list[dict[str, Any]]) -> list[dict[str, A
     return merged
 
 
-def fetch_shared_roster(
+def _fetch_shared_roster_raw(
     url: str = SHARED_ROSTER_URL,
     local_path: Path | None = None,
-) -> list[dict[str, Any]] | None:
-    """
-    Obtém a base compartilhada `players_roster.json` (`nigosky/coh3-br-lobby-radar`) via HTTPS endurecido
-    (ou de arquivo local em testes). Retorna `None` em caso de falha transitória (mantendo fallback).
-    """
+) -> dict[str, Any] | None:
     if local_path is not None:
         if not local_path.is_file() or local_path.is_symlink() or local_path.stat().st_size > MAX_SHARED_ROSTER_BYTES:
             return None
         try:
             data = json.loads(local_path.read_text(encoding="utf-8"))
-            return parse_shared_roster_payload(data)
+            return data if isinstance(data, dict) else None
         except Exception as exc:
             logger.warning("Falha ao ler players_roster local (%s): %s", local_path.name, redact_secrets(exc))
             return None
@@ -559,7 +599,7 @@ def fetch_shared_roster(
             with opener.open(req, timeout=8) as resp:
                 raw = read_bounded_http_body(resp, max_bytes=MAX_SHARED_ROSTER_BYTES)
             data = json.loads(raw.decode("utf-8"))
-            return parse_shared_roster_payload(data)
+            return data if isinstance(data, dict) else None
         except Exception as exc:
             if attempt == 0:
                 time.sleep(0.5)
@@ -571,16 +611,41 @@ def fetch_shared_roster(
     return None
 
 
+def fetch_shared_roster(
+    url: str = SHARED_ROSTER_URL,
+    local_path: Path | None = None,
+) -> list[dict[str, Any]] | None:
+    """
+    Obtém a base compartilhada `players_roster.json` (`nigosky/coh3-br-lobby-radar`) via HTTPS endurecido
+    (ou de arquivo local em testes). Retorna `None` em caso de falha transitória (mantendo fallback).
+    """
+    data = _fetch_shared_roster_raw(url=url, local_path=local_path)
+    if data is None:
+        return None
+    try:
+        return parse_shared_roster_payload(data)
+    except Exception as exc:
+        logger.warning("Falha ao validar players_roster.json compartilhado: %s", redact_secrets(exc))
+        return None
+
+
 def refresh_core_br_roster(
     url: str = SHARED_ROSTER_URL,
     local_path: Path | None = None,
 ) -> bool:
-    """Atualiza `CORE_BR_ROSTER` in-place com a base única compartilhada `players_roster.json`."""
-    fetched = fetch_shared_roster(url=url, local_path=local_path)
-    if not fetched:
+    """Atualiza `CORE_BR_ROSTER` e `MANUAL_OTHER_BR_DISPLAY` in-place com `players_roster.json`."""
+    data = _fetch_shared_roster_raw(url=url, local_path=local_path)
+    if data is None:
+        return False
+    try:
+        fetched = parse_shared_roster_payload(data)
+    except Exception as exc:
+        logger.warning("Falha ao validar players_roster.json compartilhado: %s", redact_secrets(exc))
         return False
     final_rows = _merge_local_smurf_fallbacks(fetched) if local_path is None else fetched
     CORE_BR_ROSTER[:] = final_rows
+    if "manual_other_br" in data:
+        MANUAL_OTHER_BR_DISPLAY[:] = parse_shared_manual_other_br_payload(data)
     logger.info("[ROSTER COMPARTILHADO] Base do Tracker sincronizada: %d contas (%s).", len(final_rows), local_path or "GitHub")
     return True
 
@@ -2086,11 +2151,15 @@ def _merge_roster_fields(rec: dict[str, Any], prev: dict[str, Any]) -> None:
 def build_roster_lookup_maps(
     custom_players: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]]:
-    """Cria mapas rápidos por steam_id (primário) e profile_id (secundário) unindo o elenco fixo + extras."""
+    """Cria mapas rápidos por steam_id (primário) e profile_id (secundário) unindo Outros BR manuais (exibição) + Veteranos."""
     steam_map: dict[str, dict[str, Any]] = {}
     pid_map: dict[int, dict[str, Any]] = {}
 
-    for src in (custom_players or [], CORE_BR_ROSTER):
+    for is_vet, src in (
+        (False, MANUAL_OTHER_BR_DISPLAY),
+        (True, custom_players or []),
+        (True, CORE_BR_ROSTER),
+    ):
         for item in src:
             pid = int(item.get("profile_id", 0) or 0)
             sid_raw = str(item.get("steam_id") or "").replace("/steam/", "").strip()
@@ -2101,17 +2170,18 @@ def build_roster_lookup_maps(
                 "original_alias": str(item.get("original_alias") or item.get("alias") or "").strip(),
                 "known_aliases": list(item.get("known_aliases") or []),
                 "pin_alias": bool(item.get("pin_alias")),
-                "show_smurf_alias": bool(item.get("show_smurf_alias") or pid in TRACKER_SMURF_DISPLAY_PIDS),
+                "show_smurf_alias": bool(item.get("show_smurf_alias") or (is_vet and pid in TRACKER_SMURF_DISPLAY_PIDS)),
                 "merged_into_profile_id": int(item.get("merged_into_profile_id", 0) or 0),
                 "merged_into_steam_id": str(item.get("merged_into_steam_id") or "").strip(),
                 "country": str(item.get("country") or "").strip().lower(),
+                "is_veterano": is_vet,
             }
             if sid:
-                if sid in steam_map:
+                if sid in steam_map and bool(steam_map[sid].get("is_veterano", True)) == is_vet:
                     _merge_roster_fields(rec, steam_map[sid])
                 steam_map[sid] = rec
             if pid > 0:
-                if pid in pid_map:
+                if pid in pid_map and bool(pid_map[pid].get("is_veterano", True)) == is_vet:
                     _merge_roster_fields(rec, pid_map[pid])
                 pid_map[pid] = rec
 
@@ -2146,7 +2216,8 @@ def _apply_roster_identity(
         pin_alias=bool(r_entry.get("pin_alias")),
         show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
     )
-    target["is_br_roster"] = True
+    if r_entry.get("is_veterano", True):
+        target["is_br_roster"] = True
 
 
 def enrich_match_with_roster(
