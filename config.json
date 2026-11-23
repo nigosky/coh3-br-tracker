@@ -308,8 +308,8 @@
     },
     {
       "profile_id": 557890,
-      "alias": "Gabe",
-      "original_alias": "Gabe",
+      "alias": "gabe44arg (Gabe)",
+      "original_alias": "gabe44arg (Gabe)",
       "steam_id": "76561199538846112",
       "placements": [
         "🔗 Conta mesclada em É o Gabe (#559962)"
@@ -483,8 +483,8 @@
     },
     {
       "profile_id": 1423426,
-      "alias": "arc",
-      "original_alias": "arc",
+      "alias": "geladeira velha (arc)",
+      "original_alias": "geladeira velha (arc)",
       "steam_id": "76561199482388323",
       "placements": [
         "⭐ Monitorado BR"
@@ -494,14 +494,74 @@
     },
     {
       "profile_id": 1333418,
-      "alias": "Chacineiro",
-      "original_alias": "Chacineiro",
+      "alias": "Charles Bronson (Chacineiro)",
+      "original_alias": "Charles Bronson (Chacineiro)",
       "steam_id": "76561198698969876",
       "placements": [
         "⭐ Monitorado BR"
       ],
       "is_custom": true,
       "merged_into_profile_id": 79327
+    },
+    {
+      "profile_id": 1297853,
+      "alias": "Shadow (Alekel)",
+      "original_alias": "Shadow (Alekel)",
+      "steam_id": "76561198721980631",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1390350,
+      "alias": "TearsInTheRain (Chacineiro)",
+      "original_alias": "TearsInTheRain (Chacineiro)",
+      "steam_id": "76561198089278659",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1297804,
+      "alias": "Leite Moço (『V』SKOBADARK)",
+      "original_alias": "Leite Moço (『V』SKOBADARK)",
+      "steam_id": "76561198723667226",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1297821,
+      "alias": "Smurf 1 (General Winter)",
+      "original_alias": "Smurf 1 (General Winter)",
+      "steam_id": "76561198722284920",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1318162,
+      "alias": "Smurf 2 (General Winter)",
+      "original_alias": "Smurf 2 (General Winter)",
+      "steam_id": "76561198708550887",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1076221,
+      "alias": "Lucielle (Colossus)",
+      "original_alias": "Lucielle (Colossus)",
+      "steam_id": "76561198815935562",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
     }
   ],
   "auto_follow_top_br": true,
@@ -702,17 +762,17 @@
     {
       "profile_id": 557890,
       "steam_id": "76561199538846112",
-      "original_alias": "Gabe",
-      "alias": "Gabe",
+      "original_alias": "gabe44arg (Gabe)",
+      "alias": "gabe44arg (Gabe)",
       "is_core_roster": true,
       "known_aliases": [
         "gabe44arg",
         "gabe444arg",
-        "É o Gabe",
-        "Gabe"
+        "gabe44arg (Gabe)"
       ],
       "merged_into_profile_id": 559962,
-      "merged_into_steam_id": "76561198062871244"
+      "merged_into_steam_id": "76561198062871244",
+      "pin_alias": true
     },
     {
       "profile_id": 26910,
@@ -820,14 +880,14 @@
     {
       "profile_id": 1423426,
       "steam_id": "76561199482388323",
-      "original_alias": "arc",
-      "alias": "arc",
+      "original_alias": "geladeira velha (arc)",
+      "alias": "geladeira velha (arc)",
       "is_core_roster": true,
       "known_aliases": [
-        "uncle hans",
         "geladeira velha",
         "dibas",
-        "arc"
+        "uncle hans",
+        "geladeira velha (arc)"
       ],
       "merged_into_profile_id": 1005730,
       "merged_into_steam_id": "76561199791811246",
@@ -836,19 +896,96 @@
     {
       "profile_id": 1333418,
       "steam_id": "76561198698969876",
-      "original_alias": "Chacineiro",
-      "alias": "Chacineiro",
+      "original_alias": "Charles Bronson (Chacineiro)",
+      "alias": "Charles Bronson (Chacineiro)",
       "is_core_roster": true,
       "known_aliases": [
-        "TacticalForceConcentration",
         "Charles Bronson",
         "Lord Charles Bronson",
         "Charles Broson",
-        "Chacineiro"
+        "TacticalForceConcentration",
+        "Charles Bronson (Chacineiro)"
       ],
       "merged_into_profile_id": 79327,
       "merged_into_steam_id": "76561197963172584",
-      "show_smurf_alias": true
+      "show_smurf_alias": true,
+      "pin_alias": true
+    },
+    {
+      "profile_id": 1297853,
+      "steam_id": "76561198721980631",
+      "original_alias": "Shadow (Alekel)",
+      "alias": "Shadow (Alekel)",
+      "is_core_roster": true,
+      "pin_alias": true,
+      "known_aliases": [
+        "Shadow",
+        "Zé da manga",
+        "Shadow (Alekel)"
+      ]
+    },
+    {
+      "profile_id": 1390350,
+      "steam_id": "76561198089278659",
+      "original_alias": "TearsInTheRain (Chacineiro)",
+      "alias": "TearsInTheRain (Chacineiro)",
+      "is_core_roster": true,
+      "pin_alias": true,
+      "known_aliases": [
+        "TearsInTheRain",
+        "TearsInTheRain (Chacineiro)"
+      ]
+    },
+    {
+      "profile_id": 1297804,
+      "steam_id": "76561198723667226",
+      "original_alias": "Leite Moço (『V』SKOBADARK)",
+      "alias": "Leite Moço (『V』SKOBADARK)",
+      "is_core_roster": true,
+      "pin_alias": true,
+      "known_aliases": [
+        "Leite Moço",
+        "Leite Moço (『V』SKOBADARK)"
+      ]
+    },
+    {
+      "profile_id": 1297821,
+      "steam_id": "76561198722284920",
+      "original_alias": "Smurf 1 (General Winter)",
+      "alias": "Smurf 1 (General Winter)",
+      "is_core_roster": true,
+      "pin_alias": true,
+      "known_aliases": [
+        "General Winter",
+        "Dick of the Galaxies",
+        "Smurf 1 (General Winter)"
+      ]
+    },
+    {
+      "profile_id": 1318162,
+      "steam_id": "76561198708550887",
+      "original_alias": "Smurf 2 (General Winter)",
+      "alias": "Smurf 2 (General Winter)",
+      "is_core_roster": true,
+      "pin_alias": true,
+      "known_aliases": [
+        "General Winter",
+        ".",
+        "Smurf 2 (General Winter)"
+      ]
+    },
+    {
+      "profile_id": 1076221,
+      "steam_id": "76561198815935562",
+      "original_alias": "Lucielle (Colossus)",
+      "alias": "Lucielle (Colossus)",
+      "is_core_roster": true,
+      "pin_alias": true,
+      "known_aliases": [
+        "Lucielle",
+        "Lucifer",
+        "Lucielle (Colossus)"
+      ]
     }
   ],
   "monitor_only_custom_matches": true
