@@ -157,59 +157,51 @@ class TestTrackerSharedRoster(unittest.TestCase):
             "Chacineiro",
         )
 
-    def test_chacineiro_smurf_keeps_main_avatar_and_displays_asterisk_smurf_name(self) -> None:
+    def test_unmerged_smurfs_keep_own_avatar_and_pinned_display_name(self) -> None:
         import io
         from PIL import Image
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Mesmo quando players_roster.json remoto ainda não lista #1333418, _merge_local_smurf_fallbacks preserva a smurf
-        remote_without_smurf = [
-            {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
-            {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
-        ]
-        merged = relic_api._merge_local_smurf_fallbacks(remote_without_smurf)
-        pids = [int(r["profile_id"]) for r in merged]
-        self.assertEqual(pids, [79327, 1333418, 991764])
-        smurf_row = next(r for r in merged if r["profile_id"] == 1333418)
-        self.assertTrue(smurf_row.get("show_smurf_alias"))
-        self.assertEqual(smurf_row.get("merged_into_profile_id"), 79327)
-        self.assertEqual(smurf_row.get("merged_into_steam_id"), "76561197963172584")
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas), incluindo as 3 desmembradas e as 6 novas smurfs
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
+        self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
+        self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
+        by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
+        self.assertTrue(all(not r.get("merged_into_profile_id") for r in relic_api.CORE_BR_ROSTER))
+        self.assertTrue(all(not r.get("merged_into_steam_id") for r in relic_api.CORE_BR_ROSTER))
 
-        # 2. Mesmo quando players_roster.json remoto traz #1333418 com known_aliases (formato do Ranking),
-        # parse_shared_roster_payload ativa show_smurf_alias=True automaticamente para o Tracker
-        parsed_with_smurf = relic_api.parse_shared_roster_payload(
-            {
-                "schema_version": 1,
-                "veteranos": [
-                    {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro", "country": "br"},
-                    {
-                        "profile_id": 1333418,
-                        "steam_id": "76561198698969876",
-                        "original_alias": "Chacineiro",
-                        "country": "br",
-                        "merged_into_profile_id": 79327,
-                        "merged_into_steam_id": "76561197963172584",
-                        "known_aliases": ["TacticalForceConcentration", "Charles Bronson", "Chacineiro"],
-                    },
-                ],
-            }
-        )
-        smurf_parsed = next(r for r in parsed_with_smurf if r["profile_id"] == 1333418)
-        self.assertTrue(smurf_parsed.get("show_smurf_alias"))
+        expected_smurfs = {
+            1333418: ("76561198698969876", "Charles Bronson (Chacineiro)"),
+            557890: ("76561199538846112", "gabe44arg (Gabe)"),
+            1423426: ("76561199482388323", "geladeira velha (arc)"),
+            1297853: ("76561198721980631", "Shadow (Alekel)"),
+            1390350: ("76561198089278659", "TearsInTheRain (Chacineiro)"),
+            1297804: ("76561198723667226", "Leite Moço (『V』SKOBADARK)"),
+            1297821: ("76561198722284920", "Smurf 1 (General Winter)"),
+            1318162: ("76561198708550887", "Smurf 2 (General Winter)"),
+            1076221: ("76561198815935562", "Lucielle (Colossus)"),
+        }
+        for spid, (expected_sid, expected_alias) in expected_smurfs.items():
+            self.assertIn(spid, by_pid)
+            self.assertEqual(by_pid[spid]["steam_id"], expected_sid)
+            self.assertEqual(by_pid[spid]["original_alias"], expected_alias)
+            self.assertTrue(by_pid[spid].get("pin_alias"))
+            self.assertFalse(by_pid[spid].get("show_smurf_alias"))
 
-        # 3. Enriquecimento da partida + extração do card + avatar:
-        # mantém avatar da conta principal (76561197963172584) e exibe "Chacineiro* (Charles Bronson)"
+        # 2. Enriquecimento da partida + extração do card + avatar independente:
+        # mesmo trocando de nick na Steam, #1333418 exibe nome fixo "Charles Bronson (Chacineiro)" e mantém o próprio SteamID64/avatar
         roster_maps = relic_api.build_roster_lookup_maps()
         sample_match = {
             "match_id": 999888777,
             "tracked_profile_id": 1333418,
             "tracked_steam_id": "76561198698969876",
-            "tracked_alias": "Charles Bronson",
+            "tracked_alias": "QualquerNickSteamNovo",
             "tracked_faction": "Wehrmacht",
             "mode": "1v1",
             "map_raw": "faymonville",
             "map_clean": "Faymonville",
+            "win": True,
             "result": "Vitória",
             "duration_sec": 1200,
             "completion_time": 1_800_000_000,
@@ -218,10 +210,10 @@ class TestTrackerSharedRoster(unittest.TestCase):
             "allies": [],
             "opponents": [
                 {
-                    "profile_id": 555001,
-                    "alias": "Rival_US",
-                    "steam_id": "76561198000012345",
-                    "country": "us",
+                    "profile_id": 1297804,
+                    "alias": "OutroNickQualquer",
+                    "steam_id": "76561198723667226",
+                    "country": "br",
                     "faction": "US Forces",
                     "old_elo": 1510,
                     "new_elo": 1494,
@@ -229,18 +221,20 @@ class TestTrackerSharedRoster(unittest.TestCase):
             ],
         }
         relic_api.enrich_match_with_roster(sample_match, roster_maps)
-        self.assertEqual(sample_match["tracked_alias"], "Chacineiro* (Charles Bronson)")
-        self.assertEqual(sample_match["tracked_steam_id"], "76561197963172584")
+        self.assertEqual(sample_match["tracked_alias"], "Charles Bronson (Chacineiro)")
+        self.assertEqual(sample_match["tracked_steam_id"], "76561198698969876")
+        self.assertEqual(sample_match["opponents"][0]["alias"], "Leite Moço (『V』SKOBADARK)")
+        self.assertEqual(sample_match["opponents"][0]["steam_id"], "76561198723667226")
 
         axis_p, allies_p = card_renderer.extract_axis_and_allies_players({"records": [sample_match], "primary": sample_match})
         self.assertEqual(len(axis_p), 1)
-        self.assertEqual(axis_p[0]["alias"], "Chacineiro* (Charles Bronson)")
-        self.assertEqual(axis_p[0]["steam_id"], "76561197963172584")
+        self.assertEqual(axis_p[0]["alias"], "Charles Bronson (Chacineiro)")
+        self.assertEqual(axis_p[0]["steam_id"], "76561198698969876")
         self.assertEqual(len(allies_p), 1)
+        self.assertEqual(allies_p[0]["alias"], "Leite Moço (『V』SKOBADARK)")
 
         with tempfile.TemporaryDirectory() as td:
             db = MatchDatabase(Path(td) / "smurf_avatar.db")
-            # Salva avatar VERDE para a conta principal (79327) e VERMELHO para a smurf (1333418)
             buf_main = io.BytesIO()
             Image.new("RGBA", (64, 64), (20, 220, 40, 255)).save(buf_main, format="PNG")
             buf_smurf = io.BytesIO()
@@ -249,15 +243,48 @@ class TestTrackerSharedRoster(unittest.TestCase):
             db.save_cached_avatar("76561198698969876", "https://avatars.steamstatic.com/smurf.jpg", buf_smurf.getvalue(), profile_id=1333418)
 
             ap = card_renderer.SteamAvatarProvider(db, allow_network=False)
-            # Mesmo consultando diretamente pelo profile_id/steam_id da smurf, retorna o avatar VERDE da conta principal!
-            self.assertEqual(ap.resolve_steam_id(profile_id=1333418, steam_id="76561198698969876"), "76561197963172584")
-            av = ap.get_circular_avatar(size=40, profile_id=1333418, steam_id="76561198698969876", alias="Chacineiro* (Charles Bronson)")
+            # Conta desmembrada usa o próprio SteamID64 e próprio avatar (VERMELHO), não o da conta principal
+            self.assertEqual(ap.resolve_steam_id(profile_id=1333418, steam_id="76561198698969876"), "76561198698969876")
+            av = ap.get_circular_avatar(size=40, profile_id=1333418, steam_id="76561198698969876", alias="Charles Bronson (Chacineiro)")
             r, g, b, _ = av.getpixel((20, 20))
-            self.assertGreater(g, 180, f"Avatar deveria vir da conta principal (verde), mas recebeu RGB=({r},{g},{b}).")
-            self.assertLess(r, 80)
+            self.assertGreater(r, 180, f"Avatar da conta desmembrada deveria ser o próprio (vermelho), mas recebeu RGB=({r},{g},{b}).")
+            self.assertLess(g, 80)
+
+            # Renderização completa do card com os nomes '<Smurf> (<Original>)' (incluindo CJK 『V』) funciona sem erros
+            png_bytes = card_renderer.render_single_match_card_png(
+                {"records": [sample_match], "primary": sample_match},
+                avatar_provider=ap,
+            )
+            self.assertTrue(png_bytes.startswith(b"\x89PNG"))
             db.close()
 
-    def test_smurf_steam_id_and_formatted_alias_stay_intact_across_db_syncs(self) -> None:
+    def test_ensure_core_roster_strips_stale_merge_fields_on_unmerge(self) -> None:
+        cfg = {
+            "custom_players": [
+                {
+                    "profile_id": 1333418,
+                    "steam_id": "76561198698969876",
+                    "original_alias": "Chacineiro",
+                    "alias": "Chacineiro* (Charles Bronson)",
+                    "is_core_roster": True,
+                    "merged_into_profile_id": 79327,
+                    "merged_into_steam_id": "76561197963172584",
+                    "show_smurf_alias": True,
+                }
+            ]
+        }
+        self.assertTrue(monitor.ensure_core_roster_in_config(cfg))
+        by_pid = {int(c["profile_id"]): c for c in cfg["custom_players"]}
+        entry = by_pid[1333418]
+        self.assertEqual(entry["original_alias"], "Charles Bronson (Chacineiro)")
+        self.assertEqual(entry["alias"], "Charles Bronson (Chacineiro)")
+        self.assertTrue(entry.get("pin_alias"))
+        self.assertNotIn("merged_into_profile_id", entry)
+        self.assertNotIn("merged_into_steam_id", entry)
+        self.assertNotIn("show_smurf_alias", entry)
+        self.assertFalse(monitor.ensure_core_roster_in_config(cfg))
+
+    def test_db_sync_preserves_formatted_alias_and_resets_baseline_on_reactivation(self) -> None:
         from database import MatchDatabase
 
         with tempfile.TemporaryDirectory() as td:
@@ -271,23 +298,39 @@ class TestTrackerSharedRoster(unittest.TestCase):
                 },
                 {
                     "profile_id": 1333418,
-                    "alias": "Chacineiro",
-                    "original_alias": "Chacineiro",
+                    "alias": "Charles Bronson (Chacineiro)",
+                    "original_alias": "Charles Bronson (Chacineiro)",
                     "steam_id": "76561198698969876",
+                },
+                {
+                    "profile_id": 1297821,
+                    "alias": "Smurf 1 (General Winter)",
+                    "original_alias": "Smurf 1 (General Winter)",
+                    "steam_id": "76561198722284920",
                 },
             ]
             db.sync_tracked_players(players_cfg)
-            # Simula primeira sincronização recebendo alias formatado da smurf e tentativa de passar steam_id da conta principal
-            db.mark_baseline_synced(1333418, "Chacineiro* (Charles Bronson)", steam_id="76561197963172584")
-            row = next(p for p in db.get_active_players() if int(p["profile_id"]) == 1333418)
-            self.assertEqual(row["steam_id"], "76561198698969876")
-            self.assertEqual(row["alias"], "Chacineiro* (Charles Bronson)")
+            db.mark_baseline_synced(79327, "Chacineiro* (NickNovo)")
+            db.mark_baseline_synced(1333418, "Charles Bronson (Chacineiro)", steam_id="76561197963172584")
+            db.mark_baseline_synced(1297821, "Smurf 1 (General Winter)")
 
-            # Nova rodada de sync_tracked_players NÃO deve apagar o sufixo '* (Charles Bronson)' nem corromper o steam_id
+            # Desativa #1297821 removendo da lista ativa
+            db.sync_tracked_players(players_cfg[:2])
+            row_ch = next(p for p in db.get_active_players() if int(p["profile_id"]) == 79327)
+            row_cb = next(p for p in db.get_active_players() if int(p["profile_id"]) == 1333418)
+            self.assertEqual(row_ch["alias"], "Chacineiro* (NickNovo)")
+            self.assertEqual(row_ch["baseline_synced"], 1)
+            self.assertEqual(row_cb["steam_id"], "76561198698969876")
+            self.assertEqual(row_cb["alias"], "Charles Bronson (Chacineiro)")
+            self.assertEqual(row_cb["baseline_synced"], 1)
+
+            # Ao reativar #1297821, baseline_synced volta a 0 (evita flood de partidas antigas no Discord)
             db.sync_tracked_players(players_cfg)
-            row2 = next(p for p in db.get_active_players() if int(p["profile_id"]) == 1333418)
-            self.assertEqual(row2["steam_id"], "76561198698969876")
-            self.assertEqual(row2["alias"], "Chacineiro* (Charles Bronson)")
+            active_map = {int(p["profile_id"]): p for p in db.get_active_players()}
+            self.assertEqual(active_map[79327]["baseline_synced"], 1)
+            self.assertEqual(active_map[1333418]["baseline_synced"], 1)
+            self.assertEqual(active_map[1297821]["baseline_synced"], 0)
+            self.assertEqual(active_map[1297821]["alias"], "Smurf 1 (General Winter)")
             db.close()
 
 

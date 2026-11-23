@@ -289,22 +289,20 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa dos 39 jogadores brasileiros únicos monitorados (42 contas Steam vinculadas por SteamID64 imutável)
+# Lista fixa das 48 contas Steam brasileiras monitoradas (48 Veteranos únicos vinculados por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {
         "profile_id": 1333418,
         "steam_id": "76561198698969876",
-        "original_alias": "Chacineiro",
-        "merged_into_profile_id": 79327,
-        "merged_into_steam_id": "76561197963172584",
-        "show_smurf_alias": True,
+        "original_alias": "Charles Bronson (Chacineiro)",
+        "pin_alias": True,
         "known_aliases": [
-            "TacticalForceConcentration",
             "Charles Bronson",
             "Lord Charles Bronson",
             "Charles Broson",
-            "Chacineiro",
+            "TacticalForceConcentration",
+            "Charles Bronson (Chacineiro)",
         ],
     },
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
@@ -349,10 +347,9 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 557890,
         "steam_id": "76561199538846112",
-        "original_alias": "Gabe",
-        "merged_into_profile_id": 559962,
-        "merged_into_steam_id": "76561198062871244",
-        "known_aliases": ["gabe44arg", "gabe444arg", "É o Gabe", "Gabe"],
+        "original_alias": "gabe44arg (Gabe)",
+        "pin_alias": True,
+        "known_aliases": ["gabe44arg", "gabe444arg", "gabe44arg (Gabe)"],
     },
     {"profile_id": 26910, "steam_id": "76561197963741792", "original_alias": "nigo_BR ᵀᴹ"},
     {"profile_id": 6557, "steam_id": "76561198135142137", "original_alias": "Dragoness"},
@@ -361,11 +358,9 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 1423426,
         "steam_id": "76561199482388323",
-        "original_alias": "arc",
+        "original_alias": "geladeira velha (arc)",
         "pin_alias": True,
-        "merged_into_profile_id": 1005730,
-        "merged_into_steam_id": "76561199791811246",
-        "known_aliases": ["uncle hans", "geladeira velha", "dibas", "arc"],
+        "known_aliases": ["geladeira velha", "dibas", "uncle hans", "geladeira velha (arc)"],
     },
     {"profile_id": 31145, "steam_id": "76561197985268629", "original_alias": "vonMises"},
     {"profile_id": 58737, "steam_id": "76561197993922195", "original_alias": "INFIEL"},
@@ -382,12 +377,54 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "known_aliases": ["Superior Culture", "Winter Animal"],
     },
     {"profile_id": 975688, "steam_id": "76561197994245218", "original_alias": "Kefbr"},
+    {
+        "profile_id": 1297853,
+        "steam_id": "76561198721980631",
+        "original_alias": "Shadow (Alekel)",
+        "pin_alias": True,
+        "known_aliases": ["Shadow", "Zé da manga", "Shadow (Alekel)"],
+    },
+    {
+        "profile_id": 1390350,
+        "steam_id": "76561198089278659",
+        "original_alias": "TearsInTheRain (Chacineiro)",
+        "pin_alias": True,
+        "known_aliases": ["TearsInTheRain", "TearsInTheRain (Chacineiro)"],
+    },
+    {
+        "profile_id": 1297804,
+        "steam_id": "76561198723667226",
+        "original_alias": "Leite Moço (『V』SKOBADARK)",
+        "pin_alias": True,
+        "known_aliases": ["Leite Moço", "Leite Moço (『V』SKOBADARK)"],
+    },
+    {
+        "profile_id": 1297821,
+        "steam_id": "76561198722284920",
+        "original_alias": "Smurf 1 (General Winter)",
+        "pin_alias": True,
+        "known_aliases": ["General Winter", "Dick of the Galaxies", "Smurf 1 (General Winter)"],
+    },
+    {
+        "profile_id": 1318162,
+        "steam_id": "76561198708550887",
+        "original_alias": "Smurf 2 (General Winter)",
+        "pin_alias": True,
+        "known_aliases": ["General Winter", ".", "Smurf 2 (General Winter)"],
+    },
+    {
+        "profile_id": 1076221,
+        "steam_id": "76561198815935562",
+        "original_alias": "Lucielle (Colossus)",
+        "pin_alias": True,
+        "known_aliases": ["Lucielle", "Lucifer", "Lucielle (Colossus)"],
+    },
 ]
 
 FALLBACK_CORE_BR_ROSTER: list[dict[str, Any]] = [dict(row) for row in CORE_BR_ROSTER]
 
-# Contas smurf onde o Tracker sempre exibe 'NickPrincipal* (NickSmurf)' mantendo o avatar da conta principal
-TRACKER_SMURF_DISPLAY_PIDS: frozenset[int] = frozenset({1333418})
+# Contas smurf onde o Tracker força 'NickPrincipal* (NickSmurf)' (vazio: smurfs agora são contas independentes com pin_alias)
+TRACKER_SMURF_DISPLAY_PIDS: frozenset[int] = frozenset()
 
 # Contas secundárias mescladas mantidas no Tracker mesmo enquanto players_roster.json remoto ainda não as listar
 LOCAL_MERGED_ACCOUNT_FALLBACKS: tuple[dict[str, Any], ...] = tuple(

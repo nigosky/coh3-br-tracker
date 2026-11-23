@@ -312,10 +312,9 @@
       "original_alias": "gabe44arg (Gabe)",
       "steam_id": "76561199538846112",
       "placements": [
-        "🔗 Conta mesclada em É o Gabe (#559962)"
+        "⭐ Monitorado BR"
       ],
-      "is_custom": true,
-      "merged_into_profile_id": 559962
+      "is_custom": true
     },
     {
       "profile_id": 26910,
@@ -489,8 +488,7 @@
       "placements": [
         "⭐ Monitorado BR"
       ],
-      "is_custom": true,
-      "merged_into_profile_id": 1005730
+      "is_custom": true
     },
     {
       "profile_id": 1333418,
@@ -500,8 +498,7 @@
       "placements": [
         "⭐ Monitorado BR"
       ],
-      "is_custom": true,
-      "merged_into_profile_id": 79327
+      "is_custom": true
     },
     {
       "profile_id": 1297853,
@@ -770,8 +767,6 @@
         "gabe444arg",
         "gabe44arg (Gabe)"
       ],
-      "merged_into_profile_id": 559962,
-      "merged_into_steam_id": "76561198062871244",
       "pin_alias": true
     },
     {
@@ -889,8 +884,6 @@
         "uncle hans",
         "geladeira velha (arc)"
       ],
-      "merged_into_profile_id": 1005730,
-      "merged_into_steam_id": "76561199791811246",
       "pin_alias": true
     },
     {
@@ -906,9 +899,6 @@
         "TacticalForceConcentration",
         "Charles Bronson (Chacineiro)"
       ],
-      "merged_into_profile_id": 79327,
-      "merged_into_steam_id": "76561197963172584",
-      "show_smurf_alias": true,
       "pin_alias": true
     },
     {
