@@ -322,6 +322,10 @@ class MatchDatabase:
                             WHEN excluded.steam_id != '' THEN excluded.steam_id
                             ELSE tracked_players.steam_id
                         END,
+                        baseline_synced = CASE
+                            WHEN tracked_players.active = 0 THEN 0
+                            ELSE tracked_players.baseline_synced
+                        END,
                         active = 1
                     """,
                     rows_to_upsert,

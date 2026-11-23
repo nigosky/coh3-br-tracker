@@ -174,14 +174,26 @@ def ensure_core_roster_in_config(
             elif "show_smurf_alias" in target:
                 target.pop("show_smurf_alias", None)
                 changed = True
-            if c_known and target.get("known_aliases") != c_known:
-                target["known_aliases"] = c_known
+            if c_known:
+                if target.get("known_aliases") != c_known:
+                    target["known_aliases"] = c_known
+                    changed = True
+            elif "known_aliases" in target:
+                target.pop("known_aliases", None)
                 changed = True
-            if c_merged_pid and int(target.get("merged_into_profile_id", 0) or 0) != c_merged_pid:
-                target["merged_into_profile_id"] = c_merged_pid
+            if c_merged_pid:
+                if int(target.get("merged_into_profile_id", 0) or 0) != c_merged_pid:
+                    target["merged_into_profile_id"] = c_merged_pid
+                    changed = True
+            elif "merged_into_profile_id" in target:
+                target.pop("merged_into_profile_id", None)
                 changed = True
-            if c_merged_sid and target.get("merged_into_steam_id") != c_merged_sid:
-                target["merged_into_steam_id"] = c_merged_sid
+            if c_merged_sid:
+                if target.get("merged_into_steam_id") != c_merged_sid:
+                    target["merged_into_steam_id"] = c_merged_sid
+                    changed = True
+            elif "merged_into_steam_id" in target:
+                target.pop("merged_into_steam_id", None)
                 changed = True
             if not target.get("is_core_roster"):
                 target["is_core_roster"] = True

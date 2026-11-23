@@ -329,7 +329,7 @@ def truncate_to_px(
     return txt + "…", fnt
 
 
-_SMURF_ALIAS_SPLIT_RE = re.compile(r"^(.+\*)\s+\((.+)\)$")
+_SMURF_ALIAS_SPLIT_RE = re.compile(r"^(.+?)\s+\(([^()]+)\)$")
 
 
 def _draw_player_alias(
@@ -345,8 +345,8 @@ def _draw_player_alias(
 ) -> float:
     """
     Desenha apelido de jogador respeitando `max_px`.
-    Para formatos `NickPrincipal* (Smurf/NovoNick)`, mantém `NickPrincipal*` em destaque e usa fonte
-    condensada menor em `(Smurf/NovoNick)` para caber por completo sem cortar o nome da conta smurf.
+    Para formatos `NickPrincipal* (NovoNick)` e `NickSmurf (ContaOriginal)`, mantém o nome principal em destaque
+    e usa fonte condensada menor no sufixo entre parênteses para caber por completo sem cortar.
     """
     txt = strip_unsafe_chars(raw_alias) or "Desconhecido"
     m = _SMURF_ALIAS_SPLIT_RE.match(txt)
