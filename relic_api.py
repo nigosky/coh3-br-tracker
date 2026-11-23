@@ -289,7 +289,7 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa das 46 contas Steam brasileiras monitoradas (46 Veteranos únicos vinculados por SteamID64 imutável)
+# Lista fixa das 43 contas Steam brasileiras monitoradas (43 Veteranos únicos vinculados por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {
@@ -322,12 +322,6 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 13450, "steam_id": "76561198284234077", "original_alias": "7 DIVISAO PHANTOM"},
     {"profile_id": 944488, "steam_id": "76561198063124280", "original_alias": "gbytes™"},
     {"profile_id": 21206, "steam_id": "76561198061434984", "original_alias": "hjax"},
-    {
-        "profile_id": 509690,
-        "steam_id": "76561198053226112",
-        "original_alias": "Alekel",
-        "known_aliases": ["Minhoca de ferro!", "Minhoca de ferro", "Alekel"],
-    },
     {"profile_id": 1114404, "steam_id": "76561198024118058", "original_alias": "Vikitor"},
     {"profile_id": 366826, "steam_id": "76561198014985380", "original_alias": "Lem22", "country": "us"},
     {"profile_id": 1282592, "steam_id": "76561198028644178", "original_alias": "SapoBoi_BR"},
@@ -378,25 +372,11 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     },
     {"profile_id": 975688, "steam_id": "76561197994245218", "original_alias": "Kefbr"},
     {
-        "profile_id": 1297853,
-        "steam_id": "76561198721980631",
-        "original_alias": "Shadow (Alekel)",
-        "pin_alias": True,
-        "known_aliases": ["Shadow", "Zé da manga", "Shadow (Alekel)"],
-    },
-    {
         "profile_id": 1390350,
         "steam_id": "76561198089278659",
         "original_alias": "TearsInTheRain (Chacineiro)",
         "pin_alias": True,
         "known_aliases": ["TearsInTheRain", "TearsInTheRain (Chacineiro)"],
-    },
-    {
-        "profile_id": 1297804,
-        "steam_id": "76561198723667226",
-        "original_alias": "Leite Moço (『V』SKOBADARK)",
-        "pin_alias": True,
-        "known_aliases": ["Leite Moço", "Leite Moço (『V』SKOBADARK)"],
     },
     {
         "profile_id": 1076221,
@@ -449,6 +429,41 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "original_alias": "General Winter (Smurf 2)",
         "pin_alias": True,
         "known_aliases": ["General Winter", ".", "General Winter (Smurf 2)"],
+    },
+    {
+        "profile_id": 509690,
+        "steam_id": "76561198053226112",
+        "original_alias": "Alekel",
+        "pin_alias": True,
+        "known_aliases": ["Minhoca de ferro!", "Minhoca de ferro", "Alekel"],
+    },
+    {
+        "profile_id": 1297853,
+        "steam_id": "76561198721980631",
+        "original_alias": "Alekel (Smurf: Shadow)",
+        "pin_alias": True,
+        "known_aliases": ["Shadow", "Zé da manga", "Alekel (Smurf: Shadow)"],
+    },
+    {
+        "profile_id": 844225,
+        "steam_id": "76561198009000654",
+        "original_alias": "『V』SKOBADARK",
+        "pin_alias": True,
+        "known_aliases": ["『V』SKOBADARK", "SKOBADARK"],
+    },
+    {
+        "profile_id": 1297804,
+        "steam_id": "76561198723667226",
+        "original_alias": "『V』SKOBADARK (Smurf: Leite Moço)",
+        "pin_alias": True,
+        "known_aliases": ["Leite Moço", "『V』SKOBADARK (Smurf: Leite Moço)"],
+    },
+    {
+        "profile_id": 164152,
+        "steam_id": "76561198029749621",
+        "original_alias": "seu pai (Sgt.Yoda)",
+        "pin_alias": True,
+        "known_aliases": ["seu pai", "Sgt.Yoda", "seu pai (Sgt.Yoda)"],
     },
 ]
 
