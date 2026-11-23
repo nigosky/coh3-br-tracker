@@ -27,6 +27,7 @@ from relic_api import (
     build_roster_lookup_maps,
     fetch_custom_players_stats,
     format_bound_display_alias,
+    is_battlegroup_eligible_mode,
     refresh_core_br_roster,
 )
 from security import (
@@ -1437,7 +1438,7 @@ def enrich_group_with_battlegroups(
     grp: dict[str, Any],
 ) -> tuple[bool, bool]:
     """
-    Consulta `cohdb.com` (somente-leitura) para obter os Battlegroups de uma partida Automatch.
+    Consulta `cohdb.com` (somente-leitura) para obter os Battlegroups de uma partida Automatch ou Personalizada (Custom).
     Retorna `(checked_on_cohdb, has_battlegroups)`.
     """
     if cohdb is None or cohdb.is_circuit_open:
@@ -1445,7 +1446,7 @@ def enrich_group_with_battlegroups(
     recs = grp.get("records") or [grp.get("primary") or grp]
     primary = recs[0]
     mode_str = str(primary.get("mode") or "")
-    if mode_str == "Custom" or "Personalizada" in mode_str:
+    if not is_battlegroup_eligible_mode(mode_str):
         return False, False
 
     if any(bool(r.get("battlegroups_checked")) for r in recs):
@@ -1498,6 +1499,56 @@ def enrich_group_with_battlegroups(
         grp["primary"]["battlegroups"] = str_map
         grp["primary"]["battlegroups_checked"] = True
     return True, bool(str_map)
+
+
+def _bg_retry_cooldown_seconds(match_age_sec: int, *, has_replay: bool = True) -> int:
+    """Define intervalo de backoff entre rechecagens retroativas no cohdb.com conforme idade da partida (até 72h)."""
+    age = max(0, int(match_age_sec))
+    if age < 1800:
+        return 0
+    if not has_replay:
+        return 7200
+    if age < 14400:
+        return 900
+    if age < 86400:
+        return 2700
+    return 7200
+
+
+def _load_bg_retry_state(db: MatchDatabase, now_ts: int, max_age_sec: int) -> dict[int, int]:
+    """Carrega mapa `{match_id: last_probe_ts}` de retentativas cohdb pendentes em `bot_state`."""
+    raw = str(db.get_state("bg_retry_state") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    cutoff = int(now_ts) - max(3600, int(max_age_sec))
+    cleaned: dict[int, int] = {}
+    for k, v in parsed.items():
+        try:
+            mid = int(k)
+            ts = int(v)
+        except (TypeError, ValueError):
+            continue
+        if mid > 0 and ts >= cutoff:
+            cleaned[mid] = ts
+    return cleaned
+
+
+def _save_bg_retry_state(db: MatchDatabase, state: dict[int, int], now_ts: int, max_age_sec: int) -> None:
+    """Persiste estado enxuto de backoff das rechecagens cohdb em `bot_state`."""
+    cutoff = int(now_ts) - max(3600, int(max_age_sec))
+    items = sorted(
+        ((int(mid), int(ts)) for mid, ts in state.items() if int(mid) > 0 and int(ts) >= cutoff),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )[:200]
+    payload = json.dumps({str(mid): ts for mid, ts in items}, separators=(",", ":"))
+    db.set_state("bg_retry_state", payload)
 
 
 def enrich_group_with_nemesis(
@@ -1946,11 +1997,13 @@ def run_cycle(
 
             retry_groups: list[dict[str, Any]] = []
             posted_missing_bg: list[tuple[dict[str, Any], str]] = []
+            checked_in_this_cycle_mids: set[int] = set()
             for grp in grouped_to_send:
                 checked_ok = False
                 has_bg = False
                 if cohdb_client is not None:
                     checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
+                    checked_in_this_cycle_mids.add(int(grp["match_id"]))
                     if has_bg:
                         bg_enriched_new += 1
                 nem_list = enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
@@ -1967,13 +2020,13 @@ def run_cycle(
                         extra_nem,
                         grp["match_id"],
                     )
-                is_automatch = str(grp["primary"].get("mode") or "") != "Custom"
+                is_fast_bg_mode = str(grp["primary"].get("mode") or "") in AUTOMATCH_MODES
                 try:
                     msg_id = discord.send_match_card(grp)
                     if msg_id:
                         db.update_matches_discord_id_batch(grp["records"], msg_id)
                         cards_confirmed += 1
-                        if cohdb_client is not None and is_automatch and not checked_ok:
+                        if cohdb_client is not None and is_fast_bg_mode and not checked_ok:
                             posted_missing_bg.append((grp, msg_id))
                     else:
                         retry_groups.append(grp)
@@ -1999,10 +2052,10 @@ def run_cycle(
                         if msg_id:
                             db.update_matches_discord_id_batch(grp["records"], msg_id)
                             cards_confirmed += 1
-                            is_automatch = str(grp["primary"].get("mode") or "") != "Custom"
+                            is_fast_bg_mode = str(grp["primary"].get("mode") or "") in AUTOMATCH_MODES
                             if (
                                 cohdb_client is not None
-                                and is_automatch
+                                and is_fast_bg_mode
                                 and not bool(grp["primary"].get("battlegroups_checked"))
                             ):
                                 posted_missing_bg.append((grp, msg_id))
@@ -2017,7 +2070,7 @@ def run_cycle(
                             redact_secrets(exc),
                         )
 
-            # Retentativa rápida pós-envio (sem atrasar o card!): aguarda o cohdb indexar partidas recém-encerradas
+            # Retentativa rápida pós-envio (sem atrasar o card!): aguarda o cohdb indexar partidas Automatch recém-encerradas
             recently_retried_mids: set[int] = set()
             if cohdb_client is not None and posted_missing_bg and not cohdb_client.is_circuit_open:
                 remaining_missing = list(posted_missing_bg)
@@ -2063,42 +2116,75 @@ def run_cycle(
                             still_missing.append((p_grp, p_msg_id))
                     remaining_missing = still_missing
 
-            # Enriquecimento retroativo silencioso (PATCH): atualiza cards recentes das últimas 4h assim que o cohdb indexar o replay
+            # Enriquecimento retroativo silencioso (PATCH): cobre Automatch e Personalizadas (Custom) até 72h com backoff inteligente
             if cohdb_client is not None and not cohdb_client.is_circuit_open:
-                missing_bg_rows = db.get_recent_matches_missing_battlegroups(max_age_sec=14400, limit=5)
+                retro_bg_max_age_sec = max(14400, int(cleanup_hours) * 3600) if cleanup_hours > 0 else 259200
+                bg_retry_state = _load_bg_retry_state(db, now_ts, retro_bg_max_age_sec)
+                bg_retry_dirty = False
+                skip_mids = recently_retried_mids | checked_in_this_cycle_mids
+                missing_bg_rows = db.get_recent_matches_missing_battlegroups(
+                    max_age_sec=retro_bg_max_age_sec,
+                    limit=24,
+                    exclude_match_ids=skip_mids,
+                )
+                retro_probed = 0
                 for m_grp in group_matches_by_id(missing_bg_rows):
-                    if cohdb_client.is_circuit_open:
+                    if cohdb_client.is_circuit_open or retro_probed >= 8:
                         break
-                    if int(m_grp["match_id"]) in recently_retried_mids:
+                    mid = int(m_grp["match_id"])
+                    if mid in skip_mids:
                         continue
+                    m_prim = m_grp.get("primary") or (m_grp.get("records") or [{}])[0]
+                    comp_ts = int(m_prim.get("completion_time", 0) or 0)
+                    match_age = max(0, now_ts - comp_ts) if comp_ts > 0 else 0
+                    cooldown_sec = _bg_retry_cooldown_seconds(
+                        match_age,
+                        has_replay=bool(m_prim.get("has_replay", True)),
+                    )
+                    last_probe_ts = int(bg_retry_state.get(mid, 0) or 0)
+                    if cooldown_sec > 0 and last_probe_ts > 0 and (now_ts - last_probe_ts) < cooldown_sec:
+                        continue
+
+                    retro_probed += 1
                     checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, m_grp)
-                    if checked_ok and has_bg:
-                        enrich_group_with_nemesis(db, m_grp, roster_maps=roster_maps)
-                        existing_msg_id = next(
-                            (
-                                str(r.get("discord_message_id") or "").strip()
-                                for r in (m_grp.get("records") or [m_grp.get("primary") or {}])
-                                if str(r.get("discord_message_id") or "").strip().isdigit()
-                            ),
-                            "",
-                        )
-                        if existing_msg_id:
-                            try:
-                                patched = discord.edit_match_card(existing_msg_id, m_grp)
-                                if patched:
-                                    bg_patched_cards += 1
-                                    logger.info(
-                                        "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) com Battlegroups.",
+                    if checked_ok:
+                        if mid in bg_retry_state:
+                            bg_retry_state.pop(mid, None)
+                            bg_retry_dirty = True
+                        if has_bg:
+                            enrich_group_with_nemesis(db, m_grp, roster_maps=roster_maps)
+                            existing_msg_id = next(
+                                (
+                                    str(r.get("discord_message_id") or "").strip()
+                                    for r in (m_grp.get("records") or [m_grp.get("primary") or {}])
+                                    if str(r.get("discord_message_id") or "").strip().isdigit()
+                                ),
+                                "",
+                            )
+                            if existing_msg_id:
+                                try:
+                                    patched = discord.edit_match_card(existing_msg_id, m_grp)
+                                    if patched:
+                                        bg_patched_cards += 1
+                                        logger.info(
+                                            "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) com Battlegroups.",
+                                            m_grp["match_id"],
+                                            patched,
+                                        )
+                                    time.sleep(0.35)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d no Discord: %s",
                                         m_grp["match_id"],
-                                        patched,
+                                        redact_secrets(exc),
                                     )
-                                time.sleep(0.35)
-                            except Exception as exc:
-                                logger.warning(
-                                    "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d no Discord: %s",
-                                    m_grp["match_id"],
-                                    redact_secrets(exc),
-                                )
+                    else:
+                        bg_retry_state[mid] = now_ts
+                        bg_retry_dirty = True
+
+                if bg_retry_dirty:
+                    _save_bg_retry_state(db, bg_retry_state, now_ts, retro_bg_max_age_sec)
+
                 if bg_enriched_new > 0 or bg_patched_cards > 0:
                     logger.info(
                         "[COHDB BATTLEGROUPS] Novos cards com BG: %d | Cards recentes atualizados (PATCH): %d",

@@ -618,33 +618,43 @@ class MatchDatabase:
 
     def get_recent_matches_missing_battlegroups(
         self,
-        max_age_sec: int = 10800,
-        limit: int = 6,
+        max_age_sec: int = 259200,
+        limit: int = 10,
+        exclude_match_ids: set[int] | list[int] | None = None,
     ) -> list[dict[str, Any]]:
         """
-        Retorna registros de partidas Automatch recentes já postadas no Discord (Snowflake válido)
-        cujos Battlegroups ainda não foram indexados no cohdb.com, para enriquecimento e PATCH retroativo.
+        Retorna registros de partidas recentes (Automatch e Personalizadas/Custom, excluindo Co-Op vs IA)
+        já postadas no Discord (Snowflake válido) cujos Battlegroups ainda não foram indexados no cohdb.com,
+        para enriquecimento e PATCH retroativo.
         """
         safe_limit = max(1, min(int(limit), 30))
         cutoff = int(time.time()) - max(600, int(max_age_sec))
+        excluded = sorted({int(m) for m in (exclude_match_ids or []) if int(m or 0) > 0})
+        exclude_sql = ""
+        params: list[Any] = [cutoff]
+        if excluded:
+            ex_ph = ",".join("?" for _ in excluded)
+            exclude_sql = f"\n              AND rm.match_id NOT IN ({ex_ph})"
+            params.extend(excluded)
+        params.append(safe_limit)
         conn = self._connect()
         mid_rows = conn.execute(
-            """
+            f"""
             SELECT rm.match_id, MAX(rm.completion_time) AS latest_ct
             FROM recorded_matches rm
             JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
             WHERE tp.active = 1
-              AND rm.mode != 'Custom'
+              AND rm.mode IN ('1v1', '2v2', 'Team Games (3v3)', 'Team Games (4v4)', 'Custom')
               AND rm.completion_time >= ?
               AND COALESCE(rm.battlegroups_json, '') = ''
               AND rm.discord_message_id IS NOT NULL
               AND length(rm.discord_message_id) >= 15
-              AND rm.discord_message_id NOT GLOB '*[^0-9]*'
+              AND rm.discord_message_id NOT GLOB '*[^0-9]*'{exclude_sql}
             GROUP BY rm.match_id
             ORDER BY latest_ct DESC
             LIMIT ?
             """,
-            (cutoff, safe_limit),
+            params,
         ).fetchall()
         mids = [int(r["match_id"]) for r in mid_rows]
         if not mids:
