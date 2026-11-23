@@ -1222,7 +1222,8 @@ def _resolve_roster_participant(
             show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
         )
         roster_country = str(r_entry.get("country") or "").strip().lower()
-        return bound_sid, disp, (roster_country or str(country or "br").lower()), True
+        is_vet = bool(r_entry.get("is_veterano", True))
+        return bound_sid, disp, (roster_country or str(country or "br").lower()), is_vet
     return clean_sid, raw_alias, str(country or ("br" if is_tracked else "un")).lower(), is_tracked
 
 

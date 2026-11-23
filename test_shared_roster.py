@@ -14,6 +14,7 @@ import relic_api
 class TestTrackerSharedRoster(unittest.TestCase):
     def tearDown(self) -> None:
         relic_api.CORE_BR_ROSTER[:] = [dict(r) for r in relic_api.FALLBACK_CORE_BR_ROSTER]
+        relic_api.MANUAL_OTHER_BR_DISPLAY[:] = [dict(r) for r in relic_api.FALLBACK_MANUAL_OTHER_BR_DISPLAY]
 
     def test_parse_shared_roster_ignores_manual_other_br_and_keeps_us_country(self) -> None:
         payload = {
@@ -163,34 +164,47 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas), incluindo as 3 desmembradas e as 6 novas smurfs
-        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
+        # 1. Roster padrão tem 46 Veteranos independentes (0 mescladas) + 10 Outros BR de exibição passiva
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 46)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 10)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
+        other_by_pid = {int(r["profile_id"]): r for r in relic_api.MANUAL_OTHER_BR_DISPLAY}
         self.assertTrue(all(not r.get("merged_into_profile_id") for r in relic_api.CORE_BR_ROSTER))
         self.assertTrue(all(not r.get("merged_into_steam_id") for r in relic_api.CORE_BR_ROSTER))
 
-        expected_smurfs = {
+        expected_vet_smurfs = {
             1333418: ("76561198698969876", "Charles Bronson (Chacineiro)"),
             557890: ("76561199538846112", "gabe44arg (Gabe)"),
             1423426: ("76561199482388323", "geladeira velha (arc)"),
             1297853: ("76561198721980631", "Shadow (Alekel)"),
             1390350: ("76561198089278659", "TearsInTheRain (Chacineiro)"),
             1297804: ("76561198723667226", "Leite Moço (『V』SKOBADARK)"),
-            1297821: ("76561198722284920", "Smurf 1 (General Winter)"),
-            1318162: ("76561198708550887", "Smurf 2 (General Winter)"),
             1076221: ("76561198815935562", "Lucielle (Colossus)"),
         }
-        for spid, (expected_sid, expected_alias) in expected_smurfs.items():
+        for spid, (expected_sid, expected_alias) in expected_vet_smurfs.items():
             self.assertIn(spid, by_pid)
             self.assertEqual(by_pid[spid]["steam_id"], expected_sid)
             self.assertEqual(by_pid[spid]["original_alias"], expected_alias)
             self.assertTrue(by_pid[spid].get("pin_alias"))
             self.assertFalse(by_pid[spid].get("show_smurf_alias"))
 
+        expected_gw_other = {
+            462597: ("76561198133760614", "General Winter (Principal)"),
+            1297821: ("76561198722284920", "General Winter (Smurf 1)"),
+            1318162: ("76561198708550887", "General Winter (Smurf 2)"),
+        }
+        for gpid, (expected_sid, expected_alias) in expected_gw_other.items():
+            self.assertNotIn(gpid, by_pid)
+            self.assertIn(gpid, other_by_pid)
+            self.assertEqual(other_by_pid[gpid]["steam_id"], expected_sid)
+            self.assertEqual(other_by_pid[gpid]["original_alias"], expected_alias)
+            self.assertTrue(other_by_pid[gpid].get("pin_alias"))
+
         # 2. Enriquecimento da partida + extração do card + avatar independente:
-        # mesmo trocando de nick na Steam, #1333418 exibe nome fixo "Charles Bronson (Chacineiro)" e mantém o próprio SteamID64/avatar
+        # Veterano smurf (#1333418) mantém nome fixo e is_br_roster=True;
+        # General Winter (#1297821, em manual_other_br) exibe "General Winter (Smurf 1)" SEM badge de Veterano (is_br_roster=False)!
         roster_maps = relic_api.build_roster_lookup_maps()
         sample_match = {
             "match_id": 999888777,
@@ -198,7 +212,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             "tracked_steam_id": "76561198698969876",
             "tracked_alias": "QualquerNickSteamNovo",
             "tracked_faction": "Wehrmacht",
-            "mode": "1v1",
+            "mode": "2v2",
             "map_raw": "faymonville",
             "map_clean": "Faymonville",
             "win": True,
@@ -207,31 +221,61 @@ class TestTrackerSharedRoster(unittest.TestCase):
             "completion_time": 1_800_000_000,
             "old_elo": 1520,
             "new_elo": 1536,
-            "allies": [],
-            "opponents": [
+            "allies": [
                 {
                     "profile_id": 1297804,
                     "alias": "OutroNickQualquer",
                     "steam_id": "76561198723667226",
                     "country": "br",
-                    "faction": "US Forces",
+                    "faction": "DAK",
                     "old_elo": 1510,
-                    "new_elo": 1494,
+                    "new_elo": 1525,
                 }
+            ],
+            "opponents": [
+                {
+                    "profile_id": 462597,
+                    "alias": "General Winter",
+                    "steam_id": "76561198133760614",
+                    "country": "br",
+                    "faction": "US Forces",
+                    "old_elo": 1880,
+                    "new_elo": 1865,
+                },
+                {
+                    "profile_id": 1297821,
+                    "alias": "General Winter",
+                    "steam_id": "76561198722284920",
+                    "country": "br",
+                    "faction": "British Forces",
+                    "old_elo": 1790,
+                    "new_elo": 1775,
+                },
             ],
         }
         relic_api.enrich_match_with_roster(sample_match, roster_maps)
         self.assertEqual(sample_match["tracked_alias"], "Charles Bronson (Chacineiro)")
         self.assertEqual(sample_match["tracked_steam_id"], "76561198698969876")
-        self.assertEqual(sample_match["opponents"][0]["alias"], "Leite Moço (『V』SKOBADARK)")
-        self.assertEqual(sample_match["opponents"][0]["steam_id"], "76561198723667226")
+        self.assertTrue(sample_match.get("is_br_roster"))
+        self.assertEqual(sample_match["allies"][0]["alias"], "Leite Moço (『V』SKOBADARK)")
+        self.assertTrue(sample_match["allies"][0].get("is_br_roster"))
+        self.assertEqual(sample_match["opponents"][0]["alias"], "General Winter (Principal)")
+        self.assertFalse(sample_match["opponents"][0].get("is_br_roster"))
+        self.assertEqual(sample_match["opponents"][1]["alias"], "General Winter (Smurf 1)")
+        self.assertFalse(sample_match["opponents"][1].get("is_br_roster"))
 
         axis_p, allies_p = card_renderer.extract_axis_and_allies_players({"records": [sample_match], "primary": sample_match})
-        self.assertEqual(len(axis_p), 1)
+        self.assertEqual(len(axis_p), 2)
         self.assertEqual(axis_p[0]["alias"], "Charles Bronson (Chacineiro)")
-        self.assertEqual(axis_p[0]["steam_id"], "76561198698969876")
-        self.assertEqual(len(allies_p), 1)
-        self.assertEqual(allies_p[0]["alias"], "Leite Moço (『V』SKOBADARK)")
+        self.assertTrue(axis_p[0]["is_br_roster"])
+        self.assertEqual(axis_p[1]["alias"], "Leite Moço (『V』SKOBADARK)")
+        self.assertTrue(axis_p[1]["is_br_roster"])
+        self.assertEqual(len(allies_p), 2)
+        self.assertEqual(allies_p[0]["alias"], "General Winter (Principal)")
+        self.assertFalse(allies_p[0]["is_br_roster"])
+        self.assertEqual(allies_p[1]["alias"], "General Winter (Smurf 1)")
+        self.assertFalse(allies_p[1]["is_br_roster"])
+        self.assertFalse(card_renderer._is_br_veteranos_duel([sample_match], axis_p, allies_p))
 
         with tempfile.TemporaryDirectory() as td:
             db = MatchDatabase(Path(td) / "smurf_avatar.db")
@@ -243,14 +287,13 @@ class TestTrackerSharedRoster(unittest.TestCase):
             db.save_cached_avatar("76561198698969876", "https://avatars.steamstatic.com/smurf.jpg", buf_smurf.getvalue(), profile_id=1333418)
 
             ap = card_renderer.SteamAvatarProvider(db, allow_network=False)
-            # Conta desmembrada usa o próprio SteamID64 e próprio avatar (VERMELHO), não o da conta principal
             self.assertEqual(ap.resolve_steam_id(profile_id=1333418, steam_id="76561198698969876"), "76561198698969876")
             av = ap.get_circular_avatar(size=40, profile_id=1333418, steam_id="76561198698969876", alias="Charles Bronson (Chacineiro)")
             r, g, b, _ = av.getpixel((20, 20))
             self.assertGreater(r, 180, f"Avatar da conta desmembrada deveria ser o próprio (vermelho), mas recebeu RGB=({r},{g},{b}).")
             self.assertLess(g, 80)
 
-            # Renderização completa do card com os nomes '<Smurf> (<Original>)' (incluindo CJK 『V』) funciona sem erros
+            # Renderização completa do card com Veteranos + General Winter (Principal/Smurf 1) funciona sem erros
             png_bytes = card_renderer.render_single_match_card_png(
                 {"records": [sample_match], "primary": sample_match},
                 avatar_provider=ap,

@@ -531,26 +531,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 1297821,
-      "alias": "Smurf 1 (General Winter)",
-      "original_alias": "Smurf 1 (General Winter)",
-      "steam_id": "76561198722284920",
-      "placements": [
-        "⭐ Monitorado BR"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 1318162,
-      "alias": "Smurf 2 (General Winter)",
-      "original_alias": "Smurf 2 (General Winter)",
-      "steam_id": "76561198708550887",
-      "placements": [
-        "⭐ Monitorado BR"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 1076221,
       "alias": "Lucielle (Colossus)",
       "original_alias": "Lucielle (Colossus)",
@@ -936,32 +916,6 @@
       "known_aliases": [
         "Leite Moço",
         "Leite Moço (『V』SKOBADARK)"
-      ]
-    },
-    {
-      "profile_id": 1297821,
-      "steam_id": "76561198722284920",
-      "original_alias": "Smurf 1 (General Winter)",
-      "alias": "Smurf 1 (General Winter)",
-      "is_core_roster": true,
-      "pin_alias": true,
-      "known_aliases": [
-        "General Winter",
-        "Dick of the Galaxies",
-        "Smurf 1 (General Winter)"
-      ]
-    },
-    {
-      "profile_id": 1318162,
-      "steam_id": "76561198708550887",
-      "original_alias": "Smurf 2 (General Winter)",
-      "alias": "Smurf 2 (General Winter)",
-      "is_core_roster": true,
-      "pin_alias": true,
-      "known_aliases": [
-        "General Winter",
-        ".",
-        "Smurf 2 (General Winter)"
       ]
     },
     {
