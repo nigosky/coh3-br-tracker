@@ -175,11 +175,11 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertTrue(all(not r.get("merged_into_steam_id") for r in relic_api.CORE_BR_ROSTER))
 
         expected_vet_smurfs = {
-            1333418: ("76561198698969876", "Charles Bronson (Chacineiro)"),
-            557890: ("76561199538846112", "gabe44arg (Gabe)"),
-            1423426: ("76561199482388323", "geladeira velha (arc)"),
-            1390350: ("76561198089278659", "TearsInTheRain (Chacineiro)"),
-            1076221: ("76561198815935562", "Lucielle (Colossus)"),
+            1333418: ("76561198698969876", "Charles Bronson (Smurf: Chacineiro)"),
+            557890: ("76561199538846112", "gabe44arg (Smurf: Gabe)"),
+            1423426: ("76561199482388323", "geladeira velha (Smurf: arc)"),
+            1390350: ("76561198089278659", "TearsInTheRain (Smurf: Chacineiro)"),
+            1076221: ("76561198815935562", "Lucielle (Smurf: Colossus)"),
         }
         for spid, (expected_sid, expected_alias) in expected_vet_smurfs.items():
             self.assertIn(spid, by_pid)
@@ -188,15 +188,19 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertTrue(by_pid[spid].get("pin_alias"))
             self.assertFalse(by_pid[spid].get("show_smurf_alias"))
 
+        self.assertNotIn(462597, by_pid)
+        self.assertIn(462597, other_by_pid)
+        self.assertEqual(other_by_pid[462597]["steam_id"], "76561198133760614")
+        self.assertEqual(other_by_pid[462597]["original_alias"], "General Winter")
+
         expected_pinned_other = {
-            462597: ("76561198133760614", "General Winter (Principal)"),
-            1297821: ("76561198722284920", "General Winter (Smurf 1)"),
-            1318162: ("76561198708550887", "General Winter (Smurf 2)"),
+            1297821: ("76561198722284920", "General Winter (Smurf: General Winter)"),
+            1318162: ("76561198708550887", "General Winter (Smurf: General Winter)"),
             509690: ("76561198053226112", "Alekel"),
-            1297853: ("76561198721980631", "Alekel (Smurf: Shadow)"),
+            1297853: ("76561198721980631", "Shadow (Smurf: Alekel)"),
             844225: ("76561198009000654", "『V』SKOBADARK"),
-            1297804: ("76561198723667226", "『V』SKOBADARK (Smurf: Leite Moço)"),
-            164152: ("76561198029749621", "seu pai (Sgt.Yoda)"),
+            1297804: ("76561198723667226", "Leite Moço (Smurf: 『V』SKOBADARK)"),
+            164152: ("76561198029749621", "seu pai (Smurf: Sgt.Yoda)"),
         }
         for gpid, (expected_sid, expected_alias) in expected_pinned_other.items():
             self.assertNotIn(gpid, by_pid)
@@ -257,26 +261,26 @@ class TestTrackerSharedRoster(unittest.TestCase):
             ],
         }
         relic_api.enrich_match_with_roster(sample_match, roster_maps)
-        self.assertEqual(sample_match["tracked_alias"], "Charles Bronson (Chacineiro)")
+        self.assertEqual(sample_match["tracked_alias"], "Charles Bronson (Smurf: Chacineiro)")
         self.assertEqual(sample_match["tracked_steam_id"], "76561198698969876")
         self.assertTrue(sample_match.get("is_br_roster"))
-        self.assertEqual(sample_match["allies"][0]["alias"], "TearsInTheRain (Chacineiro)")
+        self.assertEqual(sample_match["allies"][0]["alias"], "TearsInTheRain (Smurf: Chacineiro)")
         self.assertTrue(sample_match["allies"][0].get("is_br_roster"))
-        self.assertEqual(sample_match["opponents"][0]["alias"], "Alekel (Smurf: Shadow)")
+        self.assertEqual(sample_match["opponents"][0]["alias"], "Shadow (Smurf: Alekel)")
         self.assertFalse(sample_match["opponents"][0].get("is_br_roster"))
-        self.assertEqual(sample_match["opponents"][1]["alias"], "『V』SKOBADARK (Smurf: Leite Moço)")
+        self.assertEqual(sample_match["opponents"][1]["alias"], "Leite Moço (Smurf: 『V』SKOBADARK)")
         self.assertFalse(sample_match["opponents"][1].get("is_br_roster"))
 
         axis_p, allies_p = card_renderer.extract_axis_and_allies_players({"records": [sample_match], "primary": sample_match})
         self.assertEqual(len(axis_p), 2)
-        self.assertEqual(axis_p[0]["alias"], "Charles Bronson (Chacineiro)")
+        self.assertEqual(axis_p[0]["alias"], "Charles Bronson (Smurf: Chacineiro)")
         self.assertTrue(axis_p[0]["is_br_roster"])
-        self.assertEqual(axis_p[1]["alias"], "TearsInTheRain (Chacineiro)")
+        self.assertEqual(axis_p[1]["alias"], "TearsInTheRain (Smurf: Chacineiro)")
         self.assertTrue(axis_p[1]["is_br_roster"])
         self.assertEqual(len(allies_p), 2)
-        self.assertEqual(allies_p[0]["alias"], "Alekel (Smurf: Shadow)")
+        self.assertEqual(allies_p[0]["alias"], "Shadow (Smurf: Alekel)")
         self.assertFalse(allies_p[0]["is_br_roster"])
-        self.assertEqual(allies_p[1]["alias"], "『V』SKOBADARK (Smurf: Leite Moço)")
+        self.assertEqual(allies_p[1]["alias"], "Leite Moço (Smurf: 『V』SKOBADARK)")
         self.assertFalse(allies_p[1]["is_br_roster"])
         self.assertFalse(card_renderer._is_br_veteranos_duel([sample_match], axis_p, allies_p))
 
@@ -291,7 +295,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
 
             ap = card_renderer.SteamAvatarProvider(db, allow_network=False)
             self.assertEqual(ap.resolve_steam_id(profile_id=1333418, steam_id="76561198698969876"), "76561198698969876")
-            av = ap.get_circular_avatar(size=40, profile_id=1333418, steam_id="76561198698969876", alias="Charles Bronson (Chacineiro)")
+            av = ap.get_circular_avatar(size=40, profile_id=1333418, steam_id="76561198698969876", alias="Charles Bronson (Smurf: Chacineiro)")
             r, g, b, _ = av.getpixel((20, 20))
             self.assertGreater(r, 180, f"Avatar da conta desmembrada deveria ser o próprio (vermelho), mas recebeu RGB=({r},{g},{b}).")
             self.assertLess(g, 80)
@@ -322,8 +326,8 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertTrue(monitor.ensure_core_roster_in_config(cfg))
         by_pid = {int(c["profile_id"]): c for c in cfg["custom_players"]}
         entry = by_pid[1333418]
-        self.assertEqual(entry["original_alias"], "Charles Bronson (Chacineiro)")
-        self.assertEqual(entry["alias"], "Charles Bronson (Chacineiro)")
+        self.assertEqual(entry["original_alias"], "Charles Bronson (Smurf: Chacineiro)")
+        self.assertEqual(entry["alias"], "Charles Bronson (Smurf: Chacineiro)")
         self.assertTrue(entry.get("pin_alias"))
         self.assertNotIn("merged_into_profile_id", entry)
         self.assertNotIn("merged_into_steam_id", entry)

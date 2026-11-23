@@ -296,7 +296,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 1333418,
         "steam_id": "76561198698969876",
-        "original_alias": "Charles Bronson (Chacineiro)",
+        "original_alias": "Charles Bronson (Smurf: Chacineiro)",
         "pin_alias": True,
         "known_aliases": [
             "Charles Bronson",
@@ -304,6 +304,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
             "Charles Broson",
             "TacticalForceConcentration",
             "Charles Bronson (Chacineiro)",
+            "Charles Bronson (Smurf: Chacineiro)",
         ],
     },
     {"profile_id": 991764, "steam_id": "76561198115923932", "original_alias": "SaNgar [BR]"},
@@ -342,9 +343,9 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 557890,
         "steam_id": "76561199538846112",
-        "original_alias": "gabe44arg (Gabe)",
+        "original_alias": "gabe44arg (Smurf: Gabe)",
         "pin_alias": True,
-        "known_aliases": ["gabe44arg", "gabe444arg", "gabe44arg (Gabe)"],
+        "known_aliases": ["gabe44arg", "gabe444arg", "gabe44arg (Gabe)", "gabe44arg (Smurf: Gabe)"],
     },
     {"profile_id": 26910, "steam_id": "76561197963741792", "original_alias": "nigo_BR ᵀᴹ"},
     {"profile_id": 6557, "steam_id": "76561198135142137", "original_alias": "Dragoness"},
@@ -353,9 +354,9 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 1423426,
         "steam_id": "76561199482388323",
-        "original_alias": "geladeira velha (arc)",
+        "original_alias": "geladeira velha (Smurf: arc)",
         "pin_alias": True,
-        "known_aliases": ["geladeira velha", "dibas", "uncle hans", "geladeira velha (arc)"],
+        "known_aliases": ["geladeira velha", "dibas", "uncle hans", "geladeira velha (arc)", "geladeira velha (Smurf: arc)"],
     },
     {"profile_id": 31145, "steam_id": "76561197985268629", "original_alias": "vonMises"},
     {"profile_id": 58737, "steam_id": "76561197993922195", "original_alias": "INFIEL"},
@@ -375,16 +376,16 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {
         "profile_id": 1390350,
         "steam_id": "76561198089278659",
-        "original_alias": "TearsInTheRain (Chacineiro)",
+        "original_alias": "TearsInTheRain (Smurf: Chacineiro)",
         "pin_alias": True,
-        "known_aliases": ["TearsInTheRain", "TearsInTheRain (Chacineiro)"],
+        "known_aliases": ["TearsInTheRain", "TearsInTheRain (Chacineiro)", "TearsInTheRain (Smurf: Chacineiro)"],
     },
     {
         "profile_id": 1076221,
         "steam_id": "76561198815935562",
-        "original_alias": "Lucielle (Colossus)",
+        "original_alias": "Lucielle (Smurf: Colossus)",
         "pin_alias": True,
-        "known_aliases": ["Lucielle", "Lucifer", "Lucielle (Colossus)"],
+        "known_aliases": ["Lucielle", "Lucifer", "Lucielle (Colossus)", "Lucielle (Smurf: Colossus)"],
     },
 ]
 
@@ -410,26 +411,20 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {"profile_id": 28937, "steam_id": "76561198089948995", "original_alias": "Mjr Bruno"},
     {"profile_id": 81751, "steam_id": "76561198080023560", "original_alias": "Razi"},
     {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
-    {
-        "profile_id": 462597,
-        "steam_id": "76561198133760614",
-        "original_alias": "General Winter (Principal)",
-        "pin_alias": True,
-        "known_aliases": ["General Winter", "General Winter (Principal)"],
-    },
+    {"profile_id": 462597, "steam_id": "76561198133760614", "original_alias": "General Winter"},
     {
         "profile_id": 1297821,
         "steam_id": "76561198722284920",
-        "original_alias": "General Winter (Smurf 1)",
+        "original_alias": "General Winter (Smurf: General Winter)",
         "pin_alias": True,
-        "known_aliases": ["General Winter", "Dick of the Galaxies", "General Winter (Smurf 1)"],
+        "known_aliases": ["General Winter", "Dick of the Galaxies", "General Winter (Smurf: General Winter)"],
     },
     {
         "profile_id": 1318162,
         "steam_id": "76561198708550887",
-        "original_alias": "General Winter (Smurf 2)",
+        "original_alias": "General Winter (Smurf: General Winter)",
         "pin_alias": True,
-        "known_aliases": ["General Winter", ".", "General Winter (Smurf 2)"],
+        "known_aliases": ["General Winter", ".", "General Winter (Smurf: General Winter)"],
     },
     {
         "profile_id": 509690,
@@ -441,9 +436,9 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {
         "profile_id": 1297853,
         "steam_id": "76561198721980631",
-        "original_alias": "Alekel (Smurf: Shadow)",
+        "original_alias": "Shadow (Smurf: Alekel)",
         "pin_alias": True,
-        "known_aliases": ["Shadow", "Zé da manga", "Alekel (Smurf: Shadow)"],
+        "known_aliases": ["Shadow", "Zé da manga", "Alekel (Smurf: Shadow)", "Shadow (Smurf: Alekel)"],
     },
     {
         "profile_id": 844225,
@@ -455,16 +450,16 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {
         "profile_id": 1297804,
         "steam_id": "76561198723667226",
-        "original_alias": "『V』SKOBADARK (Smurf: Leite Moço)",
+        "original_alias": "Leite Moço (Smurf: 『V』SKOBADARK)",
         "pin_alias": True,
-        "known_aliases": ["Leite Moço", "『V』SKOBADARK (Smurf: Leite Moço)"],
+        "known_aliases": ["Leite Moço", "『V』SKOBADARK (Smurf: Leite Moço)", "Leite Moço (Smurf: 『V』SKOBADARK)"],
     },
     {
         "profile_id": 164152,
         "steam_id": "76561198029749621",
-        "original_alias": "seu pai (Sgt.Yoda)",
+        "original_alias": "seu pai (Smurf: Sgt.Yoda)",
         "pin_alias": True,
-        "known_aliases": ["seu pai", "Sgt.Yoda", "seu pai (Sgt.Yoda)"],
+        "known_aliases": ["seu pai", "Sgt.Yoda", "seu pai (Sgt.Yoda)", "seu pai (Smurf: Sgt.Yoda)"],
     },
 ]
 
@@ -473,10 +468,8 @@ FALLBACK_MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [dict(row) for row in M
 # Contas smurf onde o Tracker força 'NickPrincipal* (NickSmurf)' (vazio: smurfs agora são contas independentes com pin_alias)
 TRACKER_SMURF_DISPLAY_PIDS: frozenset[int] = frozenset()
 
-# Contas secundárias mescladas mantidas no Tracker mesmo enquanto players_roster.json remoto ainda não as listar
-LOCAL_MERGED_ACCOUNT_FALLBACKS: tuple[dict[str, Any], ...] = tuple(
-    dict(row) for row in FALLBACK_CORE_BR_ROSTER if int(row.get("profile_id", 0) or 0) in TRACKER_SMURF_DISPLAY_PIDS
-)
+# Contas secundárias mescladas mantidas no Tracker (vazio: todas independentes no roster compartilhado)
+LOCAL_MERGED_ACCOUNT_FALLBACKS: tuple[dict[str, Any], ...] = ()
 
 _COUNTRY_ISO2_RE = re.compile(r"^[a-z]{2}$")
 
@@ -743,7 +736,24 @@ def normalize_mode_name(matchtype_id: int, raw_name: str | None = None) -> str:
     return f"Modo {matchtype_id}"
 
 
-class RelicAPIClient:
+class _RateLimitMixin:
+    """Mixin de rate-limit thread-safe sem contenção compartilhado pelos clientes HTTP."""
+
+    min_interval_sec: float
+    _next_req_ts: float
+    _rate_lock: threading.Lock
+
+    def _reserve_rate_slot(self) -> None:
+        with self._rate_lock:
+            now_m = time.monotonic()
+            target = max(now_m, self._next_req_ts)
+            self._next_req_ts = target + self.min_interval_sec
+            wait = target - now_m
+        if wait > 0:
+            time.sleep(wait)
+
+
+class RelicAPIClient(_RateLimitMixin):
     """Cliente HTTPS endurecido com TLS 1.2+, allowlist estrita, Gzip anti-bomb e rate-limit sem contenção."""
 
     def __init__(self, min_interval_sec: float = 0.10, timeout_sec: float = 15.0) -> None:
@@ -755,15 +765,6 @@ class RelicAPIClient:
         self.races: dict[int, str] = dict(FALLBACK_RACES)
         self.match_types: dict[int, str] = {}
         self._metadata_loaded = False
-
-    def _reserve_rate_slot(self) -> None:
-        with self._rate_lock:
-            now_m = time.monotonic()
-            target = max(now_m, self._next_req_ts)
-            self._next_req_ts = target + self.min_interval_sec
-            wait = target - now_m
-        if wait > 0:
-            time.sleep(wait)
 
     def _push_rate_backoff(self, delay_sec: float) -> None:
         """Empurra o portão compartilhado de rate-limit após HTTP 429 para frear threads concorrentes."""
@@ -1336,7 +1337,7 @@ def _build_parsed_match_record(
     return enrich_match_with_roster(m_obj, active_roster_maps)
 
 
-class Coh3StatsAPIClient:
+class Coh3StatsAPIClient(_RateLimitMixin):
     """
     Cliente HTTPS endurecido (streaming de baixa memória) para o Open Data público e oficial do site coh3stats.com.
     Fonte documentada: https://coh3stats.com/other/open-data (storage.coh3stats.com/matches/matches-{unixTimeStamp}.json).
@@ -1381,35 +1382,6 @@ class Coh3StatsAPIClient:
             if self._consecutive_errors >= self.circuit_breaker_threshold:
                 self._circuit_open = True
             return self._circuit_open
-
-    def _reserve_rate_slot(self) -> None:
-        with self._rate_lock:
-            now_m = time.monotonic()
-            target = max(now_m, self._next_req_ts)
-            self._next_req_ts = target + self.min_interval_sec
-            wait = target - now_m
-        if wait > 0:
-            time.sleep(wait)
-
-    @staticmethod
-    def _parse_match_for_player(
-        match: dict[str, Any],
-        pid_clean: int,
-        fallback_alias: str,
-        only_automatch: bool,
-        active_roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
-        race_map: dict[int, str],
-        mt_map: dict[int, str],
-    ) -> dict[str, Any] | None:
-        return _build_parsed_match_record(
-            match=match,
-            pid_clean=pid_clean,
-            fallback_alias=fallback_alias,
-            only_automatch=only_automatch,
-            active_roster_maps=active_roster_maps,
-            race_map=race_map,
-            mt_map=mt_map,
-        )
 
     def _stream_open_data_matches(
         self,
@@ -1596,7 +1568,7 @@ class Coh3StatsAPIClient:
                 by_pid: dict[int, dict[int, dict[str, Any]]] = {pid: {} for pid in tracked_pids}
                 for match_obj, hit_pids in matched_raw:
                     for pid in hit_pids:
-                        parsed = self._parse_match_for_player(
+                        parsed = _build_parsed_match_record(
                             match=match_obj,
                             pid_clean=pid,
                             fallback_alias=alias_by_pid.get(pid, f"Player {pid}"),
@@ -1898,7 +1870,7 @@ def _normalize_map_probe(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", no_marks.lower()).strip()
 
 
-class CohDBClient:
+class CohDBClient(_RateLimitMixin):
     """
     Cliente HTTPS endurecido (somente-leitura, respeitando robots.txt do cohdb.com) para extrair
     o Battlegroup escolhido por cada jogador a partir das páginas canônicas públicas `/players/<id>/matches`
@@ -1936,15 +1908,6 @@ class CohDBClient:
     @property
     def is_circuit_open(self) -> bool:
         return self._circuit_open
-
-    def _reserve_rate_slot(self) -> None:
-        with self._rate_lock:
-            now_m = time.monotonic()
-            target = max(now_m, self._next_req_ts)
-            self._next_req_ts = target + self.min_interval_sec
-            wait = target - now_m
-        if wait > 0:
-            time.sleep(wait)
 
     def _fetch_canonical_html(self, path: str, path_regex: re.Pattern[str]) -> str | None:
         if self._circuit_open:
