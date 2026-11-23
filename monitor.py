@@ -1551,6 +1551,72 @@ def _save_bg_retry_state(db: MatchDatabase, state: dict[int, int], now_ts: int, 
     db.set_state("bg_retry_state", payload)
 
 
+def build_tracked_players_from_custom(
+    custom_players: list[dict[str, Any]],
+    existing_tracked: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Constrói a lista deduplicada `tracked_players` a partir de `custom_players` (compartilhado por monitor.py e manage.py)."""
+    existing_by_pid = {
+        int(p["profile_id"]): p
+        for p in (existing_tracked or [])
+        if isinstance(p, dict) and int(p.get("profile_id", 0) or 0) > 0
+    }
+    synced: list[dict[str, Any]] = []
+    seen_pids: set[int] = set()
+    for cp in custom_players or []:
+        if not isinstance(cp, dict):
+            continue
+        pid = int(cp.get("profile_id", 0) or 0)
+        if pid <= 0 or pid in seen_pids:
+            continue
+        seen_pids.add(pid)
+        prev_tp = existing_by_pid.get(pid) or {}
+        rec_tp: dict[str, Any] = {
+            "profile_id": pid,
+            "alias": str(cp.get("alias") or prev_tp.get("alias") or cp.get("original_alias") or f"Player {pid}"),
+            "original_alias": str(cp.get("original_alias") or prev_tp.get("original_alias") or cp.get("alias") or f"Player {pid}"),
+            "steam_id": str(cp.get("steam_id") or prev_tp.get("steam_id") or ""),
+            "placements": list(prev_tp.get("placements") or ["⭐ Monitorado BR"]),
+            "is_custom": True,
+        }
+        if cp.get("merged_into_profile_id"):
+            rec_tp["merged_into_profile_id"] = int(cp["merged_into_profile_id"])
+        synced.append(rec_tp)
+    return synced
+
+
+def _patch_match_card_with_battlegroups(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+    grp: dict[str, Any],
+    msg_id: str,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    *,
+    log_suffix: str = "com Battlegroups",
+) -> bool:
+    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups e Nemesis preservados."""
+    enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+    try:
+        patched = discord.edit_match_card(msg_id, grp)
+        if patched:
+            logger.info(
+                "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) %s.",
+                grp["match_id"],
+                patched,
+                log_suffix,
+            )
+        time.sleep(0.35)
+        return bool(patched)
+    except Exception as exc:
+        logger.warning(
+            "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d no Discord (%s): %s",
+            grp["match_id"],
+            log_suffix,
+            redact_secrets(exc),
+        )
+        return False
+
+
 def enrich_group_with_nemesis(
     db: MatchDatabase,
     grp: dict[str, Any],
@@ -1697,28 +1763,14 @@ def run_cycle(
         cfg_upgraded = ensure_core_roster_in_config(cfg)
         custom_players = list(cfg.get("custom_players") or [])
         tracked_existing = list(cfg.get("tracked_players") or [])
-        existing_by_pid = {int(p["profile_id"]): p for p in tracked_existing if int(p.get("profile_id", 0)) > 0}
-        synced_tracked: list[dict[str, Any]] = []
-        seen_t_pids: set[int] = set()
-        for cp in custom_players:
-            pid = int(cp.get("profile_id", 0) or 0)
-            if pid <= 0 or pid in seen_t_pids:
-                continue
-            seen_t_pids.add(pid)
-            prev_tp = existing_by_pid.get(pid) or {}
-            rec_tp: dict[str, Any] = {
-                "profile_id": pid,
-                "alias": str(cp.get("alias") or prev_tp.get("alias") or cp.get("original_alias") or f"Player {pid}"),
-                "original_alias": str(cp.get("original_alias") or prev_tp.get("original_alias") or cp.get("alias") or f"Player {pid}"),
-                "steam_id": str(cp.get("steam_id") or prev_tp.get("steam_id") or ""),
-                "placements": list(prev_tp.get("placements") or ["⭐ Monitorado BR"]),
-                "is_custom": True,
-            }
-            if cp.get("merged_into_profile_id"):
-                rec_tp["merged_into_profile_id"] = int(cp["merged_into_profile_id"])
-            synced_tracked.append(rec_tp)
+        existing_pids = {
+            int(p["profile_id"])
+            for p in tracked_existing
+            if isinstance(p, dict) and int(p.get("profile_id", 0) or 0) > 0
+        }
+        synced_tracked = build_tracked_players_from_custom(custom_players, tracked_existing)
 
-        tracked_changed = cfg_upgraded or ({int(p["profile_id"]) for p in synced_tracked} != set(existing_by_pid.keys()))
+        tracked_changed = cfg_upgraded or ({int(p["profile_id"]) for p in synced_tracked} != existing_pids)
         if tracked_changed:
             cfg["tracked_players"] = synced_tracked
             save_config_file(config_path, cfg)
@@ -2093,25 +2145,15 @@ def run_cycle(
                         recently_retried_mids.add(int(p_grp["match_id"]))
                         checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, p_grp)
                         if checked_ok:
-                            if has_bg:
-                                enrich_group_with_nemesis(db, p_grp, roster_maps=roster_maps)
-                                try:
-                                    patched = discord.edit_match_card(p_msg_id, p_grp)
-                                    if patched:
-                                        bg_patched_cards += 1
-                                        logger.info(
-                                            "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) na retentativa pós-envio %d/2.",
-                                            p_grp["match_id"],
-                                            patched,
-                                            attempt_idx,
-                                        )
-                                    time.sleep(0.35)
-                                except Exception as exc:
-                                    logger.warning(
-                                        "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d na retentativa pós-envio: %s",
-                                        p_grp["match_id"],
-                                        redact_secrets(exc),
-                                    )
+                            if has_bg and _patch_match_card_with_battlegroups(
+                                db,
+                                discord,
+                                p_grp,
+                                p_msg_id,
+                                roster_maps,
+                                log_suffix=f"na retentativa pós-envio {attempt_idx}/2",
+                            ):
+                                bg_patched_cards += 1
                         else:
                             still_missing.append((p_grp, p_msg_id))
                     remaining_missing = still_missing
@@ -2152,7 +2194,6 @@ def run_cycle(
                             bg_retry_state.pop(mid, None)
                             bg_retry_dirty = True
                         if has_bg:
-                            enrich_group_with_nemesis(db, m_grp, roster_maps=roster_maps)
                             existing_msg_id = next(
                                 (
                                     str(r.get("discord_message_id") or "").strip()
@@ -2161,23 +2202,15 @@ def run_cycle(
                                 ),
                                 "",
                             )
-                            if existing_msg_id:
-                                try:
-                                    patched = discord.edit_match_card(existing_msg_id, m_grp)
-                                    if patched:
-                                        bg_patched_cards += 1
-                                        logger.info(
-                                            "[COHDB BATTLEGROUPS] Card #%d atualizado silenciosamente no Discord (ID %s) com Battlegroups.",
-                                            m_grp["match_id"],
-                                            patched,
-                                        )
-                                    time.sleep(0.35)
-                                except Exception as exc:
-                                    logger.warning(
-                                        "[COHDB BATTLEGROUPS] Falha ao atualizar Card #%d no Discord: %s",
-                                        m_grp["match_id"],
-                                        redact_secrets(exc),
-                                    )
+                            if existing_msg_id and _patch_match_card_with_battlegroups(
+                                db,
+                                discord,
+                                m_grp,
+                                existing_msg_id,
+                                roster_maps,
+                                log_suffix="com Battlegroups",
+                            ):
+                                bg_patched_cards += 1
                     else:
                         bg_retry_state[mid] = now_ts
                         bg_retry_dirty = True

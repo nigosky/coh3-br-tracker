@@ -23,6 +23,7 @@ from discord_notifier import (
 )
 from monitor import (
     CURRENT_SUMMARY_LAYOUT_VERSION,
+    build_tracked_players_from_custom,
     ensure_core_roster_in_config,
     load_config as _load_monitor_config,
     merge_catalog_with_custom_players,
@@ -102,28 +103,8 @@ def _rebuild_rankings_and_config(cfg: dict[str, Any], relic: RelicAPIClient, res
     del relic, reset_top
     ensure_core_roster_in_config(cfg)
     custom_players: list[dict[str, Any]] = list(cfg.get("custom_players") or [])
-
-    synced_tracked: list[dict[str, Any]] = []
-    seen_pids: set[int] = set()
-    for cp in custom_players:
-        pid = int(cp.get("profile_id", 0) or 0)
-        if pid <= 0 or pid in seen_pids:
-            continue
-        seen_pids.add(pid)
-        rec_p: dict[str, Any] = {
-            "profile_id": pid,
-            "alias": str(cp.get("alias") or cp.get("original_alias") or f"Player {pid}"),
-            "original_alias": str(cp.get("original_alias") or cp.get("alias") or f"Player {pid}"),
-            "steam_id": str(cp.get("steam_id") or ""),
-            "placements": ["⭐ Monitorado BR"],
-            "is_custom": True,
-        }
-        if cp.get("merged_into_profile_id"):
-            rec_p["merged_into_profile_id"] = int(cp["merged_into_profile_id"])
-        synced_tracked.append(rec_p)
-
     cfg["custom_players"] = custom_players
-    cfg["tracked_players"] = synced_tracked
+    cfg["tracked_players"] = build_tracked_players_from_custom(custom_players)
     save_config(cfg)
 
     db_path = resolve_safe_db_path(BASE_DIR, cfg.get("sqlite_db_path"))
