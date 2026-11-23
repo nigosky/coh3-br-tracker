@@ -163,18 +163,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 509690,
-      "alias": "Alekel",
-      "original_alias": "Alekel",
-      "steam_id": "76561198053226112",
-      "placements": [
-        "#101 1v1 (média 954.5) ⭐",
-        "#162 2v2 (média 1219.2) ⭐",
-        "#5 Jogos em Equipe (média 1524.5)"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 1114404,
       "alias": "Vikitor",
       "original_alias": "Vikitor",
@@ -501,30 +489,10 @@
       "is_custom": true
     },
     {
-      "profile_id": 1297853,
-      "alias": "Shadow (Alekel)",
-      "original_alias": "Shadow (Alekel)",
-      "steam_id": "76561198721980631",
-      "placements": [
-        "⭐ Monitorado BR"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 1390350,
       "alias": "TearsInTheRain (Chacineiro)",
       "original_alias": "TearsInTheRain (Chacineiro)",
       "steam_id": "76561198089278659",
-      "placements": [
-        "⭐ Monitorado BR"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 1297804,
-      "alias": "Leite Moço (『V』SKOBADARK)",
-      "original_alias": "Leite Moço (『V』SKOBADARK)",
-      "steam_id": "76561198723667226",
       "placements": [
         "⭐ Monitorado BR"
       ],
@@ -640,18 +608,6 @@
       "original_alias": "hjax",
       "alias": "hjax",
       "is_core_roster": true
-    },
-    {
-      "profile_id": 509690,
-      "steam_id": "76561198053226112",
-      "original_alias": "Alekel",
-      "alias": "Alekel",
-      "is_core_roster": true,
-      "known_aliases": [
-        "Minhoca de ferro!",
-        "Minhoca de ferro",
-        "Alekel"
-      ]
     },
     {
       "profile_id": 1114404,
@@ -882,19 +838,6 @@
       "pin_alias": true
     },
     {
-      "profile_id": 1297853,
-      "steam_id": "76561198721980631",
-      "original_alias": "Shadow (Alekel)",
-      "alias": "Shadow (Alekel)",
-      "is_core_roster": true,
-      "pin_alias": true,
-      "known_aliases": [
-        "Shadow",
-        "Zé da manga",
-        "Shadow (Alekel)"
-      ]
-    },
-    {
       "profile_id": 1390350,
       "steam_id": "76561198089278659",
       "original_alias": "TearsInTheRain (Chacineiro)",
@@ -904,18 +847,6 @@
       "known_aliases": [
         "TearsInTheRain",
         "TearsInTheRain (Chacineiro)"
-      ]
-    },
-    {
-      "profile_id": 1297804,
-      "steam_id": "76561198723667226",
-      "original_alias": "Leite Moço (『V』SKOBADARK)",
-      "alias": "Leite Moço (『V』SKOBADARK)",
-      "is_core_roster": true,
-      "pin_alias": true,
-      "known_aliases": [
-        "Leite Moço",
-        "Leite Moço (『V』SKOBADARK)"
       ]
     },
     {

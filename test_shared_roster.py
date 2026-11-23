@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 46 Veteranos independentes (0 mescladas) + 10 Outros BR de exibição passiva
-        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 46)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 10)
+        # 1. Roster padrão tem 43 Veteranos independentes (0 mescladas) + 15 Outros BR de exibição passiva
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 43)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 15)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -178,9 +178,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             1333418: ("76561198698969876", "Charles Bronson (Chacineiro)"),
             557890: ("76561199538846112", "gabe44arg (Gabe)"),
             1423426: ("76561199482388323", "geladeira velha (arc)"),
-            1297853: ("76561198721980631", "Shadow (Alekel)"),
             1390350: ("76561198089278659", "TearsInTheRain (Chacineiro)"),
-            1297804: ("76561198723667226", "Leite Moço (『V』SKOBADARK)"),
             1076221: ("76561198815935562", "Lucielle (Colossus)"),
         }
         for spid, (expected_sid, expected_alias) in expected_vet_smurfs.items():
@@ -190,12 +188,17 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertTrue(by_pid[spid].get("pin_alias"))
             self.assertFalse(by_pid[spid].get("show_smurf_alias"))
 
-        expected_gw_other = {
+        expected_pinned_other = {
             462597: ("76561198133760614", "General Winter (Principal)"),
             1297821: ("76561198722284920", "General Winter (Smurf 1)"),
             1318162: ("76561198708550887", "General Winter (Smurf 2)"),
+            509690: ("76561198053226112", "Alekel"),
+            1297853: ("76561198721980631", "Alekel (Smurf: Shadow)"),
+            844225: ("76561198009000654", "『V』SKOBADARK"),
+            1297804: ("76561198723667226", "『V』SKOBADARK (Smurf: Leite Moço)"),
+            164152: ("76561198029749621", "seu pai (Sgt.Yoda)"),
         }
-        for gpid, (expected_sid, expected_alias) in expected_gw_other.items():
+        for gpid, (expected_sid, expected_alias) in expected_pinned_other.items():
             self.assertNotIn(gpid, by_pid)
             self.assertIn(gpid, other_by_pid)
             self.assertEqual(other_by_pid[gpid]["steam_id"], expected_sid)
@@ -203,8 +206,8 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertTrue(other_by_pid[gpid].get("pin_alias"))
 
         # 2. Enriquecimento da partida + extração do card + avatar independente:
-        # Veterano smurf (#1333418) mantém nome fixo e is_br_roster=True;
-        # General Winter (#1297821, em manual_other_br) exibe "General Winter (Smurf 1)" SEM badge de Veterano (is_br_roster=False)!
+        # Veteranos (#1333418 e #1390350) mantêm nome fixo e is_br_roster=True;
+        # Outros BR (#1297853 Alekel smurf e #1297804 SKOBADARK smurf) exibem rótulo fixo SEM badge de Veterano!
         roster_maps = relic_api.build_roster_lookup_maps()
         sample_match = {
             "match_id": 999888777,
@@ -223,9 +226,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
             "new_elo": 1536,
             "allies": [
                 {
-                    "profile_id": 1297804,
+                    "profile_id": 1390350,
                     "alias": "OutroNickQualquer",
-                    "steam_id": "76561198723667226",
+                    "steam_id": "76561198089278659",
                     "country": "br",
                     "faction": "DAK",
                     "old_elo": 1510,
@@ -234,22 +237,22 @@ class TestTrackerSharedRoster(unittest.TestCase):
             ],
             "opponents": [
                 {
-                    "profile_id": 462597,
-                    "alias": "General Winter",
-                    "steam_id": "76561198133760614",
+                    "profile_id": 1297853,
+                    "alias": "Shadow",
+                    "steam_id": "76561198721980631",
                     "country": "br",
                     "faction": "US Forces",
-                    "old_elo": 1880,
-                    "new_elo": 1865,
+                    "old_elo": 1430,
+                    "new_elo": 1415,
                 },
                 {
-                    "profile_id": 1297821,
-                    "alias": "General Winter",
-                    "steam_id": "76561198722284920",
+                    "profile_id": 1297804,
+                    "alias": "Leite Moço",
+                    "steam_id": "76561198723667226",
                     "country": "br",
                     "faction": "British Forces",
-                    "old_elo": 1790,
-                    "new_elo": 1775,
+                    "old_elo": 1520,
+                    "new_elo": 1505,
                 },
             ],
         }
@@ -257,23 +260,23 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertEqual(sample_match["tracked_alias"], "Charles Bronson (Chacineiro)")
         self.assertEqual(sample_match["tracked_steam_id"], "76561198698969876")
         self.assertTrue(sample_match.get("is_br_roster"))
-        self.assertEqual(sample_match["allies"][0]["alias"], "Leite Moço (『V』SKOBADARK)")
+        self.assertEqual(sample_match["allies"][0]["alias"], "TearsInTheRain (Chacineiro)")
         self.assertTrue(sample_match["allies"][0].get("is_br_roster"))
-        self.assertEqual(sample_match["opponents"][0]["alias"], "General Winter (Principal)")
+        self.assertEqual(sample_match["opponents"][0]["alias"], "Alekel (Smurf: Shadow)")
         self.assertFalse(sample_match["opponents"][0].get("is_br_roster"))
-        self.assertEqual(sample_match["opponents"][1]["alias"], "General Winter (Smurf 1)")
+        self.assertEqual(sample_match["opponents"][1]["alias"], "『V』SKOBADARK (Smurf: Leite Moço)")
         self.assertFalse(sample_match["opponents"][1].get("is_br_roster"))
 
         axis_p, allies_p = card_renderer.extract_axis_and_allies_players({"records": [sample_match], "primary": sample_match})
         self.assertEqual(len(axis_p), 2)
         self.assertEqual(axis_p[0]["alias"], "Charles Bronson (Chacineiro)")
         self.assertTrue(axis_p[0]["is_br_roster"])
-        self.assertEqual(axis_p[1]["alias"], "Leite Moço (『V』SKOBADARK)")
+        self.assertEqual(axis_p[1]["alias"], "TearsInTheRain (Chacineiro)")
         self.assertTrue(axis_p[1]["is_br_roster"])
         self.assertEqual(len(allies_p), 2)
-        self.assertEqual(allies_p[0]["alias"], "General Winter (Principal)")
+        self.assertEqual(allies_p[0]["alias"], "Alekel (Smurf: Shadow)")
         self.assertFalse(allies_p[0]["is_br_roster"])
-        self.assertEqual(allies_p[1]["alias"], "General Winter (Smurf 1)")
+        self.assertEqual(allies_p[1]["alias"], "『V』SKOBADARK (Smurf: Leite Moço)")
         self.assertFalse(allies_p[1]["is_br_roster"])
         self.assertFalse(card_renderer._is_br_veteranos_duel([sample_match], axis_p, allies_p))
 
@@ -293,7 +296,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertGreater(r, 180, f"Avatar da conta desmembrada deveria ser o próprio (vermelho), mas recebeu RGB=({r},{g},{b}).")
             self.assertLess(g, 80)
 
-            # Renderização completa do card com Veteranos + General Winter (Principal/Smurf 1) funciona sem erros
+            # Renderização completa do card com Veteranos + Alekel/SKOBADARK smurfs funciona sem erros
             png_bytes = card_renderer.render_single_match_card_png(
                 {"records": [sample_match], "primary": sample_match},
                 avatar_provider=ap,
