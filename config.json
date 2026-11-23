@@ -140,18 +140,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 19747,
-      "alias": "twitch.tv/luck22ai",
-      "original_alias": "twitch.tv/luck22ai",
-      "steam_id": "76561198058548575",
-      "placements": [
-        "#100 1v1 (média 958.0) ⭐",
-        "#164 2v2 (média 1084.0) ⭐",
-        "#53 Jogos em Equipe (média 1199.6) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 944488,
       "alias": "gbytes™",
       "original_alias": "gbytes™",
@@ -366,18 +354,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 3895,
-      "alias": "Liquid",
-      "original_alias": "Liquid",
-      "steam_id": "76561198054318813",
-      "placements": [
-        "#98 1v1 (média 994.0) ⭐",
-        "#166 2v2 (média 1031.5) ⭐",
-        "#66 Jogos em Equipe (média 1147.5) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 1005730,
       "alias": "arc",
       "original_alias": "arc",
@@ -471,30 +447,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 81751,
-      "alias": "Razi",
-      "original_alias": "Razi",
-      "steam_id": "76561198080023560",
-      "placements": [
-        "#83 1v1 (média 1235.5) ⭐",
-        "#21 2v2 (média 1275.7) ⭐",
-        "#35 Jogos em Equipe (média 1251.8) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 28937,
-      "alias": "Mjr Bruno",
-      "original_alias": "Mjr Bruno",
-      "steam_id": "76561198089948995",
-      "placements": [
-        "#93 1v1 (média 1009.2) ⭐",
-        "#165 2v2 (média 1067.5) ⭐",
-        "#394 Jogos em Equipe (média 1089.4) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 737235,
       "alias": "meuqsaco",
       "original_alias": "meuqsaco",
@@ -502,18 +454,6 @@
       "placements": [
         "#168 2v2 (média 1014.7) ⭐",
         "#399 Jogos em Equipe (média 1036.1) ⭐"
-      ],
-      "is_custom": true
-    },
-    {
-      "profile_id": 23250,
-      "alias": "Nargoth",
-      "original_alias": "Nargoth",
-      "steam_id": "76561198028378060",
-      "placements": [
-        "#96 1v1 (média 1000.0) ⭐",
-        "#170 2v2 (média 1000.0) ⭐",
-        "#396 Jogos em Equipe (média 1071.0) ⭐"
       ],
       "is_custom": true
     },
@@ -648,13 +588,6 @@
       "steam_id": "76561198284234077",
       "original_alias": "7 DIVISAO PHANTOM",
       "alias": "7 DIVISAO PHANTOM",
-      "is_core_roster": true
-    },
-    {
-      "profile_id": 19747,
-      "steam_id": "76561198058548575",
-      "original_alias": "twitch.tv/luck22ai",
-      "alias": "twitch.tv/luck22ai",
       "is_core_roster": true
     },
     {
@@ -803,13 +736,6 @@
       "is_core_roster": true
     },
     {
-      "profile_id": 3895,
-      "steam_id": "76561198054318813",
-      "original_alias": "Liquid",
-      "alias": "Liquid",
-      "is_core_roster": true
-    },
-    {
       "profile_id": 1005730,
       "steam_id": "76561199791811246",
       "original_alias": "arc",
@@ -867,36 +793,11 @@
       "is_core_roster": true
     },
     {
-      "profile_id": 81751,
-      "steam_id": "76561198080023560",
-      "original_alias": "Razi",
-      "alias": "Razi",
-      "is_core_roster": true
-    },
-    {
-      "profile_id": 28937,
-      "steam_id": "76561198089948995",
-      "original_alias": "Mjr Bruno",
-      "alias": "Mjr Bruno",
-      "is_core_roster": true
-    },
-    {
       "profile_id": 737235,
       "steam_id": "76561198026394732",
       "original_alias": "meuqsaco",
       "alias": "meuqsaco",
       "is_core_roster": true
-    },
-    {
-      "profile_id": 23250,
-      "steam_id": "76561198028378060",
-      "original_alias": "Nargoth",
-      "alias": "Nargoth",
-      "is_core_roster": true,
-      "known_aliases": [
-        "Nargoth de Bebbanburg",
-        "Nargoth"
-      ]
     },
     {
       "profile_id": 1097608,
