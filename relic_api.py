@@ -289,7 +289,7 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa dos 44 jogadores brasileiros únicos monitorados (47 contas Steam vinculadas por SteamID64 imutável)
+# Lista fixa dos 39 jogadores brasileiros únicos monitorados (42 contas Steam vinculadas por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {
@@ -322,7 +322,6 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 691, "steam_id": "76561198001604015", "original_alias": "Vítor"},
     {"profile_id": 5768, "steam_id": "76561198205052385", "original_alias": "The Dog"},
     {"profile_id": 13450, "steam_id": "76561198284234077", "original_alias": "7 DIVISAO PHANTOM"},
-    {"profile_id": 19747, "steam_id": "76561198058548575", "original_alias": "twitch.tv/luck22ai"},
     {"profile_id": 944488, "steam_id": "76561198063124280", "original_alias": "gbytes™"},
     {"profile_id": 21206, "steam_id": "76561198061434984", "original_alias": "hjax"},
     {
@@ -358,7 +357,6 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 26910, "steam_id": "76561197963741792", "original_alias": "nigo_BR ᵀᴹ"},
     {"profile_id": 6557, "steam_id": "76561198135142137", "original_alias": "Dragoness"},
     {"profile_id": 1226910, "steam_id": "76561198140782132", "original_alias": "Lupus Alba"},
-    {"profile_id": 3895, "steam_id": "76561198054318813", "original_alias": "Liquid"},
     {"profile_id": 1005730, "steam_id": "76561199791811246", "original_alias": "arc", "pin_alias": True},
     {
         "profile_id": 1423426,
@@ -376,15 +374,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 84821, "steam_id": "76561198076576055", "original_alias": "TJBR"},
     {"profile_id": 99722, "steam_id": "76561198021071716", "original_alias": "MonteiroBR"},
     {"profile_id": 31061, "steam_id": "76561198009056438", "original_alias": "ACB"},
-    {"profile_id": 81751, "steam_id": "76561198080023560", "original_alias": "Razi"},
-    {"profile_id": 28937, "steam_id": "76561198089948995", "original_alias": "Mjr Bruno"},
     {"profile_id": 737235, "steam_id": "76561198026394732", "original_alias": "meuqsaco"},
-    {
-        "profile_id": 23250,
-        "steam_id": "76561198028378060",
-        "original_alias": "Nargoth",
-        "known_aliases": ["Nargoth de Bebbanburg", "Nargoth"],
-    },
     {
         "profile_id": 1097608,
         "steam_id": "76561199498421192",
