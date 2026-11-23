@@ -13,6 +13,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1877,6 +1878,26 @@ def normalize_battlegroup(raw_key: str = "", raw_name: str = "") -> dict[str, st
     return None
 
 
+def is_battlegroup_eligible_mode(mode_label: str) -> bool:
+    """Retorna True para modos indexados pelo cohdb.com (Automatch 1v1–4v4 e Personalizadas/Custom; exclui Co-Op vs IA)."""
+    raw = str(mode_label or "").strip()
+    if not raw:
+        return False
+    if raw in AUTOMATCH_MODES or raw == "Custom":
+        return True
+    low = raw.lower()
+    if "co-op" in low or "coop" in low or "vs ia" in low or "vs ai" in low or "skirmish" in low:
+        return False
+    return ("custom" in low) or ("personalizada" in low) or any(t in low for t in ("1v1", "2v2", "3v3", "4v4"))
+
+
+def _normalize_map_probe(text: str) -> str:
+    """Normaliza texto/nome de mapa (sem acentos nem pontuação) para casar linhas do cohdb.com."""
+    decomposed = unicodedata.normalize("NFKD", str(text or ""))
+    no_marks = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", " ", no_marks.lower()).strip()
+
+
 class CohDBClient:
     """
     Cliente HTTPS endurecido (somente-leitura, respeitando robots.txt do cohdb.com) para extrair
@@ -1996,7 +2017,7 @@ class CohDBClient:
             seen_rids.add(rid)
             plain = html.unescape(re.sub(r"<[^>]+>", " ", row_html)).lower()
             rows.append((rid, re.sub(r"\s+", " ", plain).strip()))
-            if len(rows) >= 12:
+            if len(rows) >= 25:
                 break
 
         self._player_matches_cache[pid] = rows
@@ -2043,7 +2064,7 @@ class CohDBClient:
         match_id: int,
         tracked_profile_ids: list[int],
         expected_map_clean: str = "",
-        max_replay_probes: int = 5,
+        max_replay_probes: int = 6,
         fallback_profile_ids: list[int] | None = None,
     ) -> dict[int, dict[str, str]] | None:
         """
@@ -2065,12 +2086,12 @@ class CohDBClient:
             for p in dict.fromkeys(fallback_profile_ids or [])
             if int(p) > 0 and int(p) not in tracked_set
         ]
-        probe_pids = clean_tracked[:2] + clean_fallback[:1]
+        probe_pids = clean_tracked[:4] + clean_fallback[:2]
         if not probe_pids:
             return None
 
-        map_probe = str(expected_map_clean or "").strip().lower()
-        # Tenta primeiro até 2 jogadores monitorados e, se necessário, 1 participante adicional da partida
+        map_probe = _normalize_map_probe(expected_map_clean)
+        # Tenta primeiro até 4 jogadores monitorados e, se necessário, até 2 participantes adicionais da partida
         for pid in probe_pids:
             if self._circuit_open:
                 break
@@ -2079,10 +2100,15 @@ class CohDBClient:
                 continue
 
             if map_probe:
-                # Prioriza replays cujo mapa bate com map_clean (reduz para 1 requisição na quase totalidade dos casos)
-                ordered_rids = [rid for rid, txt in rows if map_probe in txt] + [
-                    rid for rid, txt in rows if map_probe not in txt
-                ]
+                # Prioriza replays cujo mapa bate com map_clean (sem acentos/pontuação) e limita fallback a 2 mais novos
+                map_matches: list[int] = []
+                non_matches: list[int] = []
+                for rid, txt in rows:
+                    if map_probe in _normalize_map_probe(txt):
+                        map_matches.append(rid)
+                    else:
+                        non_matches.append(rid)
+                ordered_rids = map_matches + non_matches[:2]
             else:
                 ordered_rids = [rid for rid, _ in rows]
 
