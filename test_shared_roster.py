@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 190 perfis de exibição passiva (175 Monitorados + 15 Emigrados em Outros BR)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 147 perfis de exibição passiva (132 Monitorados + 15 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 190)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 147)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -204,12 +204,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (2834, "Xampoo"),
             (448521, "icemaker"),
             (720147, "アリス (Smurf: icemaker)"),
-            (673604, "MataMOsca"),
-            (893043, "Rodrigo Ragagnin"),
-            (1315226, "Olegnalehcim"),
-            (1115599, "Paisano"),
             (942935, "SrLmo"),
-            (26172, "SmiLeYxBR"),
             (1214336, "Carp"),
             (1295138, "Salïty"),
             (22246, "Açucar Macabro"),
