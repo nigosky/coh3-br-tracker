@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 177 perfis de exibição passiva (162 Monitorados + 15 Emigrados em Outros BR)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 179 perfis de exibição passiva (164 Monitorados + 15 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 177)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 179)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -184,6 +184,10 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertEqual(other_by_pid[720147].get("smurf_of"), "icemaker")
         self.assertEqual(other_by_pid[1292305].get("smurf_of"), "rafaeldjx")
         self.assertEqual(other_by_pid[1467829].get("smurf_of"), "Xampoo")
+        self.assertNotIn(655548, by_pid)
+        self.assertNotIn(123228, by_pid)
+        self.assertEqual(other_by_pid[655548].get("smurf_of"), "Galva")
+        self.assertEqual(other_by_pid[123228].get("smurf_of"), "TrueLothar")
         self.assertTrue(other_by_pid[448521].get("priority_watch"))
         self.assertTrue(other_by_pid[720147].get("priority_watch"))
         for mon_pid, mon_alias in (
@@ -195,12 +199,16 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (845669, "PH0BB05"),
             (17169, "Guh"),
             (71299, "Bruno.s"),
+            (674379, "Galva"),
+            (655548, "Garm (Smurf: Galva)"),
             (13516, "NEBADON"),
             (970468, "Московский метро"),
             (649535, "pensss"),
             (765837, "Southland"),
             (87314, "Pedro Jedi"),
             (6880, "ArguS (VonDun)"),
+            (716376, "TrueLothar"),
+            (123228, "Lothar (Smurf: TrueLothar)"),
             (1156831, "DAk120"),
             (3888, "Pepe Popo"),
             (2834, "Xampoo"),
