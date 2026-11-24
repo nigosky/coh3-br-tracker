@@ -1315,16 +1315,19 @@ def _compare_rivalry_and_kryptonite_profile(
     cand_tel: PlayerTelemetry | None,
     main_tel: PlayerTelemetry | None,
     *,
+    main_family_tels: list[PlayerTelemetry] | tuple[PlayerTelemetry, ...] | None = None,
     exclude_pids: set[int] | frozenset[int] | None = None,
     pid_aliases: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """
     Sinal 10 — Perfil de Nêmesis, Freguês & Criptonitas / Facilidades (Matchup DNA com encolhimento Bayesiano):
-    Harmonizado com `coh3-br-lobby-radar/smurf_detector.py`, alavancando também o histórico 2023+ do SQLite
-    (`nemesis_matches` e `kryptonite_matches`) para contas principais monitoradas.
+    Harmonizado com `coh3-br-lobby-radar/smurf_detector.py`, consolidando toda a família de smurfs
+    catalogadas da conta principal, exigindo >=2 dias UTC distintos nas rivalidades, aplicando
+    concordância direcional ajustada ao WR base da candidata e alavancando o histórico 2023+ do SQLite.
     """
     res: dict[str, Any] = {
         "rivalry_pts": 0.0,
+        "rivalry_excess_pts": 0.0,
         "kryptonite_pts": 0.0,
         "total_pts": 0.0,
         "adds_behavioral": False,
@@ -1333,6 +1336,11 @@ def _compare_rivalry_and_kryptonite_profile(
         "shared_fregueses": [],
         "inverted_rivalries": [],
         "shared_rivalry_count": 0,
+        "rivalry_dir_same": 0,
+        "rivalry_dir_diff": 0,
+        "rivalry_dir_rate": 0.0,
+        "rivalry_mean_excess": 0.0,
+        "main_family_sources": 0,
         "matchup_profile_sim": 0.0,
         "matchup_profile_valid": False,
         "compared_buckets": 0,
@@ -1348,21 +1356,103 @@ def _compare_rivalry_and_kryptonite_profile(
     excl.add(int(main_tel.profile_id))
     aliases = pid_aliases or {}
 
+    seen_main_pids: set[int] = {int(main_tel.profile_id)}
+    main_sources: list[PlayerTelemetry] = [main_tel]
+    for ft in (main_family_tels or ()):
+        if ft is None:
+            continue
+        fpid = int(ft.profile_id)
+        if fpid == int(cand_tel.profile_id) or fpid in seen_main_pids:
+            continue
+        seen_main_pids.add(fpid)
+        main_sources.append(ft)
+        excl.add(fpid)
+
+    def _merge_wl_maps(attr: str) -> dict[Any, list[int]]:
+        if len(main_sources) == 1:
+            return getattr(main_sources[0], attr)
+        merged: dict[Any, list[int]] = {}
+        for src in main_sources:
+            src_map = getattr(src, attr) or {}
+            for k, v in src_map.items():
+                if not isinstance(v, (list, tuple)) or len(v) < 2:
+                    continue
+                rec = merged.setdefault(k, [0, 0])
+                rec[0] += max(0, int(v[0]))
+                rec[1] += max(0, int(v[1]))
+        return merged
+
+    def _merge_day_maps() -> dict[int, set[int]]:
+        if len(main_sources) == 1:
+            return main_sources[0].opp_days
+        merged: dict[int, set[int]] = {}
+        for src in main_sources:
+            for k, ds in (src.opp_days or {}).items():
+                if ds:
+                    merged.setdefault(k, set()).update(ds)
+        return merged
+
+    main_opp_wl = _merge_wl_maps("opp_wl")
+    main_opp_days = _merge_day_maps()
+    main_ally_wl = _merge_wl_maps("ally_wl")
+    main_map_wl = _merge_wl_maps("map_wl")
+    main_enemy_bg_wl = _merge_wl_maps("enemy_bg_wl")
+    main_matchup_wl = _merge_wl_maps("matchup_wl")
+    main_enemy_faction_wl = _merge_wl_maps("enemy_faction_wl")
+    main_my_faction_wl = _merge_wl_maps("my_faction_wl")
+    main_total_games = sum(max(0, int(s.games)) for s in main_sources)
+    main_total_wins = sum(max(0, int(s.wins)) for s in main_sources)
+
+    if cand_tel.games >= 5:
+        cand_p_base = min(0.85, max(0.20, (cand_tel.wins + 2.5) / float(cand_tel.games + 5.0)))
+    else:
+        opp_w_sum = sum(max(0, int(v[0])) for v in cand_tel.opp_wl.values() if len(v) >= 2)
+        opp_n_sum = sum(max(0, int(v[0])) + max(0, int(v[1])) for v in cand_tel.opp_wl.values() if len(v) >= 2)
+        cand_p_base = (
+            min(0.85, max(0.20, (opp_w_sum + 2.5) / float(opp_n_sum + 5.0)))
+            if opp_n_sum >= 5
+            else 0.50
+        )
+
     shared_nemeses: list[dict[str, Any]] = []
     shared_fregueses: list[dict[str, Any]] = []
     inverted_rivalries: list[dict[str, Any]] = []
+    rivalry_dir_same = 0
+    rivalry_dir_diff = 0
+    rivalry_excess_sum = 0.0
 
-    for opp_pid in (set(cand_tel.opp_wl.keys()) & set(main_tel.opp_wl.keys())) - excl:
+    for opp_pid in (set(cand_tel.opp_wl.keys()) & set(main_opp_wl.keys())) - excl:
         cp = cand_tel.opp_wl.get(opp_pid) or [0, 0]
-        mp = main_tel.opp_wl.get(opp_pid) or [0, 0]
+        mp = main_opp_wl.get(opp_pid) or [0, 0]
         cw, cl = max(0, int(cp[0])), max(0, int(cp[1]))
         mw, ml = max(0, int(mp[0])), max(0, int(mp[1]))
         cn, mn = cw + cl, mw + ml
         tot = cn + mn
+
+        c_day_set = set(cand_tel.opp_days.get(opp_pid) or ())
+        m_day_set = set(main_opp_days.get(opp_pid) or ())
+        has_day_info = bool(c_day_set or m_day_set)
+        combined_days = len(c_day_set | m_day_set)
+        # Guarda vitalícia (>=2 dias UTC distintos) bloqueia rematches de um único dia
+        if has_day_info and combined_days < 2:
+            continue
+
+        # Concordância direcional ajustada ao WR base da candidata (inclui confrontos 1-jogo contra Nêmesis/Fregueses da main)
+        main_clear_dir = mn >= 2 and mw != ml and (mw == 0 or ml == 0 or abs(mw - ml) >= 2)
+        if main_clear_dir and cn >= 1 and cw != cl:
+            main_is_fregues = mw > ml
+            same_dir = main_is_fregues == (cw > cl)
+            expected_p = cand_p_base if main_is_fregues else (1.0 - cand_p_base)
+            rivalry_excess_sum += (1.0 if same_dir else 0.0) - expected_p
+            if same_dir:
+                rivalry_dir_same += 1
+            else:
+                rivalry_dir_diff += 1
+
         if cn < 2 or mn < 2 or tot < 5:
             continue
-        c_days = len(cand_tel.opp_days.get(opp_pid) or ())
-        m_days = len(main_tel.opp_days.get(opp_pid) or ())
+        c_days = len(c_day_set)
+        m_days = len(m_day_set)
         entry = {
             "profile_id": int(opp_pid),
             "alias": strip_unsafe_chars(aliases.get(opp_pid) or f"ID #{opp_pid}")[:32],
@@ -1375,6 +1465,7 @@ def _compare_rivalry_and_kryptonite_profile(
             "total": tot,
             "cand_days": c_days,
             "main_days": m_days,
+            "combined_days": combined_days,
         }
         if _is_rivalry_nemesis_wl(cw, cl) and _is_rivalry_nemesis_wl(mw, ml):
             shared_nemeses.append(entry)
@@ -1427,8 +1518,41 @@ def _compare_rivalry_and_kryptonite_profile(
     elif inv_riv_cnt > shared_riv_cnt:
         part_a_pts = -6.0 if (inv_riv_cnt - shared_riv_cnt) >= 2 else -3.0
 
+    # Reforço complementar / contra-evidência por excesso direcional ajustado ao WR base (nunca cria âncora isolada)
+    n_dir = rivalry_dir_same + rivalry_dir_diff
+    rivalry_dir_rate = round(rivalry_dir_same / float(n_dir), 3) if n_dir > 0 else 0.0
+    rivalry_mean_excess = round(rivalry_excess_sum / float(n_dir), 3) if n_dir > 0 else 0.0
+    rivalry_excess_pts = 0.0
+    if part_a_pts >= 0.0 and part_a_pts < 12.0 and (riv_total_eval == 0 or riv_concordance >= 0.70):
+        if n_dir >= 6 and rivalry_dir_rate >= 0.72 and rivalry_mean_excess >= 0.18:
+            rivalry_excess_pts = min(4.0, 12.0 - part_a_pts)
+            part_a_pts = min(12.0, part_a_pts + 4.0)
+            if part_a_pts >= 8.0:
+                rivalry_adds_behavioral = True
+        elif (
+            n_dir >= 4
+            and rivalry_dir_rate >= 0.67
+            and rivalry_mean_excess >= 0.12
+            and (shared_riv_cnt >= 1 or n_dir >= 6)
+        ):
+            rivalry_excess_pts = min(2.0, 12.0 - part_a_pts)
+            part_a_pts = min(12.0, part_a_pts + 2.0)
+    if (
+        rivalry_excess_pts == 0.0
+        and part_a_pts == 0.0
+        and n_dir >= 6
+        and rivalry_dir_rate <= 0.36
+        and rivalry_mean_excess <= -0.14
+    ):
+        rivalry_excess_pts = -4.0
+        part_a_pts = -4.0
+
     cand_overall_p0 = min(0.80, max(0.20, cand_tel.winrate())) if cand_tel.games >= 5 else 0.50
-    main_overall_p0 = min(0.80, max(0.20, main_tel.winrate())) if main_tel.games >= 5 else 0.50
+    main_overall_p0 = (
+        min(0.80, max(0.20, main_total_wins / float(main_total_games)))
+        if main_total_games >= 5
+        else 0.50
+    )
 
     def _domain_baseline(wl_map: dict[Any, list[int]], fallback_p0: float) -> float:
         tw = sum(max(0, int(v[0])) for v in wl_map.values() if len(v) >= 2)
@@ -1438,26 +1562,26 @@ def _compare_rivalry_and_kryptonite_profile(
         return fallback_p0
 
     cand_ally_clean = {k: v for k, v in cand_tel.ally_wl.items() if k not in excl}
-    main_ally_clean = {k: v for k, v in main_tel.ally_wl.items() if k not in excl}
+    main_ally_clean = {k: v for k, v in main_ally_wl.items() if k not in excl}
 
     domains: list[tuple[str, dict[Any, list[int]], dict[Any, list[int]], int, float]] = [
-        ("Mapa", cand_tel.map_wl, main_tel.map_wl, 3, 1.00),
-        ("BG", cand_tel.enemy_bg_wl, main_tel.enemy_bg_wl, 3, 1.15),
-        ("Matchup", cand_tel.matchup_wl, main_tel.matchup_wl, 4, 0.90),
+        ("Mapa", cand_tel.map_wl, main_map_wl, 3, 1.00),
+        ("BG", cand_tel.enemy_bg_wl, main_enemy_bg_wl, 3, 1.15),
+        ("Matchup", cand_tel.matchup_wl, main_matchup_wl, 4, 0.90),
     ]
     shared_matchup_cnt = sum(
         1
-        for k in (set(cand_tel.matchup_wl.keys()) & set(main_tel.matchup_wl.keys()))
-        if sum(cand_tel.matchup_wl[k][:2]) >= 4 and sum(main_tel.matchup_wl[k][:2]) >= 4
+        for k in (set(cand_tel.matchup_wl.keys()) & set(main_matchup_wl.keys()))
+        if sum(cand_tel.matchup_wl[k][:2]) >= 4 and sum(main_matchup_wl[k][:2]) >= 4
     )
     if shared_matchup_cnt < 2:
-        domains.append(("vs Facção", cand_tel.enemy_faction_wl, main_tel.enemy_faction_wl, 4, 0.75))
+        domains.append(("vs Facção", cand_tel.enemy_faction_wl, main_enemy_faction_wl, 4, 0.75))
 
     cand_multi_fac = sum(1 for v in cand_tel.my_faction_wl.values() if (int(v[0]) + int(v[1])) >= 4) >= 2
-    main_multi_fac = sum(1 for v in main_tel.my_faction_wl.values() if (int(v[0]) + int(v[1])) >= 4) >= 2
+    main_multi_fac = sum(1 for v in main_my_faction_wl.values() if (int(v[0]) + int(v[1])) >= 4) >= 2
     if cand_multi_fac and main_multi_fac:
         fac_scale = 0.45 if shared_matchup_cnt >= 2 else 0.75
-        domains.append(("Facção", cand_tel.my_faction_wl, main_tel.my_faction_wl, 4, fac_scale))
+        domains.append(("Facção", cand_tel.my_faction_wl, main_my_faction_wl, 4, fac_scale))
 
     domains.append(("Aliado", cand_ally_clean, main_ally_clean, 3, 0.85))
 
@@ -1533,7 +1657,7 @@ def _compare_rivalry_and_kryptonite_profile(
     matchup_profile_valid = False
     steady_state_sample = (
         cand_tel.games >= 30
-        and main_tel.games >= 30
+        and main_total_games >= 30
         and cand_tel.winrate() < 0.72
     )
 
@@ -1563,6 +1687,7 @@ def _compare_rivalry_and_kryptonite_profile(
     res.update(
         {
             "rivalry_pts": round(part_a_pts, 2),
+            "rivalry_excess_pts": round(rivalry_excess_pts, 2),
             "kryptonite_pts": round(part_b_pts, 2),
             "total_pts": round(total_pts, 2),
             "adds_behavioral": bool(rivalry_adds_behavioral or krypt_adds_behavioral),
@@ -1571,6 +1696,11 @@ def _compare_rivalry_and_kryptonite_profile(
             "shared_fregueses": shared_fregueses[:5],
             "inverted_rivalries": inverted_rivalries[:5],
             "shared_rivalry_count": shared_riv_cnt,
+            "rivalry_dir_same": rivalry_dir_same,
+            "rivalry_dir_diff": rivalry_dir_diff,
+            "rivalry_dir_rate": rivalry_dir_rate,
+            "rivalry_mean_excess": rivalry_mean_excess,
+            "main_family_sources": len(main_sources),
             "matchup_profile_sim": matchup_profile_sim,
             "matchup_profile_valid": matchup_profile_valid,
             "compared_buckets": compared_buckets,
@@ -1590,6 +1720,7 @@ def score_live_smurf_pair(
     *,
     main_family_pids: set[int] | frozenset[int] | None = None,
     family_intervals: list[tuple[int, int]] | None = None,
+    family_tels: list[PlayerTelemetry] | tuple[PlayerTelemetry, ...] | None = None,
     cand_osint: dict[str, Any] | None = None,
     main_osint: dict[str, Any] | None = None,
     known_br_pids: set[int] | frozenset[int] | None = None,
@@ -1960,6 +2091,7 @@ def score_live_smurf_pair(
     rk_info = _compare_rivalry_and_kryptonite_profile(
         cand_tel,
         main_tel,
+        main_family_tels=family_tels,
         exclude_pids=family_set | {cand_pid, main_pid},
         pid_aliases=pid_aliases,
     )
@@ -1980,6 +2112,8 @@ def score_live_smurf_pair(
             weighted_reasons.append((11.0, f"Nêmesis comum: {rk_info['shared_nemeses'][0]['alias'][:16]}"))
         elif freg_cnt == 1 and float(rk_info["rivalry_pts"]) >= 5.0:
             weighted_reasons.append((11.0, f"Freguês comum: {rk_info['shared_fregueses'][0]['alias'][:16]}"))
+        elif float(rk_info["rivalry_excess_pts"]) >= 2.0:
+            weighted_reasons.append((10.0, f"Rivais em comum ({float(rk_info['rivalry_dir_rate']) * 100:.0f}%)"))
 
     if float(rk_info["kryptonite_pts"]) >= 8.0 and rk_info["matchup_profile_valid"]:
         weighted_reasons.append((14.0, f"Criptonitas/Matchups {float(rk_info['matchup_profile_sim']) * 100:.0f}%"))
@@ -2045,6 +2179,11 @@ def score_live_smurf_pair(
             "shared_nemeses": len(rk_info["shared_nemeses"]),
             "shared_fregueses": len(rk_info["shared_fregueses"]),
             "inverted_rivalries": len(rk_info["inverted_rivalries"]),
+            "rivalry_dir_same": int(rk_info["rivalry_dir_same"]),
+            "rivalry_dir_diff": int(rk_info["rivalry_dir_diff"]),
+            "rivalry_dir_rate": float(rk_info["rivalry_dir_rate"]),
+            "rivalry_mean_excess": float(rk_info["rivalry_mean_excess"]),
+            "main_family_sources": int(rk_info["main_family_sources"]),
             "matchup_profile_sim": rk_info["matchup_profile_sim"] if rk_info["matchup_profile_valid"] else None,
             "shared_kryptonites": [f"{b['kind']}:{b['label']}" for b in rk_info["shared_kryptonites"]],
             "shared_strengths": [f"{b['kind']}:{b['label']}" for b in rk_info["shared_strengths"]],
@@ -2354,17 +2493,22 @@ def _hydrate_rivalry_kryptonite_for_live_probe(
 ) -> None:
     """
     Hidrata sob demanda (0ms em ciclos sem probe) o histórico permanente 2023+ de SQLite:
-    1) `kryptonite_matches` (mapas + BGs inimigos) uma única vez por ciclo para os Veteranos;
+    1) `kryptonite_matches` (mapas + BGs inimigos) uma única vez por ciclo para os Veteranos e
+       suas famílias de smurfs catalogadas;
     2) `nemesis_matches` via índice `idx_nemesis_all_opp` (~2ms) apenas para os adversários
        efetivamente enfrentados por `opp_tel`, sem dupla contagem de `match_id`.
     """
     if db is None:
         return
 
+    family_pids = {int(p) for fam in ctx.main_families.values() for p in fam if int(p) > 0}
+
     if not ctx.kryptonite_hydrated and hasattr(db, "get_kryptonite_profile_by_tracked_pids"):
         ctx.kryptonite_hydrated = True
         try:
-            target_pids = sorted(set(ctx.confirmed_veteran_pids) | set(ctx.telemetry_by_pid.keys()))
+            target_pids = sorted(
+                set(ctx.confirmed_veteran_pids) | set(ctx.telemetry_by_pid.keys()) | family_pids
+            )
             krypt_by_pid = db.get_kryptonite_profile_by_tracked_pids(target_pids) or {}
             for tpid, prof in krypt_by_pid.items():
                 tpid_i = int(tpid or 0)
@@ -2402,12 +2546,13 @@ def _hydrate_rivalry_kryptonite_for_live_probe(
 
     if opp_tel.opp_wl and hasattr(db, "get_nemesis_matches_for_opponents"):
         try:
+            allowed_tracked_pids = (set(ctx.reference_mains.keys()) | family_pids) - {int(opp_tel.profile_id)}
             nem_rows = db.get_nemesis_matches_for_opponents(opp_tel.opp_wl.keys()) or []
             for r in nem_rows:
                 tpid = int(r.get("tracked_profile_id", 0) or 0)
                 opid = int(r.get("opponent_profile_id", 0) or 0)
                 mid = int(r.get("match_id", 0) or 0)
-                if tpid <= 0 or opid <= 0 or tpid not in ctx.reference_mains:
+                if tpid <= 0 or opid <= 0 or tpid not in allowed_tracked_pids:
                     continue
                 mtel = ctx.telemetry_by_pid.setdefault(tpid, PlayerTelemetry(profile_id=tpid))
                 if mid > 0 and mid in mtel._seen_opp_mids:
@@ -2709,7 +2854,7 @@ def _evaluate_opponent_against_br_pool(
     # 3. Seleciona até MAX_EXTRA_MAIN_PROBES_PER_OPPONENT mains não-Veteranos mais plausíveis para baixar histórico bruto
     non_vet_candidates: list[tuple[float, int]] = []
     for mpid, main in ctx.reference_mains.items():
-        if mpid in disqualified_main_pids or mpid in ctx.telemetry_by_pid:
+        if mpid in disqualified_main_pids or (mpid in ctx.telemetry_by_pid and ctx.telemetry_by_pid[mpid].games > 0):
             continue
         fam = ctx.main_families.get(mpid, {mpid})
         if (opp_tel.co_played_with & fam) or (disqualified_main_pids & fam):
@@ -2744,9 +2889,12 @@ def _evaluate_opponent_against_br_pool(
         if main_tel is None:
             continue
         fam_intervals: list[tuple[int, int]] = []
+        fam_tels: list[PlayerTelemetry] = []
         for fpid in fam:
-            if fpid != mpid and fpid in ctx.telemetry_by_pid:
-                fam_intervals.extend(ctx.telemetry_by_pid[fpid].intervals)
+            if fpid != mpid and fpid != opp_pid and fpid in ctx.telemetry_by_pid:
+                ftel = ctx.telemetry_by_pid[fpid]
+                fam_intervals.extend(ftel.intervals)
+                fam_tels.append(ftel)
 
         # Só busca OSINT do main se houver pista real de avatar/nick/localização ou score prévio promissor
         main_osint: dict[str, Any] = {}
@@ -2757,6 +2905,7 @@ def _evaluate_opponent_against_br_pool(
             main_tel,
             main_family_pids=fam,
             family_intervals=fam_intervals,
+            family_tels=fam_tels,
             cand_osint=opp_osint,
             main_osint=None,
             known_br_pids=ctx.known_br_pids,
@@ -2778,6 +2927,7 @@ def _evaluate_opponent_against_br_pool(
                     main_tel,
                     main_family_pids=fam,
                     family_intervals=fam_intervals,
+                    family_tels=fam_tels,
                     cand_osint=opp_osint,
                     main_osint=main_osint,
                     known_br_pids=ctx.known_br_pids,
