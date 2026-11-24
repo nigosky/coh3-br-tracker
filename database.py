@@ -1808,6 +1808,100 @@ class MatchDatabase:
         ).fetchall()
         return {int(r[0]) for r in rows if int(r[0] or 0) > 0}
 
+    def get_nemesis_matches_for_opponents(
+        self,
+        opponent_profile_ids: list[int] | set[int] | frozenset[int],
+    ) -> list[dict[str, Any]]:
+        """
+        Retorna os confrontos históricos Automatch (2023+) em `nemesis_matches` contra o conjunto
+        de adversários `opponent_profile_ids` (consulta indexada via `idx_nemesis_all_opp`, ~2ms).
+        Usado pelo detector de smurfs ao vivo para identificar Nêmesis e Fregueses em comum.
+        """
+        clean_opps = sorted({int(p) for p in (opponent_profile_ids or ()) if int(p or 0) > 0})[:500]
+        if not clean_opps:
+            return []
+        ph = ",".join("?" for _ in clean_opps)
+        rows = self._connect().execute(
+            f"""
+            SELECT tracked_profile_id, opponent_profile_id, match_id, utc_day, win, opponent_alias
+            FROM nemesis_matches
+            WHERE opponent_profile_id IN ({ph})
+            """,
+            clean_opps,
+        ).fetchall()
+        return [
+            {
+                "tracked_profile_id": int(r["tracked_profile_id"]),
+                "opponent_profile_id": int(r["opponent_profile_id"]),
+                "match_id": int(r["match_id"]),
+                "utc_day": int(r["utc_day"] or 0),
+                "win": bool(int(r["win"] or 0)),
+                "opponent_alias": str(r["opponent_alias"] or "").strip(),
+            }
+            for r in rows
+        ]
+
+    def get_kryptonite_profile_by_tracked_pids(
+        self,
+        tracked_profile_ids: list[int] | set[int] | frozenset[int],
+    ) -> dict[int, dict[str, Any]]:
+        """
+        Retorna perfil agregado histórico (2023+) de Mapas e Battlegroups inimigos em `kryptonite_matches`
+        para cada `tracked_profile_id` informado (usado sob demanda pelo detector de smurfs ao vivo).
+        """
+        clean_pids = sorted({int(p) for p in (tracked_profile_ids or ()) if int(p or 0) > 0})[:300]
+        if not clean_pids:
+            return {}
+        ph = ",".join("?" for _ in clean_pids)
+        conn = self._connect()
+        out: dict[int, dict[str, Any]] = {}
+
+        map_rows = conn.execute(
+            f"""
+            SELECT tracked_profile_id, map_clean,
+                   SUM(CASE WHEN win = 1 THEN 1 ELSE 0 END) AS wins,
+                   SUM(CASE WHEN win = 0 THEN 1 ELSE 0 END) AS losses
+            FROM kryptonite_matches
+            WHERE tracked_profile_id IN ({ph})
+              AND COALESCE(map_clean, '') != ''
+            GROUP BY tracked_profile_id, map_clean
+            """,
+            clean_pids,
+        ).fetchall()
+        for r in map_rows:
+            tpid = int(r["tracked_profile_id"])
+            mclean = str(r["map_clean"] or "").strip()
+            if not mclean:
+                continue
+            slot = out.setdefault(tpid, {"map_wl": {}, "enemy_bg_wl": {}})
+            slot["map_wl"][mclean] = [int(r["wins"] or 0), int(r["losses"] or 0)]
+
+        bg_rows = conn.execute(
+            f"""
+            SELECT tracked_profile_id, win, enemy_bgs_json
+            FROM kryptonite_matches
+            WHERE tracked_profile_id IN ({ph})
+              AND COALESCE(enemy_bgs_json, '') NOT IN ('', '[]', 'null')
+            """,
+            clean_pids,
+        ).fetchall()
+        for r in bg_rows:
+            tpid = int(r["tracked_profile_id"])
+            won = bool(int(r["win"] or 0))
+            try:
+                toks = json.loads(r["enemy_bgs_json"] or "[]")
+            except Exception:
+                continue
+            if not isinstance(toks, list):
+                continue
+            slot = out.setdefault(tpid, {"map_wl": {}, "enemy_bg_wl": {}})
+            idx = 0 if won else 1
+            for tok in dict.fromkeys(str(t or "").strip().lower() for t in toks if str(t or "").strip()):
+                rec = slot["enemy_bg_wl"].setdefault(tok, [0, 0])
+                rec[idx] += 1
+
+        return out
+
     def update_matches_discord_id_batch(self, records: list[dict[str, Any]], message_id: str) -> None:
         """Atualiza o discord_message_id de todos os registros agrupados da mesma partida em uma transação."""
         if not records or not message_id:

@@ -22,10 +22,14 @@ from relic_api import (
     BR_COMMUNITY_PATH_RE,
     BR_COMMUNITY_URL,
     CORE_BR_ROSTER,
+    FACTION_SHORT,
+    FALLBACK_RACES,
     MANUAL_OTHER_BR_DISPLAY,
     MAX_BR_COMMUNITY_BYTES,
+    OFFICIAL_COH3_BATTLEGROUPS,
     STEAM_ID64_VALID_RE,
     TRACKER_USER_AGENT,
+    clean_map_name,
 )
 from security import (
     build_no_redirect_https_opener,
@@ -53,7 +57,7 @@ MAX_LIVE_OPPONENT_PROBES_PER_CYCLE = 4
 MAX_EXTRA_MAIN_PROBES_PER_OPPONENT = 3
 CONSOLIDATED_VETERAN_MIN_MATCHES = 900
 
-# Limiares calibrados pelos 4 modelos reais BR (Chacineiro, General Winter, Alekel, 『V』SKOBADARK)
+# Limiares calibrados pelos modelos reais BR confirmados
 ATTRIBUTED_ALERT_MIN_PROB_PCT = 58
 UNATTRIBUTED_BR_ALERT_MIN_SCORE_PCT = 68
 
@@ -108,6 +112,23 @@ _MODE_STR_NORM: dict[str, str] = {
     "Custom": "Custom",
 }
 
+_FACTION_TEXT_TO_SHORT: dict[str, str] = {
+    "us forces": "USF",
+    "usf": "USF",
+    "american": "USF",
+    "british forces": "UKF",
+    "ukf": "UKF",
+    "british": "UKF",
+    "wehrmacht": "Wehr",
+    "wehr": "Wehr",
+    "german": "Wehr",
+    "afrikakorps": "DAK",
+    "afrika korps": "DAK",
+    "afrika_corps": "DAK",
+    "dak": "DAK",
+}
+_BG_NAME_TO_OFFICIAL: dict[str, str] = {v.casefold(): v for v in OFFICIAL_COH3_BATTLEGROUPS.values()}
+
 # Famílias de smurfs catalogadas (garante exclusão mútua mesmo sem baixar players_roster.json)
 KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     1333418: 79327,   # Charles Bronson -> Chacineiro
@@ -124,12 +145,39 @@ KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     917917: 1005730,  # arc (CoH2 original) -> arc
     1160699: 1005730, # Bubebolos/Dingo -> arc
     918241: 1005730,  # Faint/Saffa -> arc
+    720147: 448521,   # アリス -> icemaker
 }
 
 SA_COUNTRIES: frozenset[str] = frozenset(
     {"br", "ar", "cl", "uy", "py", "co", "pe", "ec", "bo", "ve", "gy", "sr"}
 )
 SA_LEADERBOARD_REGION_ID = 2074438
+
+
+def _normalize_faction_short(race_or_name: Any) -> str:
+    if isinstance(race_or_name, int):
+        full = FALLBACK_RACES.get(race_or_name, "")
+        return FACTION_SHORT.get(full, "")
+    raw = str(race_or_name or "").strip()
+    if not raw:
+        return ""
+    if raw.isdigit():
+        full = FALLBACK_RACES.get(int(raw), "")
+        return FACTION_SHORT.get(full, "")
+    if raw in FACTION_SHORT:
+        return FACTION_SHORT[raw]
+    return _FACTION_TEXT_TO_SHORT.get(raw.casefold(), "")
+
+
+def _normalize_bg_label(raw_key: str = "", raw_name: str = "") -> str:
+    k = re.sub(r"_icon_mipped$", "", str(raw_key or "").strip().lower())
+    k = re.sub(r"[^a-z0-9_]", "", k)
+    if k in OFFICIAL_COH3_BATTLEGROUPS:
+        return OFFICIAL_COH3_BATTLEGROUPS[k]
+    n = strip_unsafe_chars(str(raw_name or "")).strip()
+    if not n or n.casefold() in ("none", "n/a", "-", "unknown"):
+        return ""
+    return _BG_NAME_TO_OFFICIAL.get(n.casefold(), n[:40])
 
 
 def _normalize_mode_label(mode_or_mt: Any) -> str:
@@ -556,6 +604,82 @@ class PlayerTelemetry:
     sa_match_count: int = 0
     br_opp_match_count: int = 0
     distinct_br_sa_opps: set[int] = field(default_factory=set)
+    # Perfil de Nêmesis, Freguês & Criptonitas / Facilidades (Automatch 1v1..4v4 + histórico SQLite 2023+)
+    opp_wl: dict[int, list[int]] = field(default_factory=dict)  # opp_pid -> [wins, losses]
+    opp_days: dict[int, set[int]] = field(default_factory=dict)  # opp_pid -> {utc_day, ...}
+    ally_wl: dict[int, list[int]] = field(default_factory=dict)  # ally_pid -> [wins, losses]
+    map_wl: dict[str, list[int]] = field(default_factory=dict)  # clean_map -> [wins, losses]
+    my_faction_wl: dict[str, list[int]] = field(default_factory=dict)
+    enemy_faction_wl: dict[str, list[int]] = field(default_factory=dict)
+    matchup_wl: dict[tuple[str, str], list[int]] = field(default_factory=dict)
+    enemy_bg_wl: dict[str, list[int]] = field(default_factory=dict)
+    _seen_opp_mids: set[int] = field(default_factory=set)
+
+    def winrate(self) -> float:
+        return (self.wins / float(self.games)) if self.games > 0 else 0.0
+
+    def record_match_outcome_profile(
+        self,
+        *,
+        won: bool,
+        ct: int,
+        match_id: int = 0,
+        my_faction: Any = -1,
+        map_name: str = "",
+        enemy_pids: list[int] | None = None,
+        enemy_factions: list[Any] | None = None,
+        ally_pids: list[int] | None = None,
+        enemy_bgs: list[str] | None = None,
+    ) -> None:
+        """Registra resultados por adversário, mapa, facção/matchup, aliado e BG inimigo para perfil Nêmesis/Freguês/Criptonitas."""
+        idx = 0 if won else 1
+        utc_day = int(ct or 0) // 86400 if int(ct or 0) > 0 else 0
+        mid_i = int(match_id or 0)
+
+        if enemy_pids and (mid_i <= 0 or mid_i not in self._seen_opp_mids):
+            if mid_i > 0:
+                self._seen_opp_mids.add(mid_i)
+            for op_pid in dict.fromkeys(int(p) for p in enemy_pids if int(p or 0) > 0 and int(p) != self.profile_id):
+                if op_pid in self.opp_wl or len(self.opp_wl) < 4000:
+                    rec = self.opp_wl.setdefault(op_pid, [0, 0])
+                    rec[idx] += 1
+                    if utc_day > 0:
+                        days = self.opp_days.setdefault(op_pid, set())
+                        if len(days) < 30:
+                            days.add(utc_day)
+
+        if ally_pids:
+            for ap_pid in dict.fromkeys(int(p) for p in ally_pids if int(p or 0) > 0 and int(p) != self.profile_id):
+                if ap_pid in self.ally_wl or len(self.ally_wl) < 2000:
+                    rec = self.ally_wl.setdefault(ap_pid, [0, 0])
+                    rec[idx] += 1
+
+        clean_map = clean_map_name(map_name) if str(map_name or "").strip() else ""
+        if clean_map and clean_map != "Mapa Desconhecido":
+            if clean_map in self.map_wl or len(self.map_wl) < 200:
+                rec = self.map_wl.setdefault(clean_map, [0, 0])
+                rec[idx] += 1
+
+        my_fac = _normalize_faction_short(my_faction)
+        if my_fac:
+            rec = self.my_faction_wl.setdefault(my_fac, [0, 0])
+            rec[idx] += 1
+
+        if enemy_factions:
+            efac_set = {ef for ef in (_normalize_faction_short(x) for x in enemy_factions) if ef}
+            for efac in efac_set:
+                rec = self.enemy_faction_wl.setdefault(efac, [0, 0])
+                rec[idx] += 1
+                if my_fac:
+                    mrec = self.matchup_wl.setdefault((my_fac, efac), [0, 0])
+                    mrec[idx] += 1
+
+        if enemy_bgs:
+            for raw_bg in dict.fromkeys(str(b or "").strip() for b in enemy_bgs if str(b or "").strip()):
+                lbl = _normalize_bg_label(raw_key=raw_bg, raw_name=raw_bg)
+                if lbl and (lbl in self.enemy_bg_wl or len(self.enemy_bg_wl) < 60):
+                    rec = self.enemy_bg_wl.setdefault(lbl, [0, 0])
+                    rec[idx] += 1
 
     def median_apm(self, min_samples: int = 3) -> float:
         return float(statistics.median(self.apm_values)) if len(self.apm_values) >= min_samples else 0.0
@@ -587,6 +711,7 @@ class PlayerTelemetry:
         raw_payload: dict[str, Any] | None,
         *,
         known_br_pids: set[int] | frozenset[int] | None = None,
+        pid_aliases: dict[int, str] | None = None,
     ) -> None:
         if not isinstance(raw_payload, dict):
             return
@@ -598,6 +723,10 @@ class PlayerTelemetry:
             pid = int(pr.get("profile_id", 0) or 0)
             if pid > 0:
                 profiles_by_id[pid] = pr
+                if pid_aliases is not None:
+                    pal = strip_unsafe_chars(pr.get("alias") or "")[:40]
+                    if pal and not _is_placeholder_alias(pal):
+                        pid_aliases[pid] = pal
         me_pr = profiles_by_id.get(self.profile_id)
         if me_pr:
             al = strip_unsafe_chars(me_pr.get("alias") or "")[:40]
@@ -631,6 +760,7 @@ class PlayerTelemetry:
             by_team: dict[int, list[int]] = defaultdict(list)
             all_pids: list[int] = []
             pid_teams: list[tuple[int, int]] = []
+            pid_team_races: list[tuple[int, int, int]] = []
             for rep in reports:
                 if not isinstance(rep, dict):
                     continue
@@ -640,7 +770,9 @@ class PlayerTelemetry:
                 all_pids.append(rpid)
                 raw_tid = rep.get("teamid")
                 tid = int(raw_tid) if raw_tid is not None else -1
+                rrace = int(rep.get("race_id", -1) if rep.get("race_id") is not None else -1)
                 pid_teams.append((rpid, tid))
+                pid_team_races.append((rpid, tid, rrace))
                 if tid >= 0:
                     by_team[tid].append(rpid)
                 if rpid == self.profile_id:
@@ -687,6 +819,28 @@ class PlayerTelemetry:
                 self.mode_counts[mode] += 1
                 if race_id >= 0:
                     self.mode_faction_counts[(mode, race_id)] += 1
+                enemy_pids_m: list[int] = []
+                ally_pids_m: list[int] = []
+                enemy_races_m: list[int] = []
+                for rpid, rtid, rrace in pid_team_races:
+                    if rpid <= 0 or rpid == self.profile_id:
+                        continue
+                    if my_tid >= 0 and rtid == my_tid:
+                        ally_pids_m.append(rpid)
+                    elif my_tid >= 0 and rtid >= 0 and rtid != my_tid:
+                        enemy_pids_m.append(rpid)
+                        if rrace >= 0:
+                            enemy_races_m.append(rrace)
+                self.record_match_outcome_profile(
+                    won=won,
+                    ct=ct,
+                    match_id=mid,
+                    my_faction=race_id,
+                    map_name=str(m.get("mapname") or ""),
+                    enemy_pids=enemy_pids_m,
+                    enemy_factions=enemy_races_m,
+                    ally_pids=ally_pids_m,
+                )
                 observed_other = False
                 has_br_other = False
                 has_sa_other = False
@@ -769,8 +923,13 @@ class PlayerTelemetry:
             if cos and len(self.equipped_cosmetic_ids) < 500:
                 self.equipped_cosmetic_ids.update(cos)
 
-    def observe_sqlite_match_row(self, row: dict[str, Any]) -> None:
-        """Complementa intervalos/aliados/horários/ELO a partir de `recorded_matches` no SQLite (sem duplicar match_id)."""
+    def observe_sqlite_match_row(
+        self,
+        row: dict[str, Any],
+        *,
+        pid_aliases: dict[int, str] | None = None,
+    ) -> None:
+        """Complementa intervalos/aliados/horários/ELO/Nêmesis/Criptonitas a partir de `recorded_matches` no SQLite (sem duplicar match_id)."""
         mid = int(row.get("match_id", 0) or 0)
         if mid > 0 and mid in self.seen_match_ids:
             return
@@ -794,6 +953,42 @@ class PlayerTelemetry:
         self.weekday_counts[dt_brt.weekday()] += 1
         self.active_brt_days.add(dt_brt.strftime("%Y-%m-%d"))
 
+        ally_pids: list[int] = []
+        for al in row.get("allies") or []:
+            if isinstance(al, dict):
+                apid = int(al.get("profile_id", 0) or 0)
+                if apid > 0 and apid != self.profile_id:
+                    self.ally_counts[apid] += 1
+                    self.co_played_with.add(apid)
+                    ally_pids.append(apid)
+                    if pid_aliases is not None:
+                        aal = strip_unsafe_chars(al.get("alias") or "")[:40]
+                        if aal and not _is_placeholder_alias(aal):
+                            pid_aliases[apid] = aal
+
+        enemy_pids: list[int] = []
+        enemy_facs: list[Any] = []
+        enemy_bgs: list[str] = []
+        bgs_map = row.get("battlegroups") if isinstance(row.get("battlegroups"), dict) else {}
+        for op in row.get("opponents") or []:
+            if isinstance(op, dict):
+                opid = int(op.get("profile_id", 0) or 0)
+                if opid > 0 and opid != self.profile_id:
+                    self.co_played_with.add(opid)
+                    enemy_pids.append(opid)
+                    if pid_aliases is not None:
+                        oal = strip_unsafe_chars(op.get("alias") or "")[:40]
+                        if oal and not _is_placeholder_alias(oal):
+                            pid_aliases[opid] = oal
+                    ef = op.get("faction") or op.get("race_id")
+                    if ef:
+                        enemy_facs.append(ef)
+                    bg_entry = bgs_map.get(str(opid)) or bgs_map.get(opid)
+                    if isinstance(bg_entry, dict):
+                        eb = str(bg_entry.get("key") or bg_entry.get("name") or "").strip()
+                        if eb:
+                            enemy_bgs.append(eb)
+
         mode = _normalize_mode_label(row.get("mode") or row.get("matchtype_id"))
         if mode in ("1v1", "2v2", "3v3", "4v4"):
             self.mode_counts[mode] += 1
@@ -805,18 +1000,17 @@ class PlayerTelemetry:
             dur = max(0, ct - st)
             if not won and dur >= 240 and len(self.loss_durations_sec) < 120:
                 self.loss_durations_sec.append(dur)
-
-        for al in row.get("allies") or []:
-            if isinstance(al, dict):
-                apid = int(al.get("profile_id", 0) or 0)
-                if apid > 0 and apid != self.profile_id:
-                    self.ally_counts[apid] += 1
-                    self.co_played_with.add(apid)
-        for op in row.get("opponents") or []:
-            if isinstance(op, dict):
-                opid = int(op.get("profile_id", 0) or 0)
-                if opid > 0 and opid != self.profile_id:
-                    self.co_played_with.add(opid)
+            self.record_match_outcome_profile(
+                won=won,
+                ct=ct,
+                match_id=mid,
+                my_faction=row.get("faction") or row.get("race_id") or "",
+                map_name=str(row.get("map_clean") or row.get("map_raw") or ""),
+                enemy_pids=enemy_pids,
+                enemy_factions=enemy_facs,
+                ally_pids=ally_pids,
+                enemy_bgs=enemy_bgs,
+            )
 
 
 def _cosine_similarity(c1: Counter[Any], c2: Counter[Any]) -> float:
@@ -1097,6 +1291,297 @@ def _compare_bg_loadout(cand_tel: PlayerTelemetry | None, main_tel: PlayerTeleme
     return round(w_sim / w_tot, 3) if w_tot > 0.0 else 0.0
 
 
+def _is_rivalry_nemesis_wl(wins: int, losses: int) -> bool:
+    """True quando a conta perde regularmente para o adversário (alinhado ao critério Nêmesis)."""
+    w = max(0, int(wins))
+    l = max(0, int(losses))
+    n = w + l
+    if n < 2 or l <= w:
+        return False
+    return (w == 0 and l >= 2) or ((l / float(n)) >= 0.65 and (l - w) >= 2) or ((l / float(n)) >= 0.60 and n >= 5)
+
+
+def _is_rivalry_fregues_wl(wins: int, losses: int) -> bool:
+    """True quando a conta vence regularmente o adversário (alinhado ao critério Freguês)."""
+    w = max(0, int(wins))
+    l = max(0, int(losses))
+    n = w + l
+    if n < 2 or w <= l:
+        return False
+    return (l == 0 and w >= 2) or ((w / float(n)) >= 0.65 and (w - l) >= 2) or ((w / float(n)) >= 0.60 and n >= 5)
+
+
+def _compare_rivalry_and_kryptonite_profile(
+    cand_tel: PlayerTelemetry | None,
+    main_tel: PlayerTelemetry | None,
+    *,
+    exclude_pids: set[int] | frozenset[int] | None = None,
+    pid_aliases: dict[int, str] | None = None,
+) -> dict[str, Any]:
+    """
+    Sinal 10 — Perfil de Nêmesis, Freguês & Criptonitas / Facilidades (Matchup DNA com encolhimento Bayesiano):
+    Harmonizado com `coh3-br-lobby-radar/smurf_detector.py`, alavancando também o histórico 2023+ do SQLite
+    (`nemesis_matches` e `kryptonite_matches`) para contas principais monitoradas.
+    """
+    res: dict[str, Any] = {
+        "rivalry_pts": 0.0,
+        "kryptonite_pts": 0.0,
+        "total_pts": 0.0,
+        "adds_behavioral": False,
+        "adds_identity_anchor": False,
+        "shared_nemeses": [],
+        "shared_fregueses": [],
+        "inverted_rivalries": [],
+        "shared_rivalry_count": 0,
+        "matchup_profile_sim": 0.0,
+        "matchup_profile_valid": False,
+        "compared_buckets": 0,
+        "shared_kryptonites": [],
+        "shared_strengths": [],
+        "opposing_buckets": [],
+    }
+    if not cand_tel or not main_tel:
+        return res
+
+    excl = set(exclude_pids or ())
+    excl.add(int(cand_tel.profile_id))
+    excl.add(int(main_tel.profile_id))
+    aliases = pid_aliases or {}
+
+    shared_nemeses: list[dict[str, Any]] = []
+    shared_fregueses: list[dict[str, Any]] = []
+    inverted_rivalries: list[dict[str, Any]] = []
+
+    for opp_pid in (set(cand_tel.opp_wl.keys()) & set(main_tel.opp_wl.keys())) - excl:
+        cp = cand_tel.opp_wl.get(opp_pid) or [0, 0]
+        mp = main_tel.opp_wl.get(opp_pid) or [0, 0]
+        cw, cl = max(0, int(cp[0])), max(0, int(cp[1]))
+        mw, ml = max(0, int(mp[0])), max(0, int(mp[1]))
+        cn, mn = cw + cl, mw + ml
+        tot = cn + mn
+        if cn < 2 or mn < 2 or tot < 5:
+            continue
+        c_days = len(cand_tel.opp_days.get(opp_pid) or ())
+        m_days = len(main_tel.opp_days.get(opp_pid) or ())
+        entry = {
+            "profile_id": int(opp_pid),
+            "alias": strip_unsafe_chars(aliases.get(opp_pid) or f"ID #{opp_pid}")[:32],
+            "cand_w": cw,
+            "cand_l": cl,
+            "main_w": mw,
+            "main_l": ml,
+            "cand_n": cn,
+            "main_n": mn,
+            "total": tot,
+            "cand_days": c_days,
+            "main_days": m_days,
+        }
+        if _is_rivalry_nemesis_wl(cw, cl) and _is_rivalry_nemesis_wl(mw, ml):
+            shared_nemeses.append(entry)
+        elif _is_rivalry_fregues_wl(cw, cl) and _is_rivalry_fregues_wl(mw, ml):
+            shared_fregueses.append(entry)
+        elif cn >= 3 and mn >= 3:
+            c_dom_w = (cw / float(cn)) >= 0.70 and (cw - cl) >= 2
+            c_dom_l = (cl / float(cn)) >= 0.70 and (cl - cw) >= 2
+            m_dom_w = (mw / float(mn)) >= 0.70 and (mw - ml) >= 2
+            m_dom_l = (ml / float(mn)) >= 0.70 and (ml - mw) >= 2
+            if (c_dom_w and m_dom_l) or (c_dom_l and m_dom_w):
+                inverted_rivalries.append(entry)
+
+    shared_nemeses.sort(key=lambda r: (-r["total"], -(r["cand_l"] + r["main_l"])))
+    shared_fregueses.sort(key=lambda r: (-r["total"], -(r["cand_w"] + r["main_w"])))
+    inverted_rivalries.sort(key=lambda r: -r["total"])
+
+    shared_riv_cnt = len(shared_nemeses) + len(shared_fregueses)
+    inv_riv_cnt = len(inverted_rivalries)
+    riv_total_eval = shared_riv_cnt + inv_riv_cnt
+    riv_concordance = (shared_riv_cnt / float(riv_total_eval)) if riv_total_eval > 0 else 0.0
+    part_a_pts = 0.0
+    rivalry_adds_behavioral = False
+    rivalry_adds_anchor = False
+
+    if shared_riv_cnt > 0 and riv_concordance >= 0.70:
+        if shared_riv_cnt >= 3:
+            part_a_pts = 12.0
+            rivalry_adds_behavioral = True
+            rivalry_adds_anchor = True
+        elif shared_riv_cnt == 2:
+            part_a_pts = 8.0
+            rivalry_adds_behavioral = True
+            rivalry_adds_anchor = True
+        elif shared_riv_cnt == 1:
+            only_riv = (shared_nemeses + shared_fregueses)[0]
+            if only_riv["total"] >= 6 or (only_riv["cand_n"] >= 3 and only_riv["main_n"] >= 3):
+                part_a_pts = 5.0
+                if (
+                    only_riv["cand_n"] >= 3
+                    and only_riv["main_n"] >= 3
+                    and only_riv["total"] >= 7
+                    and (only_riv["cand_days"] >= 2 or only_riv["main_days"] >= 2)
+                ):
+                    rivalry_adds_anchor = True
+            else:
+                part_a_pts = 3.0
+        if inv_riv_cnt >= 1:
+            part_a_pts = max(0.0, part_a_pts - 3.0 * inv_riv_cnt)
+    elif inv_riv_cnt > shared_riv_cnt:
+        part_a_pts = -6.0 if (inv_riv_cnt - shared_riv_cnt) >= 2 else -3.0
+
+    cand_overall_p0 = min(0.80, max(0.20, cand_tel.winrate())) if cand_tel.games >= 5 else 0.50
+    main_overall_p0 = min(0.80, max(0.20, main_tel.winrate())) if main_tel.games >= 5 else 0.50
+
+    def _domain_baseline(wl_map: dict[Any, list[int]], fallback_p0: float) -> float:
+        tw = sum(max(0, int(v[0])) for v in wl_map.values() if len(v) >= 2)
+        tn = sum(max(0, int(v[0])) + max(0, int(v[1])) for v in wl_map.values() if len(v) >= 2)
+        if tn >= 8:
+            return min(0.80, max(0.20, tw / float(tn)))
+        return fallback_p0
+
+    cand_ally_clean = {k: v for k, v in cand_tel.ally_wl.items() if k not in excl}
+    main_ally_clean = {k: v for k, v in main_tel.ally_wl.items() if k not in excl}
+
+    domains: list[tuple[str, dict[Any, list[int]], dict[Any, list[int]], int, float]] = [
+        ("Mapa", cand_tel.map_wl, main_tel.map_wl, 3, 1.00),
+        ("BG", cand_tel.enemy_bg_wl, main_tel.enemy_bg_wl, 3, 1.15),
+        ("Matchup", cand_tel.matchup_wl, main_tel.matchup_wl, 4, 0.90),
+    ]
+    shared_matchup_cnt = sum(
+        1
+        for k in (set(cand_tel.matchup_wl.keys()) & set(main_tel.matchup_wl.keys()))
+        if sum(cand_tel.matchup_wl[k][:2]) >= 4 and sum(main_tel.matchup_wl[k][:2]) >= 4
+    )
+    if shared_matchup_cnt < 2:
+        domains.append(("vs Facção", cand_tel.enemy_faction_wl, main_tel.enemy_faction_wl, 4, 0.75))
+
+    cand_multi_fac = sum(1 for v in cand_tel.my_faction_wl.values() if (int(v[0]) + int(v[1])) >= 4) >= 2
+    main_multi_fac = sum(1 for v in main_tel.my_faction_wl.values() if (int(v[0]) + int(v[1])) >= 4) >= 2
+    if cand_multi_fac and main_multi_fac:
+        fac_scale = 0.45 if shared_matchup_cnt >= 2 else 0.75
+        domains.append(("Facção", cand_tel.my_faction_wl, main_tel.my_faction_wl, 4, fac_scale))
+
+    domains.append(("Aliado", cand_ally_clean, main_ally_clean, 3, 0.85))
+
+    alpha = 3.0
+    w_dot = 0.0
+    w_nc = 0.0
+    w_nm = 0.0
+    w_sum = 0.0
+    compared_buckets = 0
+    shared_kryptonites: list[dict[str, Any]] = []
+    shared_strengths: list[dict[str, Any]] = []
+    opposing_buckets: list[dict[str, Any]] = []
+
+    for dim_kind, c_map, m_map, min_n, dim_scale in domains:
+        if not c_map or not m_map:
+            continue
+        p0_c = _domain_baseline(c_map, cand_overall_p0)
+        p0_m = _domain_baseline(m_map, main_overall_p0)
+        for key in set(c_map.keys()) & set(m_map.keys()):
+            cp = c_map[key]
+            mp = m_map[key]
+            cw, cl = max(0, int(cp[0])), max(0, int(cp[1]))
+            mw, ml = max(0, int(mp[0])), max(0, int(mp[1]))
+            cn, mn = cw + cl, mw + ml
+            if cn < min_n or mn < min_n:
+                continue
+
+            dc = (cw + alpha * p0_c) / (cn + alpha) - p0_c
+            dm = (mw + alpha * p0_m) / (mn + alpha) - p0_m
+            raw_dc = (cw / float(cn)) - p0_c
+            raw_dm = (mw / float(mn)) - p0_m
+
+            wt = dim_scale * math.sqrt(float(min(cn, mn)))
+            w_dot += wt * dc * dm
+            w_nc += wt * dc * dc
+            w_nm += wt * dm * dm
+            w_sum += wt
+            compared_buckets += 1
+
+            if dim_kind == "Matchup" and isinstance(key, tuple) and len(key) == 2:
+                label = f"{key[0]} vs {key[1]}"
+            elif dim_kind == "Aliado":
+                label = strip_unsafe_chars(aliases.get(int(key)) or f"ID #{key}")[:28]
+            else:
+                label = str(key)
+
+            bucket_entry = {
+                "kind": dim_kind,
+                "label": label,
+                "cand_w": cw,
+                "cand_l": cl,
+                "main_w": mw,
+                "main_l": ml,
+                "cand_delta": round(dc, 3),
+                "main_delta": round(dm, 3),
+            }
+            if dc <= -0.055 and dm <= -0.055 and raw_dc <= -0.08 and raw_dm <= -0.08 and (cl > cw or ml > mw):
+                shared_kryptonites.append(bucket_entry)
+            elif dc >= 0.055 and dm >= 0.055 and raw_dc >= 0.08 and raw_dm >= 0.08 and cw > cl and mw > ml:
+                shared_strengths.append(bucket_entry)
+            elif (
+                (dc <= -0.07 and raw_dc <= -0.10 and dm >= 0.07 and raw_dm >= 0.10)
+                or (dm <= -0.07 and raw_dm <= -0.10 and dc >= 0.07 and raw_dc >= 0.10)
+            ):
+                opposing_buckets.append(bucket_entry)
+
+    shared_kryptonites.sort(key=lambda b: (b["cand_delta"] + b["main_delta"]))
+    shared_strengths.sort(key=lambda b: -(b["cand_delta"] + b["main_delta"]))
+
+    part_b_pts = 0.0
+    krypt_adds_behavioral = False
+    matchup_profile_sim = 0.0
+    matchup_profile_valid = False
+    steady_state_sample = (
+        cand_tel.games >= 30
+        and main_tel.games >= 30
+        and cand_tel.winrate() < 0.72
+    )
+
+    if compared_buckets >= 4 and w_sum > 0.0 and w_nc > 0.0 and w_nm > 0.0:
+        rms_c = math.sqrt(w_nc / w_sum)
+        rms_m = math.sqrt(w_nm / w_sum)
+        if rms_c >= 0.035 and rms_m >= 0.035:
+            matchup_profile_valid = True
+            matchup_profile_sim = round(max(-1.0, min(1.0, w_dot / math.sqrt(w_nc * w_nm))), 3)
+            concrete_shared = len(shared_kryptonites) + len(shared_strengths)
+            if matchup_profile_sim >= 0.58 and (concrete_shared >= 2 or compared_buckets >= 6):
+                part_b_pts = 8.0
+                krypt_adds_behavioral = True
+            elif matchup_profile_sim >= 0.40 and (concrete_shared >= 1 or compared_buckets >= 6):
+                part_b_pts = 4.0
+            elif steady_state_sample and compared_buckets >= 8 and matchup_profile_sim <= -0.50:
+                part_b_pts = -5.0
+
+    if part_b_pts == 0.0:
+        concrete_shared = len(shared_kryptonites) + len(shared_strengths)
+        if concrete_shared >= 2 and not opposing_buckets:
+            part_b_pts = 4.0
+        elif steady_state_sample and len(opposing_buckets) >= 3 and concrete_shared == 0:
+            part_b_pts = -4.0
+
+    total_pts = max(-8.0, min(16.0, part_a_pts + part_b_pts))
+    res.update(
+        {
+            "rivalry_pts": round(part_a_pts, 2),
+            "kryptonite_pts": round(part_b_pts, 2),
+            "total_pts": round(total_pts, 2),
+            "adds_behavioral": bool(rivalry_adds_behavioral or krypt_adds_behavioral),
+            "adds_identity_anchor": bool(rivalry_adds_anchor),
+            "shared_nemeses": shared_nemeses[:5],
+            "shared_fregueses": shared_fregueses[:5],
+            "inverted_rivalries": inverted_rivalries[:5],
+            "shared_rivalry_count": shared_riv_cnt,
+            "matchup_profile_sim": matchup_profile_sim,
+            "matchup_profile_valid": matchup_profile_valid,
+            "compared_buckets": compared_buckets,
+            "shared_kryptonites": shared_kryptonites[:5],
+            "shared_strengths": shared_strengths[:5],
+            "opposing_buckets": opposing_buckets[:5],
+        }
+    )
+    return res
+
+
 def score_live_smurf_pair(
     cand: dict[str, Any],
     main: dict[str, Any],
@@ -1108,6 +1593,7 @@ def score_live_smurf_pair(
     cand_osint: dict[str, Any] | None = None,
     main_osint: dict[str, Any] | None = None,
     known_br_pids: set[int] | frozenset[int] | None = None,
+    pid_aliases: dict[int, str] | None = None,
 ) -> dict[str, Any]:
     """
     Calcula a probabilidade forense (`0..99%`) de um oponente `cand` ser smurf do brasileiro `main`,
@@ -1470,6 +1956,39 @@ def score_live_smurf_pair(
         bg_pts = 6.0
     score += bg_pts
 
+    # 10. Nêmesis, Freguês & Criptonitas / Facilidades (Matchup DNA com encolhimento Bayesiano)
+    rk_info = _compare_rivalry_and_kryptonite_profile(
+        cand_tel,
+        main_tel,
+        exclude_pids=family_set | {cand_pid, main_pid},
+        pid_aliases=pid_aliases,
+    )
+    rk_pts = float(rk_info["total_pts"])
+    if rk_pts != 0.0:
+        score += rk_pts
+    if rk_info["adds_behavioral"]:
+        behavioral_signals += 1
+    if rk_info["adds_identity_anchor"]:
+        identity_anchor_signals += 1
+
+    nem_cnt = len(rk_info["shared_nemeses"])
+    freg_cnt = len(rk_info["shared_fregueses"])
+    if float(rk_info["rivalry_pts"]) > 0.0:
+        if nem_cnt + freg_cnt >= 2:
+            weighted_reasons.append((16.0, f"Nêmesis/Freguês comum ({nem_cnt + freg_cnt})"))
+        elif nem_cnt == 1 and float(rk_info["rivalry_pts"]) >= 5.0:
+            weighted_reasons.append((11.0, f"Nêmesis comum: {rk_info['shared_nemeses'][0]['alias'][:16]}"))
+        elif freg_cnt == 1 and float(rk_info["rivalry_pts"]) >= 5.0:
+            weighted_reasons.append((11.0, f"Freguês comum: {rk_info['shared_fregueses'][0]['alias'][:16]}"))
+
+    if float(rk_info["kryptonite_pts"]) >= 8.0 and rk_info["matchup_profile_valid"]:
+        weighted_reasons.append((14.0, f"Criptonitas/Matchups {float(rk_info['matchup_profile_sim']) * 100:.0f}%"))
+    elif float(rk_info["kryptonite_pts"]) >= 4.0:
+        if rk_info["shared_kryptonites"]:
+            weighted_reasons.append((9.0, f"Criptonita comum: {rk_info['shared_kryptonites'][0]['label'][:18]}"))
+        elif rk_info["matchup_profile_valid"]:
+            weighted_reasons.append((9.0, f"Criptonitas/Matchups {float(rk_info['matchup_profile_sim']) * 100:.0f}%"))
+
     # Deduções por contra-evidência
     elo_diff = abs(cand_elo - main_elo) if (cand_elo > 0 and main_elo > 0) else 0
     if elo_diff > 350:
@@ -1482,7 +2001,15 @@ def score_live_smurf_pair(
     if cand_elo > 0 and cand_elo < 1200 and cand_total >= 100:
         score -= 15.0
 
-    if cand_tel and main_tel and not shared_allies and handoff_cnt == 0 and alias_pts == 0 and not (apm_strong and (bg_pts >= 6.0 or dna_strong)):
+    if (
+        cand_tel
+        and main_tel
+        and not shared_allies
+        and handoff_cnt == 0
+        and alias_pts == 0
+        and int(rk_info["shared_rivalry_count"]) < 2
+        and not (apm_strong and (bg_pts >= 6.0 or dna_strong))
+    ):
         if (cand_tel.games - cand_tel.mode_counts.get("1v1", 0)) >= 10 and (main_tel.games - main_tel.mode_counts.get("1v1", 0)) >= 10:
             score -= 12.0
 
@@ -1513,6 +2040,15 @@ def score_live_smurf_pair(
         "behavioral_signals": behavioral_signals,
         "identity_anchor_signals": identity_anchor_signals,
         "top_reasons": top_reasons,
+        "rivalry_kryptonite": {
+            "pts": rk_pts,
+            "shared_nemeses": len(rk_info["shared_nemeses"]),
+            "shared_fregueses": len(rk_info["shared_fregueses"]),
+            "inverted_rivalries": len(rk_info["inverted_rivalries"]),
+            "matchup_profile_sim": rk_info["matchup_profile_sim"] if rk_info["matchup_profile_valid"] else None,
+            "shared_kryptonites": [f"{b['kind']}:{b['label']}" for b in rk_info["shared_kryptonites"]],
+            "shared_strengths": [f"{b['kind']}:{b['label']}" for b in rk_info["shared_strengths"]],
+        },
     }
 
 
@@ -1756,6 +2292,8 @@ class SmurfAlertContext:
     remaining_probe_budget: int = MAX_LIVE_OPPONENT_PROBES_PER_CYCLE
     cache_dirty: bool = False
     now_ts: int = 0
+    pid_aliases: dict[int, str] = field(default_factory=dict)
+    kryptonite_hydrated: bool = False
 
 
 def _is_cataloged_smurf_row(row: dict[str, Any]) -> bool:
@@ -1807,6 +2345,88 @@ def save_smurf_probe_cache(db: Any, ctx: SmurfAlertContext) -> None:
     payload = json.dumps({str(pid): rec for pid, rec in items}, ensure_ascii=False, separators=(",", ":"))
     db.set_state(SMURF_PROBE_CACHE_KEY, payload)
     ctx.cache_dirty = False
+
+
+def _hydrate_rivalry_kryptonite_for_live_probe(
+    db: Any,
+    opp_tel: PlayerTelemetry,
+    ctx: SmurfAlertContext,
+) -> None:
+    """
+    Hidrata sob demanda (0ms em ciclos sem probe) o histórico permanente 2023+ de SQLite:
+    1) `kryptonite_matches` (mapas + BGs inimigos) uma única vez por ciclo para os Veteranos;
+    2) `nemesis_matches` via índice `idx_nemesis_all_opp` (~2ms) apenas para os adversários
+       efetivamente enfrentados por `opp_tel`, sem dupla contagem de `match_id`.
+    """
+    if db is None:
+        return
+
+    if not ctx.kryptonite_hydrated and hasattr(db, "get_kryptonite_profile_by_tracked_pids"):
+        ctx.kryptonite_hydrated = True
+        try:
+            target_pids = sorted(set(ctx.confirmed_veteran_pids) | set(ctx.telemetry_by_pid.keys()))
+            krypt_by_pid = db.get_kryptonite_profile_by_tracked_pids(target_pids) or {}
+            for tpid, prof in krypt_by_pid.items():
+                tpid_i = int(tpid or 0)
+                if tpid_i <= 0 or not isinstance(prof, dict):
+                    continue
+                mtel = ctx.telemetry_by_pid.setdefault(tpid_i, PlayerTelemetry(profile_id=tpid_i))
+                k_maps = prof.get("map_wl") or {}
+                if isinstance(k_maps, dict) and k_maps:
+                    cur_map_games = sum(int(v[0]) + int(v[1]) for v in mtel.map_wl.values() if len(v) >= 2)
+                    life_map_games = sum(int(v[0]) + int(v[1]) for v in k_maps.values() if len(v) >= 2)
+                    if life_map_games > cur_map_games:
+                        mtel.map_wl = {
+                            str(mk): [max(0, int(mv[0])), max(0, int(mv[1]))]
+                            for mk, mv in k_maps.items()
+                            if str(mk).strip() and isinstance(mv, (list, tuple)) and len(mv) >= 2
+                        }
+                k_bgs = prof.get("enemy_bg_wl") or {}
+                if isinstance(k_bgs, dict) and k_bgs:
+                    norm_bgs: dict[str, list[int]] = {}
+                    for raw_bk, bv in k_bgs.items():
+                        if not isinstance(bv, (list, tuple)) or len(bv) < 2:
+                            continue
+                        lbl = _normalize_bg_label(raw_key=str(raw_bk), raw_name=str(raw_bk))
+                        if not lbl:
+                            continue
+                        rec = norm_bgs.setdefault(lbl, [0, 0])
+                        rec[0] += max(0, int(bv[0]))
+                        rec[1] += max(0, int(bv[1]))
+                    cur_bg_games = sum(int(v[0]) + int(v[1]) for v in mtel.enemy_bg_wl.values() if len(v) >= 2)
+                    life_bg_games = sum(int(v[0]) + int(v[1]) for v in norm_bgs.values())
+                    if life_bg_games > cur_bg_games:
+                        mtel.enemy_bg_wl = norm_bgs
+        except Exception as exc:
+            logger.debug("[SMURF ALERT] Falha ao hidratar kryptonite_matches: %s", redact_secrets(exc))
+
+    if opp_tel.opp_wl and hasattr(db, "get_nemesis_matches_for_opponents"):
+        try:
+            nem_rows = db.get_nemesis_matches_for_opponents(opp_tel.opp_wl.keys()) or []
+            for r in nem_rows:
+                tpid = int(r.get("tracked_profile_id", 0) or 0)
+                opid = int(r.get("opponent_profile_id", 0) or 0)
+                mid = int(r.get("match_id", 0) or 0)
+                if tpid <= 0 or opid <= 0 or tpid not in ctx.reference_mains:
+                    continue
+                mtel = ctx.telemetry_by_pid.setdefault(tpid, PlayerTelemetry(profile_id=tpid))
+                if mid > 0 and mid in mtel._seen_opp_mids:
+                    continue
+                if mid > 0:
+                    mtel._seen_opp_mids.add(mid)
+                if opid in mtel.opp_wl or len(mtel.opp_wl) < 4000:
+                    rec = mtel.opp_wl.setdefault(opid, [0, 0])
+                    rec[0 if r.get("win") else 1] += 1
+                    ud = int(r.get("utc_day", 0) or 0)
+                    if ud > 0:
+                        days = mtel.opp_days.setdefault(opid, set())
+                        if len(days) < 30:
+                            days.add(ud)
+                oal = strip_unsafe_chars(r.get("opponent_alias") or "")[:40]
+                if oal and not _is_placeholder_alias(oal):
+                    ctx.pid_aliases.setdefault(opid, oal)
+        except Exception as exc:
+            logger.debug("[SMURF ALERT] Falha ao hidratar nemesis_matches para probe: %s", redact_secrets(exc))
 
 
 def build_smurf_alert_context(
@@ -1924,13 +2544,14 @@ def build_smurf_alert_context(
 
     # Popula telemetria dos Veteranos sem 0 chamadas extras usando payloads brutos já baixados no Pass 1!
     telemetry_by_pid: dict[int, PlayerTelemetry] = {}
+    pid_aliases: dict[int, str] = {}
     raw_histories = relic.get_cached_raw_histories() if (relic is not None and hasattr(relic, "get_cached_raw_histories")) else {}
     for pid, raw_hist in raw_histories.items():
         pid_i = int(pid)
         if pid_i <= 0:
             continue
         tel = telemetry_by_pid.setdefault(pid_i, PlayerTelemetry(profile_id=pid_i))
-        tel.observe_raw_relic_history(raw_hist, known_br_pids=known_br_pids)
+        tel.observe_raw_relic_history(raw_hist, known_br_pids=known_br_pids, pid_aliases=pid_aliases)
         if pid_i in reference_mains and tel.mode_elo_max:
             best_m_elo = max(tel.mode_elo_max.values())
             if best_m_elo > int(reference_mains[pid_i].get("max_elo", 0) or 0):
@@ -1949,7 +2570,7 @@ def build_smurf_alert_context(
                 if tpid <= 0:
                     continue
                 tel = telemetry_by_pid.setdefault(tpid, PlayerTelemetry(profile_id=tpid))
-                tel.observe_sqlite_match_row(row)
+                tel.observe_sqlite_match_row(row, pid_aliases=pid_aliases)
         except Exception as exc:
             logger.debug("[SMURF ALERT] Falha ao carregar telemetria SQLite auxiliar: %s", redact_secrets(exc))
 
@@ -1964,6 +2585,7 @@ def build_smurf_alert_context(
         osint_client=osint_client if osint_client is not None else SteamProfileOSINTClient(allow_network=allow_network),
         remaining_probe_budget=max(0, int(max_live_probes)),
         now_ts=ts_now,
+        pid_aliases=pid_aliases,
     )
 
 
@@ -2064,10 +2686,13 @@ def _evaluate_opponent_against_br_pool(
     # 2. Baixa histórico bruto Relic + OSINT Steam público da conta adversária
     raw_opp_hist = relic.fetch_raw_match_history(opp_pid) if hasattr(relic, "fetch_raw_match_history") else None
     opp_tel = PlayerTelemetry(profile_id=opp_pid, steam_id=eff_sid, alias=eff_alias, country=eff_ctry)
-    opp_tel.observe_raw_relic_history(raw_opp_hist, known_br_pids=ctx.known_br_pids)
+    opp_tel.observe_raw_relic_history(raw_opp_hist, known_br_pids=ctx.known_br_pids, pid_aliases=ctx.pid_aliases)
     if historical_faced_pids:
         opp_tel.co_played_with.update(historical_faced_pids)
     opp_osint = ctx.osint_client.fetch_profile_osint(eff_sid) if eff_sid else {}
+
+    # 2B. Hidratação sob demanda (0ms em ciclos sem probe) do histórico 2023+ de Nêmesis & Criptonitas do SQLite
+    _hydrate_rivalry_kryptonite_for_live_probe(db, opp_tel, ctx)
 
     cand_meta = {
         "profile_id": opp_pid,
@@ -2107,7 +2732,7 @@ def _evaluate_opponent_against_br_pool(
             raw_m = relic.fetch_raw_match_history(mpid)
             if raw_m:
                 mtel = ctx.telemetry_by_pid.setdefault(mpid, PlayerTelemetry(profile_id=mpid))
-                mtel.observe_raw_relic_history(raw_m, known_br_pids=ctx.known_br_pids)
+                mtel.observe_raw_relic_history(raw_m, known_br_pids=ctx.known_br_pids, pid_aliases=ctx.pid_aliases)
 
     # 4. Pontua contra todas as contas principais BR elegíveis (excluindo participantes da MESMA partida e confrontos históricos 2023+!)
     best_match: dict[str, Any] | None = None
@@ -2135,6 +2760,7 @@ def _evaluate_opponent_against_br_pool(
             cand_osint=opp_osint,
             main_osint=None,
             known_br_pids=ctx.known_br_pids,
+            pid_aliases=ctx.pid_aliases,
         )
         if (
             not scored_pre["disqualified_reason"]
@@ -2155,6 +2781,7 @@ def _evaluate_opponent_against_br_pool(
                     cand_osint=opp_osint,
                     main_osint=main_osint,
                     known_br_pids=ctx.known_br_pids,
+                    pid_aliases=ctx.pid_aliases,
                 )
 
         if (
