@@ -26,6 +26,8 @@ COPY --chown=10001:10001 \
     relic_api.py \
     database.py \
     discord_notifier.py \
+    smurf_alert.py \
+    watchlist_monitor.py \
     monitor.py \
     manage.py \
     config.json \
