@@ -121,6 +121,9 @@ KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     1423426: 1005730, # geladeira velha -> arc
     1487738: 1005730, # Državljan H -> arc
     1482961: 1005730, # Vog -> arc
+    917917: 1005730,  # arc (CoH2 original) -> arc
+    1160699: 1005730, # Bubebolos/Dingo -> arc
+    918241: 1005730,  # Faint/Saffa -> arc
 }
 
 SA_COUNTRIES: frozenset[str] = frozenset(
