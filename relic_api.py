@@ -469,7 +469,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {"profile_id": 661598, "steam_id": "76561198066255117", "original_alias": "Lord Tywin", "known_aliases": ["Lord Tywin", "Barao"]},
     {"profile_id": 821542, "steam_id": "76561198028624206", "original_alias": "belfort"},
     {"profile_id": 674379, "steam_id": "76561198353482620", "original_alias": "Galva", "known_aliases": ["Galva", "Galvinha"]},
-    {"profile_id": 13516, "steam_id": "76561198000943380", "original_alias": "Pax Xavier youtube", "known_aliases": ["Pax Xavier youtube", "Pax_Nebadon_Br", "Nébadon", "Xavier"]},
+    {"profile_id": 13516, "steam_id": "76561198000943380", "original_alias": "NEBADON", "pin_alias": True, "known_aliases": ["NEBADON", "Pax Xavier youtube", "Pax_Nebadon_Br", "Nébadon", "Xavier"]},
     {"profile_id": 38270, "steam_id": "76561197984468206", "original_alias": "[CoBrA] Shadow*"},
     {"profile_id": 970468, "steam_id": "76561198937445340", "original_alias": "Московский метро", "known_aliases": ["Московский метро", "LutsBloom"]},
     {"profile_id": 20523, "steam_id": "76561198044964084", "original_alias": "Goa Trance Mix"},
