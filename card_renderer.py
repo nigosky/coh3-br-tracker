@@ -1854,7 +1854,7 @@ def _draw_nemesis_footer_bar(
         cursor_x += text_width(draw, vs_str, vs_fnt)
 
         if is_krypt_nem:
-            _draw_kryptonite_crystal_icon(draw, cursor_x + 6, ry + row_h / 2.0, size=13, color=(167, 243, 208, 255))
+            _draw_kryptonite_crystal_icon(draw, cursor_x + 6, ry + row_h / 2.0, size=13, color=(236, 252, 203, 255))
             cursor_x += krypt_icon_w
 
         draw.text((cursor_x, ty_name), opp_disp, font=opp_fnt, fill=(241, 245, 249, 255))
@@ -1982,9 +1982,9 @@ def _draw_kryptonite_crystal_icon(
     cx: float,
     cy: float,
     size: int = 13,
-    color: tuple[int, int, int, int] = (236, 253, 245, 255),
+    color: tuple[int, int, int, int] = (236, 252, 203, 255),
 ) -> None:
-    """Desenha um cristal facetado vetorial nítido de Criptonita para o selo CRIPTONITA."""
+    """Desenha um cristal facetado vetorial verde-ácido radioativo de Criptonita para o selo CRIPTONITA."""
     rx = max(3.5, size * 0.34)
     ry = max(5.0, size * 0.50)
     pts = [
@@ -1995,7 +1995,7 @@ def _draw_kryptonite_crystal_icon(
         (cx - rx * 0.85, cy + ry * 0.45),
         (cx - rx, cy - ry * 0.32),
     ]
-    draw.polygon(pts, fill=(52, 211, 153, 220), outline=color)
+    draw.polygon(pts, fill=(163, 230, 53, 235), outline=color)
     draw.line([(cx, cy - ry + 1.0), (cx, cy + ry - 1.0)], fill=color, width=1)
     draw.line([(cx - rx * 0.75, cy - ry * 0.25), (cx + rx * 0.75, cy - ry * 0.25)], fill=color, width=1)
 
@@ -2019,16 +2019,17 @@ def _draw_kryptonite_footer_bar(
     fallback_tracked_alias: str,
     is_duel: bool = False,
 ) -> None:
-    """Desenha a faixa tática verde-esmeralda inferior de CRIPTONITA (até 2 linhas compactas, cruzada com Nêmesis)."""
+    """Desenha a faixa tática verde-ácido/tóxico inferior de CRIPTONITA (até 2 linhas compactas, cruzada com Nêmesis)."""
     if not kryptonite_entries:
         return
 
     visible = kryptonite_entries[:2]
     extra_entries = max(0, len(kryptonite_entries) - len(visible))
 
-    bg_col = (13, 34, 24, 255) if not is_duel else (20, 36, 22, 255)
-    top_border = (34, 197, 94, 230)
-    left_bar = (74, 222, 128, 255)
+    # Paleta verde-ácido / chartreuse radioativo (tóxico) em fundo oliva escuro — distinto do verde positivo de vitória
+    bg_col = (24, 29, 11, 255) if not is_duel else (29, 31, 12, 255)
+    top_border = (163, 230, 53, 220)
+    left_bar = (190, 242, 100, 255)
 
     draw.rectangle((0, y_bar, width, y_bar + bar_h), fill=bg_col)
     draw.line([(0, y_bar), (width, y_bar)], fill=top_border, width=2)
@@ -2046,7 +2047,7 @@ def _draw_kryptonite_footer_bar(
     for idx, krypt in enumerate(visible):
         ry = base_y + idx * row_h
         if idx > 0:
-            draw.line([(16, ry), (width - 16, ry)], fill=(28, 78, 52, 200), width=1)
+            draw.line([(16, ry), (width - 16, ry)], fill=(68, 86, 26, 200), width=1)
 
         kind = str(krypt.get("kind") or "map").strip().lower()
         is_nem_kind = kind == "nemesis" or bool(krypt.get("is_nemesis"))
@@ -2061,19 +2062,19 @@ def _draw_kryptonite_footer_bar(
         has_nem_combo = isinstance(krypt.get("nemesis_cross"), dict) and not is_nem_kind
         br_alias = str(krypt.get("tracked_alias") or fallback_tracked_alias or "Veterano").strip()
 
-        # Pílula CRIPTONITA à esquerda
+        # Pílula CRIPTONITA à esquerda (oliva tóxico + borda verde-ácido radioativo)
         pill_y = ry + (row_h - pill_h) // 2 + (1 if len(visible) == 1 else 0)
         draw.rounded_rectangle(
             (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h),
             radius=6,
-            fill=(21, 128, 61, 255),
-            outline=(74, 222, 128, 230),
+            fill=(77, 124, 15, 255),
+            outline=(190, 242, 100, 235),
             width=1,
         )
         content_w = 18 + badge_tw
         content_x = pill_x + (pill_w - content_w) / 2.0
-        _draw_kryptonite_crystal_icon(draw, content_x + 6, pill_y + pill_h / 2.0, size=13, color=(236, 253, 245, 255))
-        draw.text((content_x + 18, pill_y + 4), badge_txt, font=badge_fnt, fill=(236, 253, 245, 255))
+        _draw_kryptonite_crystal_icon(draw, content_x + 6, pill_y + pill_h / 2.0, size=13, color=(247, 254, 231, 255))
+        draw.text((content_x + 18, pill_y + 4), badge_txt, font=badge_fnt, fill=(247, 254, 231, 255))
 
         # Metadados à direita (WR% + jogos + combo Nêmesis ou sequência de derrotas + extras)
         meta_parts = [f"{wr_pct}% WR", f"{total} jogos"]
@@ -2092,7 +2093,7 @@ def _draw_kryptonite_footer_bar(
             (meta_x, ty_meta),
             meta_txt,
             font=meta_fnt,
-            fill=(253, 164, 175, 255) if has_nem_combo else (110, 231, 183, 255),
+            fill=(253, 164, 175, 255) if has_nem_combo else (217, 249, 157, 255),
         )
 
         # Bloco central: <Veterano>  •  [espadas] <Tipo:> [ícone BG] <Alvo>   <W>V - <L>D
@@ -2140,7 +2141,7 @@ def _draw_kryptonite_footer_bar(
         )
         cursor_x += text_width(draw, br_disp, br_fnt)
 
-        draw.text((cursor_x, ty_name + 1), sep_dot, font=sep_fnt, fill=(92, 148, 118, 255))
+        draw.text((cursor_x, ty_name + 1), sep_dot, font=sep_fnt, fill=(124, 148, 58, 255))
         cursor_x += text_width(draw, sep_dot, sep_fnt)
 
         if is_nem_kind:
@@ -2151,7 +2152,7 @@ def _draw_kryptonite_footer_bar(
             (cursor_x, ty_name + 1),
             kind_prefix,
             font=kind_fnt,
-            fill=(251, 113, 133, 255) if is_nem_kind else (134, 239, 172, 255),
+            fill=(251, 113, 133, 255) if is_nem_kind else (190, 242, 100, 255),
         )
         cursor_x += text_width(draw, kind_prefix, kind_fnt)
 
