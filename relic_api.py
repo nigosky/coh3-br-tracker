@@ -1870,6 +1870,32 @@ def _normalize_map_probe(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", no_marks.lower()).strip()
 
 
+_ROW_DURATION_RE = re.compile(r"\b(\d{1,3}):(\d{2})\b")
+
+
+def _parse_row_duration_sec(row_text: str) -> int | None:
+    """Extrai a duração `MM:SS` exibida na linha do cohdb.com em segundos (ou `None` se ausente)."""
+    matches = _ROW_DURATION_RE.findall(str(row_text or ""))
+    for mm_str, ss_str in reversed(matches):
+        mm = int(mm_str)
+        ss = int(ss_str)
+        if 0 <= ss < 60:
+            return mm * 60 + ss
+    return None
+
+
+def _map_probe_matches(map_probe: str, norm_row: str) -> bool:
+    """Casa o mapa esperado contra a linha normalizada do cohdb (exato ou por tokens significativos)."""
+    if not map_probe or not norm_row:
+        return False
+    if map_probe in norm_row:
+        return True
+    sig_tokens = [tok for tok in map_probe.split() if len(tok) >= 4]
+    if len(sig_tokens) >= 2 and all(tok in norm_row for tok in sig_tokens):
+        return True
+    return False
+
+
 class CohDBClient(_RateLimitMixin):
     """
     Cliente HTTPS endurecido (somente-leitura, respeitando robots.txt do cohdb.com) para extrair
@@ -1885,6 +1911,7 @@ class CohDBClient(_RateLimitMixin):
     _PLAYER_LINK_RE = re.compile(r'href="/players/(\d{1,12})"')
     _BG_ICON_RE = re.compile(r'/assets/races/[^/"]+/battlegroups/([a-z0-9_]+?)(?:-[0-9a-f]+)?\.webp', re.I)
     _BG_NAME_RE = re.compile(r"Battlegroup</div>\s*<div[^>]*>([^<]{1,80})</div>", re.I)
+    _BG_SLOT_MARKER_RE = re.compile(r">\s*Battlegroup\s*</div>", re.I)
 
     def __init__(
         self,
@@ -1987,11 +2014,16 @@ class CohDBClient(_RateLimitMixin):
         return rows
 
     @classmethod
-    def _parse_replay_page(cls, html_body: str) -> tuple[int, dict[int, dict[str, str]]]:
-        """Extrai `(relic_match_id, {profile_id: {'key': ..., 'name': ...}})` de uma página `/replays/<id>`."""
+    def _parse_replay_page_detailed(cls, html_body: str) -> tuple[int, dict[int, dict[str, str]], int, int]:
+        """
+        Extrai `(relic_match_id, {profile_id: {'key': ..., 'name': ...}}, card_count, bg_slot_count)`
+        de uma página `/replays/<id>`, validando a presença estrutural dos blocos de Battlegroup.
+        """
         m_title = cls._TITLE_MATCH_RE.search(html_body)
         relic_mid = int(m_title.group(1)) if m_title else 0
         bg_by_pid: dict[int, dict[str, str]] = {}
+        card_count = 0
+        bg_slot_count = 0
 
         cards = html_body.split("<div data-player-card")[1:]
         for card in cards:
@@ -2001,8 +2033,11 @@ class CohDBClient(_RateLimitMixin):
             pid = int(pm.group(1))
             if pid <= 0:
                 continue
+            card_count += 1
             bgm = cls._BG_ICON_RE.search(card)
             bgn = cls._BG_NAME_RE.search(card)
+            if bgm or bgn or cls._BG_SLOT_MARKER_RE.search(card):
+                bg_slot_count += 1
             norm = normalize_battlegroup(
                 raw_key=bgm.group(1) if bgm else "",
                 raw_name=bgn.group(1) if bgn else "",
@@ -2010,6 +2045,12 @@ class CohDBClient(_RateLimitMixin):
             if norm:
                 bg_by_pid[pid] = norm
 
+        return relic_mid, bg_by_pid, card_count, bg_slot_count
+
+    @classmethod
+    def _parse_replay_page(cls, html_body: str) -> tuple[int, dict[int, dict[str, str]]]:
+        """Extrai `(relic_match_id, {profile_id: {'key': ..., 'name': ...}})` de uma página `/replays/<id>`."""
+        relic_mid, bg_by_pid, _cards, _slots = cls._parse_replay_page_detailed(html_body)
         return relic_mid, bg_by_pid
 
     def invalidate_player_cache(self, profile_ids: list[int] | None = None) -> None:
@@ -2022,17 +2063,35 @@ class CohDBClient(_RateLimitMixin):
             if pid > 0:
                 self._player_matches_cache.pop(pid, None)
 
+    def invalidate_match_cache(self, match_ids: list[int] | None = None) -> None:
+        """Limpa o cache em memória de `/replays/<id>` e `match_id` para dupla checagem fresca de replays."""
+        if match_ids is None:
+            self._match_bg_cache.clear()
+            self._replay_to_match_cache.clear()
+            return
+        target_mids = {int(m) for m in match_ids if int(m or 0) > 0}
+        if not target_mids:
+            return
+        for mid in target_mids:
+            self._match_bg_cache.pop(mid, None)
+        stale_rids = [rid for rid, (cmid, _) in self._replay_to_match_cache.items() if cmid in target_mids]
+        for rid in stale_rids:
+            self._replay_to_match_cache.pop(rid, None)
+
     def fetch_match_battlegroups(
         self,
         match_id: int,
         tracked_profile_ids: list[int],
         expected_map_clean: str = "",
-        max_replay_probes: int = 6,
+        max_replay_probes: int = 8,
         fallback_profile_ids: list[int] | None = None,
+        expected_duration_sec: int = 0,
+        expected_opponent_aliases: list[str] | None = None,
     ) -> dict[int, dict[str, str]] | None:
         """
         Retorna `{profile_id: {'key': ..., 'name': ...}}` para a partida Relic `match_id` se já indexada
-        no `cohdb.com` (pode ser `{}` caso ninguém tenha escolhido Battlegroup), ou `None` se ainda não indexada.
+        no `cohdb.com` (pode ser `{}` caso ninguém tenha escolhido Battlegroup e a página confirme os blocos),
+        ou `None` se ainda não indexada / HTML incompleto.
         """
         mid = int(match_id or 0)
         if mid <= 0:
@@ -2049,12 +2108,20 @@ class CohDBClient(_RateLimitMixin):
             for p in dict.fromkeys(fallback_profile_ids or [])
             if int(p) > 0 and int(p) not in tracked_set
         ]
-        probe_pids = clean_tracked[:4] + clean_fallback[:2]
+        # Cobre até todos os 8 participantes únicos (4v4 ou Custom), priorizando os Veteranos monitorados
+        probe_pids = (clean_tracked + clean_fallback)[:8]
         if not probe_pids:
             return None
 
         map_probe = _normalize_map_probe(expected_map_clean)
-        # Tenta primeiro até 4 jogadores monitorados e, se necessário, até 2 participantes adicionais da partida
+        exp_dur = max(0, int(expected_duration_sec or 0))
+        opp_probes = [
+            _normalize_map_probe(alias)
+            for alias in (expected_opponent_aliases or [])
+            if len(_normalize_map_probe(alias)) >= 3
+        ]
+        attempted_rids: set[int] = set()
+
         for pid in probe_pids:
             if self._circuit_open:
                 break
@@ -2062,16 +2129,26 @@ class CohDBClient(_RateLimitMixin):
             if not rows:
                 continue
 
-            if map_probe:
-                # Prioriza replays cujo mapa bate com map_clean (sem acentos/pontuação) e limita fallback a 2 mais novos
-                map_matches: list[int] = []
+            if map_probe or exp_dur > 0 or opp_probes:
+                tier_0: list[int] = []  # mapa + duração
+                tier_1: list[int] = []  # mapa OU (duração + oponente)
+                tier_2: list[int] = []  # duração OU oponente (fallback se nome do mapa divergir)
                 non_matches: list[int] = []
                 for rid, txt in rows:
-                    if map_probe in _normalize_map_probe(txt):
-                        map_matches.append(rid)
+                    norm_txt = _normalize_map_probe(txt)
+                    map_hit = _map_probe_matches(map_probe, norm_txt) if map_probe else False
+                    row_dur = _parse_row_duration_sec(txt) if exp_dur > 0 else None
+                    dur_hit = bool(row_dur is not None and abs(row_dur - exp_dur) <= 60)
+                    opp_hit = bool(opp_probes and any(op in norm_txt for op in opp_probes))
+                    if map_hit and dur_hit:
+                        tier_0.append(rid)
+                    elif map_hit or (dur_hit and opp_hit):
+                        tier_1.append(rid)
+                    elif dur_hit or opp_hit:
+                        tier_2.append(rid)
                     else:
                         non_matches.append(rid)
-                ordered_rids = map_matches + non_matches[:2]
+                ordered_rids = tier_0 + tier_1 + tier_2 + non_matches[:3]
             else:
                 ordered_rids = [rid for rid, _ in rows]
 
@@ -2084,14 +2161,26 @@ class CohDBClient(_RateLimitMixin):
                     if cached_mid == mid:
                         return dict(cached_bgs)
                     continue
+                if rid in attempted_rids:
+                    continue
                 if probes_done >= max(1, int(max_replay_probes)) or self._circuit_open:
                     break
+                attempted_rids.add(rid)
                 probes_done += 1
 
                 r_html = self._fetch_canonical_html(f"/replays/{rid}", COHDB_REPLAY_PATH_RE)
                 if not r_html:
                     continue
-                parsed_mid, parsed_bgs = self._parse_replay_page(r_html)
+                parsed_mid, parsed_bgs, card_count, bg_slot_count = self._parse_replay_page_detailed(r_html)
+                if not parsed_bgs and (card_count < 2 or bg_slot_count < 1):
+                    logger.warning(
+                        "[COHDB BATTLEGROUPS] Replay /replays/%d (match #%d) retornou HTML sem blocos válidos de Battlegroup (cards=%d, slots=%d); ignorando falso vazio.",
+                        rid,
+                        parsed_mid,
+                        card_count,
+                        bg_slot_count,
+                    )
+                    continue
                 self._replay_to_match_cache[rid] = (parsed_mid, parsed_bgs)
                 if parsed_mid > 0:
                     self._match_bg_cache[parsed_mid] = parsed_bgs

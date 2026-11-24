@@ -53,6 +53,8 @@ DEFAULT_DISCORD_CLEANUP_HOURS = 72
 DEFAULT_QUIET_AUDIT_HOURS = 3
 DEFAULT_QUIET_AUDIT_COOLDOWN_HOURS = 3
 QUIET_AUDIT_STAT_TOLERANCE_SEC = 60
+BG_SUSPICIOUS_EMPTY_MIN_DURATION_SEC = 480  # >=8 min sem BG exige dupla confirmação antes de gravar '{}'
+PRE_POST_BG_DOUBLE_CHECK_WAIT_SEC = 25.0  # Aguarda 25s para 2ª checagem obrigatória pré-envio no Discord
 
 
 def ensure_core_roster_in_config(
@@ -1436,9 +1438,13 @@ def enrich_group_with_battlegroups(
     db: MatchDatabase,
     cohdb: CohDBClient | None,
     grp: dict[str, Any],
+    *,
+    allow_commit_empty_long: bool = False,
 ) -> tuple[bool, bool]:
     """
     Consulta `cohdb.com` (somente-leitura) para obter os Battlegroups de uma partida Automatch ou Personalizada (Custom).
+    Em partidas >=8 min que retornem 0 Battlegroups (`{}`), retém a gravação até dupla confirmação explícita
+    (`allow_commit_empty_long=True`) para impedir falsos vazios permanentes.
     Retorna `(checked_on_cohdb, has_battlegroups)`.
     """
     if cohdb is None or cohdb.is_circuit_open:
@@ -1464,6 +1470,7 @@ def enrich_group_with_battlegroups(
     ]
     tracked_set = set(tracked_pids)
     fallback_pids: list[int] = []
+    opponent_aliases: list[str] = []
     for side_key in ("allies", "opponents"):
         for part in primary.get(side_key) or []:
             if not isinstance(part, dict):
@@ -1471,14 +1478,29 @@ def enrich_group_with_battlegroups(
             ppid = int(part.get("profile_id", 0) or 0)
             if ppid > 0 and ppid not in tracked_set and ppid not in fallback_pids:
                 fallback_pids.append(ppid)
+            if side_key == "opponents":
+                raw_alias = str(part.get("current_alias") or part.get("alias") or "").strip()
+                if raw_alias and raw_alias not in opponent_aliases:
+                    opponent_aliases.append(raw_alias)
     map_clean = str(primary.get("map_clean") or "")
+    duration_sec = max(0, int(primary.get("duration_sec", 0) or 0))
     try:
-        bg_map = cohdb.fetch_match_battlegroups(
-            match_id=match_id,
-            tracked_profile_ids=tracked_pids,
-            expected_map_clean=map_clean,
-            fallback_profile_ids=fallback_pids,
-        )
+        try:
+            bg_map = cohdb.fetch_match_battlegroups(
+                match_id=match_id,
+                tracked_profile_ids=tracked_pids,
+                expected_map_clean=map_clean,
+                fallback_profile_ids=fallback_pids,
+                expected_duration_sec=duration_sec,
+                expected_opponent_aliases=opponent_aliases,
+            )
+        except TypeError:
+            bg_map = cohdb.fetch_match_battlegroups(
+                match_id=match_id,
+                tracked_profile_ids=tracked_pids,
+                expected_map_clean=map_clean,
+                fallback_profile_ids=fallback_pids,
+            )
     except Exception as exc:
         logger.warning(
             "[COHDB BATTLEGROUPS] Falha ao consultar partida #%d: %s",
@@ -1490,7 +1512,20 @@ def enrich_group_with_battlegroups(
     if bg_map is None:
         return False, False
 
+    if not bg_map and duration_sec >= BG_SUSPICIOUS_EMPTY_MIN_DURATION_SEC and not allow_commit_empty_long:
+        grp["_bg_empty_suspect"] = True
+        logger.warning(
+            "[COHDB BATTLEGROUPS] ALERTA: Partida #%d (%s | %s | %dm%02ds) retornou 0 Battlegroups na 1ª checagem; retendo gravação para dupla checagem obrigatória.",
+            match_id,
+            mode_str,
+            map_clean or "Mapa N/D",
+            duration_sec // 60,
+            duration_sec % 60,
+        )
+        return False, False
+
     db.update_match_battlegroups(match_id, bg_map)
+    grp.pop("_bg_empty_suspect", None)
     str_map = {str(k): v for k, v in bg_map.items()}
     for r in recs:
         r["battlegroups"] = str_map
@@ -1498,7 +1533,107 @@ def enrich_group_with_battlegroups(
     if isinstance(grp.get("primary"), dict):
         grp["primary"]["battlegroups"] = str_map
         grp["primary"]["battlegroups_checked"] = True
+    if not str_map and duration_sec >= BG_SUSPICIOUS_EMPTY_MIN_DURATION_SEC:
+        logger.info(
+            "[COHDB BATTLEGROUPS] Dupla checagem confirmada: Partida #%d (%s | %s | %dm%02ds) indexada no cohdb.com sem nenhum Battlegroup selecionado pelos jogadores.",
+            match_id,
+            mode_str,
+            map_clean or "Mapa N/D",
+            duration_sec // 60,
+            duration_sec % 60,
+        )
     return True, bool(str_map)
+
+
+def pre_post_double_check_battlegroups(
+    db: MatchDatabase,
+    cohdb: CohDBClient | None,
+    grouped_to_send: list[dict[str, Any]],
+    *,
+    retry_wait_sec: float = PRE_POST_BG_DOUBLE_CHECK_WAIT_SEC,
+) -> tuple[dict[int, tuple[bool, bool]], int, set[int]]:
+    """
+    Executa dupla checagem obrigatória de Battlegroups no `cohdb.com` ANTES de postar cards no Discord:
+    - Passada 1: consulta todas as partidas elegíveis (Automatch e Custom) imediatamente.
+    - Passada 2 (somente se alguma partida elegível ficou sem BG confirmado ou com 0 BGs suspeito >=8 min):
+      aguarda `retry_wait_sec`, limpa o cache de jogadores/replays suspeitos e reconsulta antes do envio.
+    Retorna `(status_by_match_id, enriched_with_bg_count, checked_match_ids)`.
+    """
+    status: dict[int, tuple[bool, bool]] = {}
+    enriched_count = 0
+    checked_mids: set[int] = set()
+    if cohdb is None or cohdb.is_circuit_open or not grouped_to_send:
+        return status, enriched_count, checked_mids
+
+    need_second_check: list[dict[str, Any]] = []
+    for grp in grouped_to_send:
+        mid = int(grp["match_id"])
+        prim = grp.get("primary") or (grp.get("records") or [{}])[0]
+        mode_str = str(prim.get("mode") or "")
+        checked_ok, has_bg = enrich_group_with_battlegroups(
+            db,
+            cohdb,
+            grp,
+            allow_commit_empty_long=False,
+        )
+        status[mid] = (checked_ok, has_bg)
+        checked_mids.add(mid)
+        if has_bg:
+            enriched_count += 1
+        elif (
+            not checked_ok
+            and is_battlegroup_eligible_mode(mode_str)
+            and (bool(grp.get("_bg_empty_suspect")) or bool(prim.get("has_replay", True)))
+        ):
+            need_second_check.append(grp)
+
+    if need_second_check and not cohdb.is_circuit_open:
+        wait_s = max(0.0, float(retry_wait_sec))
+        logger.info(
+            "[COHDB BATTLEGROUPS] Dupla checagem pré-envio: %d partida(s) elegível(is) sem Battlegroup confirmado na 1ª passada; aguardando %.0fs para 2ª verificação antes de postar no Discord...",
+            len(need_second_check),
+            wait_s,
+        )
+        if wait_s > 0:
+            time.sleep(wait_s)
+        if hasattr(cohdb, "invalidate_player_cache"):
+            cohdb.invalidate_player_cache()
+        suspect_mids = [int(g["match_id"]) for g in need_second_check if bool(g.get("_bg_empty_suspect"))]
+        if suspect_mids and hasattr(cohdb, "invalidate_match_cache"):
+            cohdb.invalidate_match_cache(suspect_mids)
+
+        for grp in need_second_check:
+            if cohdb.is_circuit_open:
+                break
+            mid = int(grp["match_id"])
+            was_suspect = bool(grp.get("_bg_empty_suspect"))
+            checked_ok, has_bg = enrich_group_with_battlegroups(
+                db,
+                cohdb,
+                grp,
+                allow_commit_empty_long=was_suspect,
+            )
+            status[mid] = (checked_ok, has_bg)
+            if has_bg:
+                enriched_count += 1
+                logger.info(
+                    "[COHDB BATTLEGROUPS] Partida #%d enriquecida na 2ª checagem pré-envio (card será postado já com Battlegroups).",
+                    mid,
+                )
+            elif not checked_ok:
+                prim = grp.get("primary") or (grp.get("records") or [{}])[0]
+                dur_sec = max(0, int(prim.get("duration_sec", 0) or 0))
+                if dur_sec >= BG_SUSPICIOUS_EMPTY_MIN_DURATION_SEC:
+                    logger.warning(
+                        "[COHDB BATTLEGROUPS] AVISO: Partida #%d (%s | %s | %dm%02ds) segue sem indexação no cohdb.com após dupla checagem pré-envio; postando card e mantendo em fila de PATCH automático.",
+                        mid,
+                        str(prim.get("mode") or ""),
+                        str(prim.get("map_clean") or "Mapa N/D"),
+                        dur_sec // 60,
+                        dur_sec % 60,
+                    )
+
+    return status, enriched_count, checked_mids
 
 
 def _bg_retry_cooldown_seconds(match_age_sec: int, *, has_replay: bool = True) -> int:
@@ -1508,11 +1643,11 @@ def _bg_retry_cooldown_seconds(match_age_sec: int, *, has_replay: bool = True) -
         return 0
     if not has_replay:
         return 7200
-    if age < 14400:
+    if age < 43200:
         return 900
-    if age < 86400:
-        return 2700
-    return 7200
+    if age < 172800:
+        return 1800
+    return 3600
 
 
 def _load_bg_retry_state(db: MatchDatabase, now_ts: int, max_age_sec: int) -> dict[int, int]:
@@ -1731,6 +1866,8 @@ def run_cycle(
     cohdb: CohDBClient | None = None,
     enable_battlegroups: bool = True,
     force_weekly_summary: bool = False,
+    pre_post_bg_retry_wait_sec: float = PRE_POST_BG_DOUBLE_CHECK_WAIT_SEC,
+    post_send_bg_retry_waits: tuple[float, ...] = (35.0, 40.0),
 ) -> tuple[int, int]:
     """Executa um ciclo completo com quíntupla checagem (Relic + Relic Direta × coh3stats.com × Radar Veteranos × Auditoria de Silêncio × Discord), Battlegroups (cohdb), Resumo Semanal e compactação SQLite."""
     cfg = load_config(config_path, ensure_roster=False)
@@ -2049,15 +2186,15 @@ def run_cycle(
 
             retry_groups: list[dict[str, Any]] = []
             posted_missing_bg: list[tuple[dict[str, Any], str]] = []
-            checked_in_this_cycle_mids: set[int] = set()
+            bg_pre_status, bg_enriched_new, checked_in_this_cycle_mids = pre_post_double_check_battlegroups(
+                db=db,
+                cohdb=cohdb_client,
+                grouped_to_send=grouped_to_send,
+                retry_wait_sec=pre_post_bg_retry_wait_sec,
+            )
             for grp in grouped_to_send:
-                checked_ok = False
-                has_bg = False
-                if cohdb_client is not None:
-                    checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, grp)
-                    checked_in_this_cycle_mids.add(int(grp["match_id"]))
-                    if has_bg:
-                        bg_enriched_new += 1
+                mid = int(grp["match_id"])
+                checked_ok, _has_bg = bg_pre_status.get(mid, (False, False))
                 nem_list = enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
                 if nem_list:
                     top_nem = nem_list[0]
@@ -2072,13 +2209,13 @@ def run_cycle(
                         extra_nem,
                         grp["match_id"],
                     )
-                is_fast_bg_mode = str(grp["primary"].get("mode") or "") in AUTOMATCH_MODES
+                is_bg_eligible = is_battlegroup_eligible_mode(str(grp["primary"].get("mode") or ""))
                 try:
                     msg_id = discord.send_match_card(grp)
                     if msg_id:
                         db.update_matches_discord_id_batch(grp["records"], msg_id)
                         cards_confirmed += 1
-                        if cohdb_client is not None and is_fast_bg_mode and not checked_ok:
+                        if cohdb_client is not None and is_bg_eligible and not checked_ok:
                             posted_missing_bg.append((grp, msg_id))
                     else:
                         retry_groups.append(grp)
@@ -2104,10 +2241,10 @@ def run_cycle(
                         if msg_id:
                             db.update_matches_discord_id_batch(grp["records"], msg_id)
                             cards_confirmed += 1
-                            is_fast_bg_mode = str(grp["primary"].get("mode") or "") in AUTOMATCH_MODES
+                            is_bg_eligible = is_battlegroup_eligible_mode(str(grp["primary"].get("mode") or ""))
                             if (
                                 cohdb_client is not None
-                                and is_fast_bg_mode
+                                and is_bg_eligible
                                 and not bool(grp["primary"].get("battlegroups_checked"))
                             ):
                                 posted_missing_bg.append((grp, msg_id))
@@ -2122,28 +2259,51 @@ def run_cycle(
                             redact_secrets(exc),
                         )
 
-            # Retentativa rápida pós-envio (sem atrasar o card!): aguarda o cohdb indexar partidas Automatch recém-encerradas
+            # Retentativa rápida pós-envio: cobre Automatch (até 2 rodadas) e Custom (1ª rodada rápida; 2ª+ via Scheduler e PATCH 72h)
             recently_retried_mids: set[int] = set()
             if cohdb_client is not None and posted_missing_bg and not cohdb_client.is_circuit_open:
                 remaining_missing = list(posted_missing_bg)
-                for attempt_idx, wait_sec in enumerate((35, 40), start=1):
+                total_post_attempts = len(post_send_bg_retry_waits)
+                for attempt_idx, wait_sec in enumerate(post_send_bg_retry_waits, start=1):
+                    if attempt_idx >= 2:
+                        remaining_missing = [
+                            (p_grp, p_msg_id)
+                            for p_grp, p_msg_id in remaining_missing
+                            if str(p_grp["primary"].get("mode") or "") in AUTOMATCH_MODES
+                            or bool(p_grp.get("_bg_empty_suspect"))
+                        ]
                     if not remaining_missing or cohdb_client.is_circuit_open:
                         break
                     logger.info(
-                        "[COHDB BATTLEGROUPS] Aguardando %ds (retentativa %d/2) para indexação do replay de %d partida(s) recém-postada(s)...",
-                        wait_sec,
+                        "[COHDB BATTLEGROUPS] Aguardando %.0fs (retentativa pós-envio %d/%d) para indexação do replay de %d partida(s) recém-postada(s)...",
+                        float(wait_sec),
                         attempt_idx,
+                        total_post_attempts,
                         len(remaining_missing),
                     )
-                    time.sleep(wait_sec)
+                    if float(wait_sec) > 0:
+                        time.sleep(float(wait_sec))
                     cohdb_client.invalidate_player_cache()
+                    suspect_post_mids = [
+                        int(p_grp["match_id"])
+                        for p_grp, _ in remaining_missing
+                        if bool(p_grp.get("_bg_empty_suspect"))
+                    ]
+                    if suspect_post_mids and hasattr(cohdb_client, "invalidate_match_cache"):
+                        cohdb_client.invalidate_match_cache(suspect_post_mids)
                     still_missing: list[tuple[dict[str, Any], str]] = []
                     for p_grp, p_msg_id in remaining_missing:
                         if cohdb_client.is_circuit_open:
                             still_missing.append((p_grp, p_msg_id))
                             continue
                         recently_retried_mids.add(int(p_grp["match_id"]))
-                        checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, p_grp)
+                        was_suspect = bool(p_grp.get("_bg_empty_suspect"))
+                        checked_ok, has_bg = enrich_group_with_battlegroups(
+                            db,
+                            cohdb_client,
+                            p_grp,
+                            allow_commit_empty_long=was_suspect,
+                        )
                         if checked_ok:
                             if has_bg and _patch_match_card_with_battlegroups(
                                 db,
@@ -2151,7 +2311,7 @@ def run_cycle(
                                 p_grp,
                                 p_msg_id,
                                 roster_maps,
-                                log_suffix=f"na retentativa pós-envio {attempt_idx}/2",
+                                log_suffix=f"na retentativa pós-envio {attempt_idx}/{total_post_attempts}",
                             ):
                                 bg_patched_cards += 1
                         else:
@@ -2159,19 +2319,19 @@ def run_cycle(
                     remaining_missing = still_missing
 
             # Enriquecimento retroativo silencioso (PATCH): cobre Automatch e Personalizadas (Custom) até 72h com backoff inteligente
+            retro_bg_max_age_sec = max(14400, int(cleanup_hours) * 3600) if cleanup_hours > 0 else 259200
             if cohdb_client is not None and not cohdb_client.is_circuit_open:
-                retro_bg_max_age_sec = max(14400, int(cleanup_hours) * 3600) if cleanup_hours > 0 else 259200
                 bg_retry_state = _load_bg_retry_state(db, now_ts, retro_bg_max_age_sec)
                 bg_retry_dirty = False
                 skip_mids = recently_retried_mids | checked_in_this_cycle_mids
                 missing_bg_rows = db.get_recent_matches_missing_battlegroups(
                     max_age_sec=retro_bg_max_age_sec,
-                    limit=24,
+                    limit=30,
                     exclude_match_ids=skip_mids,
                 )
                 retro_probed = 0
                 for m_grp in group_matches_by_id(missing_bg_rows):
-                    if cohdb_client.is_circuit_open or retro_probed >= 8:
+                    if cohdb_client.is_circuit_open or retro_probed >= 16:
                         break
                     mid = int(m_grp["match_id"])
                     if mid in skip_mids:
@@ -2188,7 +2348,23 @@ def run_cycle(
                         continue
 
                     retro_probed += 1
-                    checked_ok, has_bg = enrich_group_with_battlegroups(db, cohdb_client, m_grp)
+                    checked_ok, has_bg = enrich_group_with_battlegroups(
+                        db,
+                        cohdb_client,
+                        m_grp,
+                        allow_commit_empty_long=False,
+                    )
+                    if not checked_ok and bool(m_grp.get("_bg_empty_suspect")) and not cohdb_client.is_circuit_open:
+                        cohdb_client.invalidate_player_cache()
+                        if hasattr(cohdb_client, "invalidate_match_cache"):
+                            cohdb_client.invalidate_match_cache([mid])
+                        time.sleep(2.0)
+                        checked_ok, has_bg = enrich_group_with_battlegroups(
+                            db,
+                            cohdb_client,
+                            m_grp,
+                            allow_commit_empty_long=True,
+                        )
                     if checked_ok:
                         if mid in bg_retry_state:
                             bg_retry_state.pop(mid, None)
@@ -2302,6 +2478,27 @@ def run_cycle(
                     logger.error("Falha ao atualizar Mensagem Fixada após dupla checagem; marcada para retentativa.")
 
             remaining_pending = db.count_pending_matches(max_age_sec=pending_max_age_sec)
+            still_missing_bg_groups = (
+                group_matches_by_id(
+                    db.get_recent_matches_missing_battlegroups(max_age_sec=retro_bg_max_age_sec, limit=30)
+                )
+                if cohdb_client is not None
+                else []
+            )
+            bg_awaiting_total = len(still_missing_bg_groups)
+            bg_awaiting_automatch_long = [
+                g
+                for g in still_missing_bg_groups
+                if str(g["primary"].get("mode") or "") in AUTOMATCH_MODES
+                and int(g["primary"].get("duration_sec", 0) or 0) >= BG_SUSPICIOUS_EMPTY_MIN_DURATION_SEC
+            ]
+            if bg_awaiting_automatch_long:
+                sample_mids = ", ".join(f"#{g['match_id']}" for g in bg_awaiting_automatch_long[:5])
+                logger.warning(
+                    "[COHDB BATTLEGROUPS] ATENÇÃO: %d partida(s) Automatch >=8min ainda aguardando indexação de Battlegroups (%s).",
+                    len(bg_awaiting_automatch_long),
+                    sample_mids,
+                )
             c3s_final_label = (
                 "em dia"
                 if third_check_stats.get("coh3stats_days_pending", 0) == 0
@@ -2320,7 +2517,7 @@ def run_cycle(
                 else "inativa"
             )
             logger.info(
-                "[QUÍNTUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | 5ª Checagem Silêncio (%s) | Battlegroups (cohdb): +%d novo(s)/%d patch | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[QUÍNTUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | 5ª Checagem Silêncio (%s) | Battlegroups (cohdb): +%d novo(s)/%d patch (%d aguardando) | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
                 third_check_stats.get("relic_direct_ok_accounts", 0),
@@ -2332,6 +2529,7 @@ def run_cycle(
                 quiet_final_label,
                 bg_enriched_new,
                 bg_patched_cards,
+                bg_awaiting_total,
                 cards_confirmed,
                 remaining_pending,
                 cleanup_hours,
