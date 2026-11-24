@@ -499,16 +499,6 @@
       "is_custom": true
     },
     {
-      "profile_id": 1076221,
-      "alias": "Lucielle (Smurf: Colossus)",
-      "original_alias": "Lucielle (Smurf: Colossus)",
-      "steam_id": "76561198815935562",
-      "placements": [
-        "⭐ Monitorado BR"
-      ],
-      "is_custom": true
-    },
-    {
       "profile_id": 1119784,
       "alias": "Tracker",
       "original_alias": "Tracker",
@@ -911,20 +901,6 @@
         "TearsInTheRain",
         "TearsInTheRain (Chacineiro)",
         "TearsInTheRain (Smurf: Chacineiro)"
-      ]
-    },
-    {
-      "profile_id": 1076221,
-      "steam_id": "76561198815935562",
-      "original_alias": "Lucielle (Smurf: Colossus)",
-      "alias": "Lucielle (Smurf: Colossus)",
-      "smurf_of": "Colossus",
-      "is_core_roster": true,
-      "known_aliases": [
-        "Lucielle",
-        "Lucifer",
-        "Lucielle (Colossus)",
-        "Lucielle (Smurf: Colossus)"
       ]
     },
     {
