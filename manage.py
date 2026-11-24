@@ -23,6 +23,8 @@ from discord_notifier import (
 )
 from monitor import (
     CURRENT_SUMMARY_LAYOUT_VERSION,
+    NEMESIS_OPEN_DATA_EARLIEST_DATE,
+    backfill_nemesis_history_from_open_data,
     build_tracked_players_from_custom,
     ensure_core_roster_in_config,
     load_config as _load_monitor_config,
@@ -520,6 +522,59 @@ def cmd_set_webhook(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backfill_nemesis(args: argparse.Namespace) -> int:
+    """Reconstroi o histórico completo da tabela `nemesis_matches` desde o início do arquivo Open Data (2023-06-30)."""
+    refresh_core_br_roster()
+    cfg = load_config()
+    ensure_core_roster_in_config(cfg)
+    tracked_players = build_tracked_players_from_custom(list(cfg.get("custom_players") or []))
+    db_path = resolve_safe_db_path(BASE_DIR, cfg.get("sqlite_db_path"))
+    since_str = str(args.since or NEMESIS_OPEN_DATA_EARLIEST_DATE).strip()
+    until_str = str(args.until or "").strip() or None
+    workers = _clamp_int(args.workers, 1, 6)
+
+    def _on_progress(done: int, total: int, inserted: int, scanned: int) -> None:
+        print(
+            f"  [NEMESIS BACKFILL] {done}/{total} dias | +{inserted} confrontos inseridos | {scanned:,} partidas Open Data varridas",
+            flush=True,
+        )
+
+    print(
+        f"Iniciando backfill histórico de Nemesis ({len(tracked_players)} contas monitoradas | "
+        f"de {since_str} até {until_str or 'ontem UTC'} | {workers} workers em streaming)...",
+        flush=True,
+    )
+    with MatchDatabase(db_path) as db:
+        db.sync_tracked_players(tracked_players)
+        res = backfill_nemesis_history_from_open_data(
+            db,
+            tracked_players,
+            start_date=since_str,
+            end_date=until_str,
+            max_workers=workers,
+            progress_callback=_on_progress,
+        )
+        if getattr(args, "vacuum", False):
+            db._connect().execute("VACUUM")
+            cov = db.get_nemesis_coverage_summary()
+        else:
+            cov = res["coverage_after"]
+
+    min_ct = int(cov.get("min_completion_time", 0) or 0)
+    max_ct = int(cov.get("max_completion_time", 0) or 0)
+    min_d = datetime.utcfromtimestamp(min_ct).strftime("%Y-%m-%d") if min_ct > 0 else "N/D"
+    max_d = datetime.utcfromtimestamp(max_ct).strftime("%Y-%m-%d") if max_ct > 0 else "N/D"
+    print(
+        f"\n[CONCLUÍDO] Dias OK: {res['days_ok']}/{res['days_requested']} (404: {res['days_not_published']}, erros: {res['days_failed']}) | "
+        f"Partidas Open Data varridas: {res['matches_scanned']:,} | Novos confrontos inseridos: +{res['nemesis_rows_inserted']:,}\n"
+        f"[COBERTURA NEMESIS] Total linhas: {cov['total_rows']:,} | Partidas únicas: {cov['unique_matches']:,} | "
+        f"Período: {min_d} .. {max_d} | Pares Nemesis distintos: {cov['distinct_nemesis_pairs']:,} | "
+        f"Eventos >=2x/dia: {cov['trigger_day_events']:,}",
+        flush=True,
+    )
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Gerenciador CoH3 Brasil Tracker v7")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -575,6 +630,15 @@ def main() -> int:
     p_test = sub.add_parser("test-discord", help="Testa o envio do Painel Fixado PT-BR + Card de Partida")
     p_test.add_argument("--dry-run", action="store_true", help="Exibe os JSONs sem enviar HTTP")
 
+    p_bnem = sub.add_parser(
+        "backfill-nemesis",
+        help="Popula o histórico completo de Nemesis (Automatch Steam) desde 2023-06-30 via COH3 Stats Open Data",
+    )
+    p_bnem.add_argument("--since", default=NEMESIS_OPEN_DATA_EARLIEST_DATE, help="Data inicial UTC YYYY-MM-DD (mín. 2023-06-30)")
+    p_bnem.add_argument("--until", default="", help="Data final UTC YYYY-MM-DD (padrão: ontem UTC)")
+    p_bnem.add_argument("--workers", type=int, default=4, help="Workers paralelos de streaming (1..6, padrão: 4)")
+    p_bnem.add_argument("--vacuum", action="store_true", help="Executa VACUUM no SQLite ao finalizar")
+
     args = parser.parse_args()
     dispatch = {
         "refresh-br": cmd_refresh_br,
@@ -589,6 +653,7 @@ def main() -> int:
         "history": cmd_history,
         "set-webhook": cmd_set_webhook,
         "test-discord": cmd_test_discord,
+        "backfill-nemesis": cmd_backfill_nemesis,
     }
     return dispatch[args.cmd](args)
 

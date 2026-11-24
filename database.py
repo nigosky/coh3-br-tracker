@@ -585,6 +585,95 @@ class MatchDatabase:
             "modes": modes_seen,
         }
 
+    def insert_nemesis_matches_batch(
+        self,
+        rows: list[tuple[int, int, int, int, int, int, str, str, str]],
+    ) -> int:
+        """
+        Insere em lote (idempotente via INSERT OR IGNORE) confrontos históricos Automatch Steam
+        na tabela `nemesis_matches`, usada pelo backfill histórico desde o lançamento/Open Data 2023.
+        Cada tupla: `(tracked_profile_id, opponent_profile_id, match_id, completion_time, utc_day, win, mode, opponent_alias, opponent_country)`.
+        """
+        if not rows:
+            return 0
+        valid_rows = [
+            (
+                int(tpid),
+                int(opid),
+                int(mid),
+                int(ct),
+                int(uday),
+                1 if int(win) else 0,
+                str(mode)[:24],
+                str(oalias or "")[:80],
+                str(octry or "").strip().lower()[:4],
+            )
+            for (tpid, opid, mid, ct, uday, win, mode, oalias, octry) in rows
+            if int(tpid) > 0 and int(opid) > 0 and int(tpid) != int(opid) and int(mid) > 0 and int(ct) > 0 and str(mode) in AUTOMATCH_MODES
+        ]
+        if not valid_rows:
+            return 0
+        conn = self._connect()
+        before = int(conn.execute("SELECT COUNT(*) FROM nemesis_matches").fetchone()[0] or 0)
+        with conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO nemesis_matches (
+                    tracked_profile_id, opponent_profile_id, match_id, completion_time,
+                    utc_day, win, mode, opponent_alias, opponent_country
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                valid_rows,
+            )
+        after = int(conn.execute("SELECT COUNT(*) FROM nemesis_matches").fetchone()[0] or 0)
+        return max(0, after - before)
+
+    def get_nemesis_coverage_summary(self) -> dict[str, Any]:
+        """Retorna estatísticas resumidas de cobertura histórica da tabela `nemesis_matches`."""
+        conn = self._connect()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS total_rows,
+                   COUNT(DISTINCT match_id) AS unique_matches,
+                   COUNT(DISTINCT tracked_profile_id) AS tracked_players,
+                   MIN(completion_time) AS min_ct,
+                   MAX(completion_time) AS max_ct
+            FROM nemesis_matches
+            """
+        ).fetchone()
+        active_rivals = conn.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT tracked_profile_id, opponent_profile_id
+                FROM nemesis_matches
+                GROUP BY tracked_profile_id, opponent_profile_id, utc_day
+                HAVING COUNT(*) >= 2
+            )
+            """
+        ).fetchone()
+        distinct_nemesis_pairs = conn.execute(
+            """
+            SELECT COUNT(*) FROM (
+                SELECT DISTINCT tracked_profile_id, opponent_profile_id
+                FROM (
+                    SELECT tracked_profile_id, opponent_profile_id
+                    FROM nemesis_matches
+                    GROUP BY tracked_profile_id, opponent_profile_id, utc_day
+                    HAVING COUNT(*) >= 2
+                )
+            )
+            """
+        ).fetchone()
+        return {
+            "total_rows": int(row["total_rows"] or 0) if row else 0,
+            "unique_matches": int(row["unique_matches"] or 0) if row else 0,
+            "tracked_players": int(row["tracked_players"] or 0) if row else 0,
+            "min_completion_time": int(row["min_ct"] or 0) if row else 0,
+            "max_completion_time": int(row["max_ct"] or 0) if row else 0,
+            "trigger_day_events": int(active_rivals[0] or 0) if active_rivals else 0,
+            "distinct_nemesis_pairs": int(distinct_nemesis_pairs[0] or 0) if distinct_nemesis_pairs else 0,
+        }
+
     def update_matches_discord_id_batch(self, records: list[dict[str, Any]], message_id: str) -> None:
         """Atualiza o discord_message_id de todos os registros agrupados da mesma partida em uma transação."""
         if not records or not message_id:

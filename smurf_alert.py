@@ -115,7 +115,9 @@ KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     1297821: 462597,  # General Winter (Smurf 1) -> General Winter
     1318162: 462597,  # General Winter (Smurf 2) -> General Winter
     1297853: 509690,  # Shadow -> Alekel
-    1297804: 59401,   # Leite Moço -> 『V』SKOBADARK
+    1297804: 844225,  # Leite Moço -> 『V』SKOBADARK
+    557890: 559962,   # gabe44arg -> Gabe
+    1423426: 1005730, # geladeira velha -> arc
     164152: 205121,   # seu pai -> Sgt.Yoda
 }
 
@@ -320,31 +322,73 @@ def _extract_cosmetic_items_by_pid(match_items: Any) -> dict[int, set[int]]:
 
 class SteamProfileOSINTClient:
     """
-    Cliente HTTPS endurecido (somente-leitura, zero API key, anti-redirect, teto 64 KB)
-    para o XML público `https://steamcommunity.com/profiles/<steam_id>?xml=1`.
+    Cliente HTTPS endurecido (somente-leitura, zero API key, anti-redirect, teto 64 KB XML / 256 KB HTML)
+    para o XML público `https://steamcommunity.com/profiles/<steam_id>?xml=1` e sinais de Steam Family Sharing.
     """
 
     _PRIVACY_RE = re.compile(r"<privacyState>([^<]{1,32})</privacyState>", re.I)
-    _MEMBER_YEAR_RE = re.compile(r"<memberSince>[^<]*\b(20\d{2})\b[^<]*</memberSince>", re.I)
+    _LIMITED_RE = re.compile(r"<isLimitedAccount>\s*([01])\s*</isLimitedAccount>", re.I)
+    _MEMBER_SINCE_RAW_RE = re.compile(r"<memberSince>([^<]{1,40})</memberSince>", re.I)
+    _YEAR_4_RE = re.compile(r"\b(20\d{2})\b")
+    _MONTH_DAY_RE = re.compile(
+        r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b",
+        re.I,
+    )
+    _CUSTOM_URL_RE = re.compile(r"<customURL>(?:<!\[CDATA\[)?([^<\]]{0,80})(?:\]\]>)?</customURL>", re.I)
     _LOCATION_RE = re.compile(r"<location>(?:<!\[CDATA\[)?([^<\]]{1,120})(?:\]\]>)?</location>", re.I)
     _AVATAR_RE = re.compile(r"<avatarMedium>(?:<!\[CDATA\[)?(https://[^\s<\]]+)(?:\]\]>)?</avatarMedium>", re.I)
     _AVATAR_HASH_RE = re.compile(r"/([0-9a-f]{40})(?:_medium|_full)?\.(?:jpg|jpeg|png|webp)$", re.I)
+    _PROFILE_HTML_PATH_RE = re.compile(r"^/profiles/7656119\d{10}/?$")
+    _HTML_LEVEL_RE = re.compile(r'class="friendPlayerLevelNum">(\d{1,4})</span>', re.I)
+    _HTML_FRIENDS_RE = re.compile(
+        r'href="https://steamcommunity\.com/[^"]+/friends/"[^>]*>.*?<span class="profile_count_link_total">\s*([\d,]+)\s*</span>',
+        re.I | re.S,
+    )
+    _HTML_BADGES_RE = re.compile(
+        r'href="https://steamcommunity\.com/[^"]+/badges/"[^>]*>.*?<span class="profile_count_link_total">\s*([\d,]+)\s*</span>',
+        re.I | re.S,
+    )
 
-    def __init__(self, *, pace_delay_sec: float = 0.08, allow_network: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        pace_delay_sec: float = 0.08,
+        allow_network: bool = True,
+        fetch_public_html: bool = True,
+    ) -> None:
         self.pace_delay_sec = max(0.0, float(pace_delay_sec))
         self.allow_network = bool(allow_network)
+        self.fetch_public_html = bool(fetch_public_html)
         self._opener = build_no_redirect_https_opener()
         self._cache: dict[str, dict[str, Any]] = {}
         self._consecutive_errors = 0
         self._circuit_open = False
 
     @classmethod
-    def parse_profile_xml(cls, xml_body: str) -> dict[str, Any]:
+    def parse_profile_xml(cls, xml_body: str, *, current_year: int | None = None) -> dict[str, Any]:
         body = str(xml_body or "")
+        cur_yr = int(current_year) if current_year is not None else datetime.now(tz=timezone.utc).year
         priv_m = cls._PRIVACY_RE.search(body)
         privacy = priv_m.group(1).strip().lower() if priv_m else ""
-        yr_m = cls._MEMBER_YEAR_RE.search(body)
-        member_year = int(yr_m.group(1)) if yr_m else 0
+        lim_m = cls._LIMITED_RE.search(body)
+        is_limited = bool(lim_m and lim_m.group(1) == "1")
+
+        ms_m = cls._MEMBER_SINCE_RAW_RE.search(body)
+        member_since_raw = strip_unsafe_chars(ms_m.group(1))[:40] if ms_m else ""
+        member_year = 0
+        member_since_current_year = False
+        if member_since_raw:
+            yr_m = cls._YEAR_4_RE.search(member_since_raw)
+            if yr_m:
+                member_year = int(yr_m.group(1))
+                member_since_current_year = member_year == cur_yr
+            elif cls._MONTH_DAY_RE.search(member_since_raw):
+                # Steam omite o ano em <memberSince> (ex.: "May 25", "March 23") quando a conta foi criada neste mesmo ano
+                member_year = cur_yr
+                member_since_current_year = True
+
+        cu_m = cls._CUSTOM_URL_RE.search(body)
+        custom_url = strip_unsafe_chars(cu_m.group(1))[:64] if cu_m else ""
         loc_m = cls._LOCATION_RE.search(body)
         location = strip_unsafe_chars(loc_m.group(1))[:80] if loc_m else ""
         is_br_loc = bool(location and _STEAM_BR_LOCATION_RE.search(location))
@@ -355,15 +399,42 @@ class SteamProfileOSINTClient:
             if hm:
                 av_hash = hm.group(1).lower()
         return {
-            "ok": bool(privacy or av_hash or member_year),
+            "ok": bool(privacy or av_hash or member_year or is_limited),
             "privacy_state": privacy,
             "is_private": bool(privacy and privacy != "public"),
+            "is_limited_account": is_limited,
+            "member_since_raw": member_since_raw,
             "member_since_year": member_year,
+            "member_since_current_year": member_since_current_year,
+            "custom_url": custom_url,
             "location": location,
             "is_br_location": is_br_loc,
             "avatar_hash": av_hash,
             "is_default_avatar": bool(av_hash == STEAM_DEFAULT_AVATAR_HASH),
+            "steam_level": -1,
+            "friends_count": -1,
+            "badges_count": -1,
         }
+
+    @classmethod
+    def parse_profile_html_footprint(cls, html_body: str) -> dict[str, int]:
+        """Extrai pegada burner/Family Sharing do HTML público (`steam_level`, `friends_count`, `badges_count`)."""
+        body = str(html_body or "")
+        out = {"steam_level": -1, "friends_count": -1, "badges_count": -1}
+        if not body or "profile_private_info" in body:
+            return out
+        for key, rx in (
+            ("steam_level", cls._HTML_LEVEL_RE),
+            ("friends_count", cls._HTML_FRIENDS_RE),
+            ("badges_count", cls._HTML_BADGES_RE),
+        ):
+            m = rx.search(body)
+            if m:
+                try:
+                    out[key] = int(m.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+        return out
 
     def fetch_profile_osint(self, steam_id: str) -> dict[str, Any]:
         sid = str(steam_id or "").replace("/steam/", "").strip()
@@ -395,8 +466,6 @@ class SteamProfileOSINTClient:
                 raw = read_bounded_http_body(resp, MAX_STEAM_XML_BYTES)
             self._consecutive_errors = 0
             parsed = self.parse_profile_xml(raw.decode("utf-8", errors="replace"))
-            self._cache[sid] = parsed
-            return dict(parsed)
         except Exception as exc:
             self._consecutive_errors += 1
             if self._consecutive_errors >= 3:
@@ -404,6 +473,34 @@ class SteamProfileOSINTClient:
                 logger.debug("[SMURF ALERT] Circuit-breaker Steam OSINT ativado: %s", redact_secrets(exc))
             self._cache[sid] = {}
             return {}
+
+        if self.fetch_public_html and parsed.get("privacy_state") == "public" and not parsed.get("custom_url"):
+            html_url = f"https://steamcommunity.com/profiles/{sid}/"
+            try:
+                validate_https_endpoint(
+                    html_url,
+                    ALLOWED_STEAM_PROFILE_HOSTS,
+                    path_prefix="/profiles/",
+                    path_regex=self._PROFILE_HTML_PATH_RE,
+                    allow_query=False,
+                )
+                hreq = urllib.request.Request(
+                    html_url,
+                    headers={
+                        "User-Agent": TRACKER_USER_AGENT,
+                        "Accept": "text/html",
+                        "Accept-Encoding": "gzip",
+                    },
+                    method="GET",
+                )
+                with self._opener.open(hreq, timeout=6) as hresp:
+                    hraw = read_bounded_http_body(hresp, 262_144)
+                parsed.update(self.parse_profile_html_footprint(hraw.decode("utf-8", errors="replace")))
+            except Exception:
+                pass
+
+        self._cache[sid] = parsed
+        return dict(parsed)
 
 
 @dataclass
@@ -1186,6 +1283,12 @@ def score_live_smurf_pair(
         identity_anchor_signals += 1
         weighted_reasons.append((14.0, "Steam revela Brasil"))
 
+    # 7B. Steam Family Sharing (Passo 1 XML/HTML público — 0/61 falsos positivos em contas principais BR)
+    if c_osint.get("is_limited_account"):
+        score += 12.0
+        behavioral_signals += 1
+        weighted_reasons.append((20.0, "Family Sharing (conta limitada)"))
+
     osint_pts = 0.0
     if c_osint.get("is_default_avatar") and cand_elo >= 1300:
         osint_pts += 5.0
@@ -1195,9 +1298,18 @@ def score_live_smurf_pair(
         weighted_reasons.append((6.0, "Steam privada"))
     cur_yr = datetime.now(tz=timezone.utc).year
     mem_yr = int(c_osint.get("member_since_year", 0) or 0)
-    if mem_yr >= cur_yr - 2 and cand_elo >= 1350:
+    if c_osint.get("member_since_current_year") and cand_elo >= 1250:
+        osint_pts += 8.0
+        weighted_reasons.append((13.0, "Steam criada este ano"))
+    elif mem_yr >= cur_yr - 2 and cand_elo >= 1350:
         osint_pts += 4.0
-    score += min(10.0, osint_pts)
+    s_lvl = int(c_osint.get("steam_level", -1) if c_osint.get("steam_level") is not None else -1)
+    s_fr = int(c_osint.get("friends_count", -1) if c_osint.get("friends_count") is not None else -1)
+    s_bdg = int(c_osint.get("badges_count", -1) if c_osint.get("badges_count") is not None else -1)
+    if 0 <= s_lvl <= 2 and cand_elo >= 1300 and ((0 <= s_fr <= 15) or (0 <= s_bdg <= 2)):
+        osint_pts += 4.0
+        weighted_reasons.append((10.0, f"Steam Nível {s_lvl}"))
+    score += min(14.0, osint_pts)
 
     # 8. Biometria APM + abil/min
     apm_strong = False
@@ -1375,6 +1487,11 @@ def score_unattributed_br_burner(
         anomalies += 1
         weighted_reasons.append((10.0, f"Burner ({vel['cosmetics_count']} itens)"))
 
+    if c_osint.get("is_limited_account"):
+        score += 18.0
+        anomalies += 1
+        weighted_reasons.append((21.0, "Family Sharing (conta limitada)"))
+
     osint_burner = 0
     if c_osint.get("is_default_avatar"):
         score += 10.0
@@ -1386,10 +1503,21 @@ def score_unattributed_br_burner(
         weighted_reasons.append((11.0, "Steam privada"))
     cur_yr = datetime.now(tz=timezone.utc).year
     mem_yr = int(c_osint.get("member_since_year", 0) or 0)
-    if mem_yr >= cur_yr - 2:
+    if c_osint.get("member_since_current_year"):
+        score += 10.0
+        anomalies += 1
+        weighted_reasons.append((15.0, "Steam criada este ano"))
+    elif mem_yr >= cur_yr - 2:
         score += 8.0
         osint_burner += 1
         weighted_reasons.append((10.0, f"Steam {mem_yr}"))
+    u_lvl = int(c_osint.get("steam_level", -1) if c_osint.get("steam_level") is not None else -1)
+    u_fr = int(c_osint.get("friends_count", -1) if c_osint.get("friends_count") is not None else -1)
+    u_bdg = int(c_osint.get("badges_count", -1) if c_osint.get("badges_count") is not None else -1)
+    if 0 <= u_lvl <= 2 and ((0 <= u_fr <= 15) or (0 <= u_bdg <= 2)):
+        score += 6.0
+        osint_burner += 1
+        weighted_reasons.append((11.0, f"Steam Nível {u_lvl}"))
     if osint_burner > 0:
         anomalies += 1
 
