@@ -39,6 +39,11 @@ from security import (
     resolve_data_dir,
     resolve_safe_db_path,
 )
+from smurf_alert import (
+    build_smurf_alert_context,
+    enrich_group_with_smurf_alerts,
+    save_smurf_probe_cache,
+)
 
 configure_secure_logging(level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S")
 logger = logging.getLogger("coh3_br.monitor")
@@ -1729,8 +1734,19 @@ def _patch_match_card_with_battlegroups(
     *,
     log_suffix: str = "com Battlegroups",
 ) -> bool:
-    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups e Nemesis preservados."""
+    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis e Alertas Smurf preservados."""
     enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+    if not grp.get("smurf_alerts"):
+        recs = grp.get("records") or []
+        prim = grp.get("primary") or (recs[0] if recs else {})
+        hydrated = prim.get("smurf_alerts") if isinstance(prim, dict) else None
+        if not hydrated:
+            for r in recs:
+                if isinstance(r, dict) and r.get("smurf_alerts"):
+                    hydrated = r["smurf_alerts"]
+                    break
+        if isinstance(hydrated, list) and hydrated:
+            grp["smurf_alerts"] = hydrated
     try:
         patched = discord.edit_match_card(msg_id, grp)
         if patched:
@@ -1865,6 +1881,7 @@ def run_cycle(
     force_quiet_audit: bool = False,
     cohdb: CohDBClient | None = None,
     enable_battlegroups: bool = True,
+    enable_smurf_alerts: bool = True,
     force_weekly_summary: bool = False,
     pre_post_bg_retry_wait_sec: float = PRE_POST_BG_DOUBLE_CHECK_WAIT_SEC,
     post_send_bg_retry_waits: tuple[float, ...] = (35.0, 40.0),
@@ -2154,7 +2171,9 @@ def run_cycle(
         cards_confirmed = 0
         bg_enriched_new = 0
         bg_patched_cards = 0
+        smurf_alerts_triggered = 0
         cohdb_client = (cohdb if cohdb is not None else CohDBClient()) if enable_battlegroups else None
+        smurf_alerts_active = bool(enable_smurf_alerts and cfg.get("enable_smurf_alerts", True))
 
         if discord.is_configured:
             # Recupera novas partidas + recuperadas na 3ª/4ª checagem + pendentes de falhas transitórias anteriores (sem duplicar)
@@ -2192,6 +2211,19 @@ def run_cycle(
                 grouped_to_send=grouped_to_send,
                 retry_wait_sec=pre_post_bg_retry_wait_sec,
             )
+            smurf_ctx = None
+            if smurf_alerts_active and grouped_to_send:
+                try:
+                    smurf_ctx = build_smurf_alert_context(
+                        db=db,
+                        relic=relic,
+                        custom_players=custom_players,
+                        now_ts=now_ts,
+                    )
+                except Exception as exc:
+                    logger.warning("[ALERTA SMURF] Contexto forense indisponível neste ciclo: %s", redact_secrets(exc))
+                    smurf_ctx = None
+
             for grp in grouped_to_send:
                 mid = int(grp["match_id"])
                 checked_ok, _has_bg = bg_pre_status.get(mid, (False, False))
@@ -2209,6 +2241,32 @@ def run_cycle(
                         extra_nem,
                         grp["match_id"],
                     )
+                if smurf_ctx is not None:
+                    try:
+                        smurf_list = enrich_group_with_smurf_alerts(db, relic, grp, ctx=smurf_ctx)
+                        for s_al in smurf_list:
+                            smurf_alerts_triggered += 1
+                            target_lbl = (
+                                f"smurf de {s_al.get('suspected_main_alias')}"
+                                if s_al.get("suspected_main_alias")
+                                else "smurf BR não identificado"
+                            )
+                            logger.warning(
+                                "[ALERTA SMURF] Veterano %s enfrentou %s -> possível %s (%d%% • %s) | %s [#%d]",
+                                s_al.get("tracked_alias"),
+                                s_al.get("opponent_alias"),
+                                target_lbl,
+                                int(s_al.get("probability_pct", 0) or 0),
+                                s_al.get("confidence_tier"),
+                                ", ".join(s_al.get("top_reasons") or []),
+                                grp["match_id"],
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "[ALERTA SMURF] Falha ao avaliar oponentes da partida #%d: %s",
+                            grp["match_id"],
+                            redact_secrets(exc),
+                        )
                 is_bg_eligible = is_battlegroup_eligible_mode(str(grp["primary"].get("mode") or ""))
                 try:
                     msg_id = discord.send_match_card(grp)
@@ -2227,6 +2285,12 @@ def run_cycle(
                         redact_secrets(exc),
                     )
                     retry_groups.append(grp)
+
+            if smurf_ctx is not None:
+                try:
+                    save_smurf_probe_cache(db, smurf_ctx)
+                except Exception as exc:
+                    logger.debug("[ALERTA SMURF] Falha ao salvar cache de probes: %s", redact_secrets(exc))
 
             # 2ª passada de confirmação para cards que falharam na 1ª tentativa
             if retry_groups:
@@ -2517,7 +2581,7 @@ def run_cycle(
                 else "inativa"
             )
             logger.info(
-                "[QUÍNTUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | 5ª Checagem Silêncio (%s) | Battlegroups (cohdb): +%d novo(s)/%d patch (%d aguardando) | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
+                "[QUÍNTUPLA CHECAGEM FINAL] Jogadores OK: %d/%d | 3ª Checagem (Relic Direta %d/%d × coh3stats %s): +%d | 4ª Checagem Radar Veteranos (%s): +%d | 5ª Checagem Silêncio (%s) | Battlegroups (cohdb): +%d novo(s)/%d patch (%d aguardando) | Alertas Smurf: %d | Cards confirmados: %d | Pendentes: %d | Limpas (>%dh): %d | Painel Fixado: %s",
                 len(active_players) - fetch_failures_final,
                 len(active_players),
                 third_check_stats.get("relic_direct_ok_accounts", 0),
@@ -2530,6 +2594,7 @@ def run_cycle(
                 bg_enriched_new,
                 bg_patched_cards,
                 bg_awaiting_total,
+                smurf_alerts_triggered,
                 cards_confirmed,
                 remaining_pending,
                 cleanup_hours,

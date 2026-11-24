@@ -1426,9 +1426,11 @@ def _draw_two_team_columns(
     is_duel: bool = False,
     has_any_bg: bool = False,
     nemesis_opponent_pids: set[int] | None = None,
+    smurf_opponent_pids: set[int] | None = None,
 ) -> None:
     """Desenha as duas colunas amplas (Allies à esquerda, Axis à direita) com Battlegroup tático sob o nick."""
     nem_pids = nemesis_opponent_pids or set()
+    smurf_pids = smurf_opponent_pids or set()
     hdr_bg = (30, 26, 18, 255) if is_duel else (22, 24, 30, 255)
     sep_col = (96, 78, 34, 255) if is_duel else (46, 50, 62, 255)
     row_sep_col = (54, 46, 26, 255) if is_duel else (37, 40, 49, 255)
@@ -1492,6 +1494,7 @@ def _draw_two_team_columns(
             is_veterano = is_tracked or bool(pl.get("is_br_roster"))
             pl_pid = int(pl.get("profile_id", 0) or 0)
             is_nemesis_opp = pl_pid > 0 and pl_pid in nem_pids
+            is_smurf_opp = (not is_veterano) and pl_pid > 0 and pl_pid in smurf_pids
 
             if is_veterano:
                 ring = (245, 184, 46, 255) if is_duel else (56, 189, 248, 255)
@@ -1508,7 +1511,12 @@ def _draw_two_team_columns(
 
             badge_sz = 20 if has_any_bg else 22
             nem_badge_sz = 18
-            badge_reserve = ((badge_sz + 8) if is_veterano else 0) + ((nem_badge_sz + 7) if is_nemesis_opp else 0)
+            smurf_badge_sz = 18
+            badge_reserve = (
+                ((badge_sz + 8) if is_veterano else 0)
+                + ((nem_badge_sz + 7) if is_nemesis_opp else 0)
+                + ((smurf_badge_sz + 7) if is_smurf_opp else 0)
+            )
             alias_sz = (20 if is_veterano else 18) if has_any_bg else (21 if is_veterano else 19)
 
             if is_veterano:
@@ -1518,7 +1526,12 @@ def _draw_two_team_columns(
                 else:
                     alias_y = py + 9
             else:
-                alias_color = (253, 196, 206, 255) if is_nemesis_opp else ((182, 190, 204, 255) if has_any_bg else (176, 184, 198, 255))
+                if is_smurf_opp:
+                    alias_color = (253, 212, 118, 255)
+                elif is_nemesis_opp:
+                    alias_color = (253, 196, 206, 255)
+                else:
+                    alias_color = (182, 190, 204, 255) if has_any_bg else (176, 184, 198, 255)
                 if has_any_bg:
                     alias_y = py + (6 if has_bg else 17)
                 else:
@@ -1531,7 +1544,7 @@ def _draw_two_team_columns(
                 str(pl.get("alias") or ""),
                 max_px=max(56, col_limit_x - name_x - badge_reserve),
                 size=alias_sz,
-                bold=is_veterano,
+                bold=is_veterano or is_smurf_opp,
                 primary_color=alias_color,
             )
             badge_cursor_x = int(name_x + alias_w + 6)
@@ -1554,6 +1567,23 @@ def _draw_two_team_columns(
                     nb_y + nem_badge_sz / 2.0,
                     size=11,
                     color=(255, 241, 242, 255),
+                )
+                badge_cursor_x += nem_badge_sz + 5
+            if is_smurf_opp:
+                sb_y = alias_y + 2
+                draw.rounded_rectangle(
+                    (badge_cursor_x, sb_y, badge_cursor_x + smurf_badge_sz, sb_y + smurf_badge_sz),
+                    radius=4,
+                    fill=(180, 83, 9, 255),
+                    outline=(251, 191, 36, 220),
+                    width=1,
+                )
+                _draw_smurf_alert_icon(
+                    draw,
+                    badge_cursor_x + smurf_badge_sz / 2.0,
+                    sb_y + smurf_badge_sz / 2.0,
+                    size=11,
+                    color=(255, 251, 235, 255),
                 )
 
             if has_bg:
@@ -1749,6 +1779,123 @@ def _draw_nemesis_footer_bar(
         draw.text((cursor_x, ty_name), opp_disp, font=opp_fnt, fill=(241, 245, 249, 255))
 
 
+def _draw_smurf_alert_icon(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    size: int = 13,
+    color: tuple[int, int, int, int] = (255, 251, 235, 255),
+) -> None:
+    """Desenha um triângulo vetorial nítido de alerta ('!') para o selo ALERTA SMURF."""
+    r = max(4.5, size / 2.0)
+    top = (cx, cy - r + 0.5)
+    left = (cx - r + 0.5, cy + r - 0.5)
+    right = (cx + r - 0.5, cy + r - 0.5)
+    draw.polygon([top, right, left], outline=color)
+    draw.line([top, right, left, top], fill=color, width=2)
+    # Ponto de exclamação interno
+    draw.line([(cx, cy - r * 0.35), (cx, cy + r * 0.22)], fill=color, width=2)
+    draw.ellipse((cx - 1.0, cy + r * 0.42, cx + 1.0, cy + r * 0.42 + 2.0), fill=color)
+
+
+def _draw_smurf_alert_footer_bar(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    y_bar: int,
+    bar_h: int,
+    smurf_alerts: list[dict[str, Any]],
+    is_duel: bool = False,
+) -> None:
+    """Desenha a faixa tática âmbar inferior de ALERTA SMURF (1 ou 2 linhas com sinais forenses compactos)."""
+    if not smurf_alerts:
+        return
+
+    visible = smurf_alerts[:2]
+    extra_alerts = max(0, len(smurf_alerts) - len(visible))
+
+    bg_col = (40, 26, 12, 255) if not is_duel else (46, 30, 12, 255)
+    top_border = (245, 158, 11, 230)
+    left_bar = (251, 191, 36, 255)
+
+    draw.rectangle((0, y_bar, width, y_bar + bar_h), fill=bg_col)
+    draw.line([(0, y_bar), (width, y_bar)], fill=top_border, width=2)
+    draw.rectangle((0, y_bar, 8, y_bar + bar_h), fill=left_bar)
+
+    row_h = 49 if len(visible) > 1 else bar_h
+    base_y = y_bar + (4 if len(visible) > 1 else 2)
+    badge_fnt = pick_font("ALERTA SMURF", size=13, bold=True, condensed=True)
+    badge_txt = "ALERTA SMURF"
+    badge_tw = text_width(draw, badge_txt, badge_fnt)
+    pill_w = int(badge_tw + 32)
+    pill_h = 22
+    pill_x = 20
+
+    for idx, alert in enumerate(visible):
+        ry = base_y + idx * row_h
+        if idx > 0:
+            draw.line([(16, ry - 1), (width - 16, ry - 1)], fill=(96, 62, 24, 200), width=1)
+
+        opp_pid = int(alert.get("opponent_profile_id", 0) or 0)
+        opp_alias = str(alert.get("opponent_alias") or (f"ID #{opp_pid}" if opp_pid > 0 else "Oponente")).strip()
+        main_alias = str(alert.get("suspected_main_alias") or "").strip()
+        prob = int(alert.get("probability_pct", 0) or 0)
+        tier = str(alert.get("confidence_tier") or "Alta").strip()
+        reasons = [str(r).strip() for r in (alert.get("top_reasons") or []) if str(r or "").strip()][:4]
+
+        # Linha 1: pílula ALERTA SMURF + manchete + probabilidade à direita
+        line1_y = ry + (5 if reasons else max(10, (row_h - pill_h) // 2))
+        draw.rounded_rectangle(
+            (pill_x, line1_y, pill_x + pill_w, line1_y + pill_h),
+            radius=6,
+            fill=(180, 83, 9, 255),
+            outline=(251, 191, 36, 225),
+            width=1,
+        )
+        content_w = 18 + badge_tw
+        content_x = pill_x + (pill_w - content_w) / 2.0
+        _draw_smurf_alert_icon(draw, content_x + 6, line1_y + pill_h / 2.0, size=12, color=(255, 251, 235, 255))
+        draw.text((content_x + 18, line1_y + 3), badge_txt, font=badge_fnt, fill=(255, 251, 235, 255))
+
+        meta_txt = f"{prob}%  •  {tier}"
+        if idx == len(visible) - 1 and extra_alerts > 0:
+            meta_txt = f"{meta_txt}  •  +{extra_alerts}"
+        meta_fnt = pick_font(meta_txt, size=14, bold=True, condensed=True)
+        meta_w = text_width(draw, meta_txt, meta_fnt)
+        meta_x = width - 20 - meta_w
+        draw.text((meta_x, line1_y + 3), meta_txt, font=meta_fnt, fill=(253, 224, 71, 255))
+
+        cursor_x = pill_x + pill_w + 14
+        avail_px = max(160, int(meta_x - cursor_x - 16))
+        if main_alias:
+            mid_txt = "  ➔  Possível smurf de  "
+            mid_fnt = pick_font(mid_txt, size=14, bold=False)
+            mid_w = text_width(draw, mid_txt, mid_fnt)
+            name_budget = max(80, int(avail_px - mid_w))
+            opp_disp, opp_fnt = truncate_to_px(draw, opp_alias, max_px=max(50, int(name_budget * 0.48)), size=15, bold=True)
+            main_disp, main_fnt = truncate_to_px(draw, main_alias, max_px=max(50, int(name_budget * 0.52)), size=15, bold=True)
+            draw.text((cursor_x, line1_y + 2), opp_disp, font=opp_fnt, fill=(253, 212, 118, 255))
+            cursor_x += text_width(draw, opp_disp, opp_fnt)
+            draw.text((cursor_x, line1_y + 3), mid_txt, font=mid_fnt, fill=(214, 188, 152, 255))
+            cursor_x += mid_w
+            draw.text((cursor_x, line1_y + 2), main_disp, font=main_fnt, fill=(125, 211, 252, 255))
+        else:
+            mid_txt = "➔  Possível smurf BR não identificado"
+            mid_fnt = pick_font(mid_txt, size=14, bold=False)
+            mid_w = text_width(draw, mid_txt, mid_fnt) + 10
+            opp_disp, opp_fnt = truncate_to_px(draw, opp_alias, max_px=max(60, int(avail_px - mid_w)), size=15, bold=True)
+            draw.text((cursor_x, line1_y + 2), opp_disp, font=opp_fnt, fill=(253, 212, 118, 255))
+            cursor_x += text_width(draw, opp_disp, opp_fnt) + 10
+            suffix_disp, suffix_fnt = truncate_to_px(draw, mid_txt, max_px=max(80, int(meta_x - cursor_x - 14)), size=14, bold=False)
+            draw.text((cursor_x, line1_y + 3), suffix_disp, font=suffix_fnt, fill=(238, 210, 168, 255))
+
+        # Linha 2: chips forenses compactos
+        if reasons:
+            line2_y = line1_y + pill_h + 4
+            sig_txt = "Sinais: " + "  •  ".join(reasons)
+            sig_disp, sig_fnt = truncate_to_px(draw, sig_txt, max_px=width - 44, size=13, bold=False)
+            draw.text((pill_x + 2, line2_y), sig_disp, font=sig_fnt, fill=(224, 196, 156, 255))
+
+
 def render_single_match_card_png(
     grp: dict[str, Any],
     avatar_provider: SteamAvatarProvider,
@@ -1780,6 +1927,17 @@ def render_single_match_card_png(
         if int(n.get("opponent_profile_id", 0) or 0) > 0
     }
 
+    raw_smurf_alerts = grp.get("smurf_alerts") or primary.get("smurf_alerts") or []
+    smurf_entries: list[dict[str, Any]] = [
+        a for a in (raw_smurf_alerts if isinstance(raw_smurf_alerts, list) else [])
+        if isinstance(a, dict) and int(a.get("probability_pct", 0) or 0) > 0
+    ]
+    smurf_opp_pids = {
+        int(a.get("opponent_profile_id", 0) or 0)
+        for a in smurf_entries
+        if int(a.get("opponent_profile_id", 0) or 0) > 0
+    }
+
     duel_banner_h = 34 if is_duel else 0
     max_team = max(len(axis_p), len(allies_p), 1)
     top_bar_h = 90
@@ -1787,7 +1945,8 @@ def render_single_match_card_png(
     row_pitch = 62 if has_any_bg else 52
     columns_bottom_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 20
     nemesis_bar_h = (74 if len(nemesis_entries) >= 2 else 42) if nemesis_entries else 0
-    total_h = columns_bottom_h + nemesis_bar_h
+    smurf_bar_h = (104 if len(smurf_entries) >= 2 else 56) if smurf_entries else 0
+    total_h = columns_bottom_h + nemesis_bar_h + smurf_bar_h
 
     bg_fill = (28, 25, 20, 255) if is_duel else (26, 28, 34, 255)
     img = Image.new("RGBA", (width, total_h), bg_fill)
@@ -1864,6 +2023,7 @@ def render_single_match_card_png(
         is_duel=is_duel,
         has_any_bg=has_any_bg,
         nemesis_opponent_pids=nemesis_opp_pids,
+        smurf_opponent_pids=smurf_opp_pids,
     )
 
     if nemesis_entries:
@@ -1885,6 +2045,16 @@ def render_single_match_card_png(
             bar_h=nemesis_bar_h,
             nemesis_entries=resolved_entries,
             fallback_tracked_alias=str(primary.get("tracked_alias") or "Veterano"),
+            is_duel=is_duel,
+        )
+
+    if smurf_entries:
+        _draw_smurf_alert_footer_bar(
+            draw=draw,
+            width=width,
+            y_bar=columns_bottom_h + nemesis_bar_h,
+            bar_h=smurf_bar_h,
+            smurf_alerts=smurf_entries,
             is_duel=is_duel,
         )
 

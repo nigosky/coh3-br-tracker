@@ -163,6 +163,8 @@ class MatchDatabase:
                 conn.execute("ALTER TABLE recorded_matches ADD COLUMN tracked_steam_id TEXT DEFAULT ''")
             if "battlegroups_json" not in existing_match_cols:
                 conn.execute("ALTER TABLE recorded_matches ADD COLUMN battlegroups_json TEXT DEFAULT ''")
+            if "smurf_alerts_json" not in existing_match_cols:
+                conn.execute("ALTER TABLE recorded_matches ADD COLUMN smurf_alerts_json TEXT DEFAULT ''")
 
             existing_player_cols = {
                 str(r["name"]) for r in conn.execute("PRAGMA table_info(tracked_players)").fetchall()
@@ -616,6 +618,29 @@ class MatchDatabase:
             )
         return int(cur.rowcount or 0)
 
+    def update_match_smurf_alerts(
+        self,
+        match_id: int,
+        alerts: list[dict[str, Any]],
+    ) -> int:
+        """Persiste a lista de alertas forenses de smurf em todas as linhas da partida (preservada em PATCHes)."""
+        mid = int(match_id or 0)
+        if mid <= 0:
+            return 0
+        clean_alerts = [a for a in (alerts or []) if isinstance(a, dict)]
+        payload = (
+            json.dumps(clean_alerts, ensure_ascii=False, separators=(",", ":"))
+            if clean_alerts
+            else ""
+        )
+        conn = self._connect()
+        with conn:
+            cur = conn.execute(
+                "UPDATE recorded_matches SET smurf_alerts_json = ? WHERE match_id = ?",
+                (payload, mid),
+            )
+        return int(cur.rowcount or 0)
+
     def get_recent_matches_missing_battlegroups(
         self,
         max_age_sec: int = 259200,
@@ -696,6 +721,15 @@ class MatchDatabase:
                 d["battlegroups"] = {}
         else:
             d["battlegroups"] = {}
+        raw_smurf = str(d.pop("smurf_alerts_json", "") or "").strip()
+        if raw_smurf:
+            try:
+                parsed_smurf = json.loads(raw_smurf)
+                d["smurf_alerts"] = parsed_smurf if isinstance(parsed_smurf, list) else []
+            except Exception:
+                d["smurf_alerts"] = []
+        else:
+            d["smurf_alerts"] = []
         d.pop("counters_json", None)
         d["counters"] = {}
         return d
