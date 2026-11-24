@@ -60,6 +60,7 @@ DEFAULT_QUIET_AUDIT_COOLDOWN_HOURS = 3
 QUIET_AUDIT_STAT_TOLERANCE_SEC = 60
 BG_SUSPICIOUS_EMPTY_MIN_DURATION_SEC = 480  # >=8 min sem BG exige dupla confirmação antes de gravar '{}'
 PRE_POST_BG_DOUBLE_CHECK_WAIT_SEC = 25.0  # Aguarda 25s para 2ª checagem obrigatória pré-envio no Discord
+NEMESIS_OPEN_DATA_EARLIEST_DATE = "2023-06-30"  # 1º dia público disponível no arquivo Open Data do coh3stats.com
 
 
 def ensure_core_roster_in_config(
@@ -2614,6 +2615,150 @@ def run_cycle(
         maybe_run_db_maintenance(db=db, now_ts=now_ts)
 
     return len(grouped_new_matches), seeded_count
+
+
+def _parse_utc_date_to_midnight_ts(date_str: str) -> int:
+    """Converte data `YYYY-MM-DD` em timestamp Unix da meia-noite UTC."""
+    clean = str(date_str or "").strip()
+    dt = datetime.strptime(clean, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
+
+
+def backfill_nemesis_history_from_open_data(
+    db: MatchDatabase,
+    tracked_players: list[dict[str, Any]],
+    *,
+    coh3stats: Coh3StatsAPIClient | None = None,
+    start_date: str = NEMESIS_OPEN_DATA_EARLIEST_DATE,
+    end_date: str | None = None,
+    max_workers: int = 4,
+    chunk_days: int = 30,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+    progress_callback: Any = None,
+) -> dict[str, Any]:
+    """
+    Reconstroi o histórico completo de confrontos Automatch Steam na tabela `nemesis_matches`
+    usando streaming de baixa memória (<4 MB/worker) sobre o arquivo oficial COH3 Stats Open Data
+    (`https://storage.coh3stats.com/matches/matches-<day_ts>.json`, disponível a partir de 2023-06-30).
+    Idempotente via `INSERT OR IGNORE`: preserva todos os registros antigos já existentes no SQLite.
+    """
+    earliest_ts = _parse_utc_date_to_midnight_ts(NEMESIS_OPEN_DATA_EARLIEST_DATE)
+    req_start_ts = max(earliest_ts, _parse_utc_date_to_midnight_ts(start_date))
+    now_utc = datetime.now(tz=timezone.utc)
+    default_end_ts = int(datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc).timestamp()) - 86400
+    req_end_ts = _parse_utc_date_to_midnight_ts(end_date) if end_date else default_end_ts
+
+    effective_start_str = datetime.fromtimestamp(req_start_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+    effective_end_str = datetime.fromtimestamp(req_end_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+
+    if not tracked_players or req_start_ts > req_end_ts:
+        return {
+            "start_date": effective_start_str,
+            "end_date": effective_end_str,
+            "days_requested": 0,
+            "days_ok": 0,
+            "days_not_published": 0,
+            "days_failed": 0,
+            "matches_scanned": 0,
+            "nemesis_rows_extracted": 0,
+            "nemesis_rows_inserted": 0,
+            "coverage_after": db.get_nemesis_coverage_summary(),
+        }
+
+    client = coh3stats if coh3stats is not None else Coh3StatsAPIClient(min_interval_sec=0.05)
+    active_roster_maps = roster_maps or build_roster_lookup_maps()
+    day_timestamps = list(range(req_start_ts, req_end_ts + 1, 86400))
+    workers = max(1, min(int(max_workers), 6))
+    step = max(1, min(int(chunk_days), 90))
+
+    days_ok = 0
+    days_not_published = 0
+    days_failed = 0
+    matches_scanned = 0
+    rows_extracted = 0
+    rows_inserted = 0
+
+    def _fetch_one_day(day_ts: int) -> tuple[int, str, int, list[tuple[int, int, int, int, int, int, str, str, str]]]:
+        try:
+            by_pid, status, scanned = client.fetch_open_data_day_matches(
+                day_utc_midnight_ts=day_ts,
+                players=tracked_players,
+                only_automatch=True,
+                roster_maps=active_roster_maps,
+                retries=2,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[NEMESIS BACKFILL] Falha ao ler dia UTC %s: %s",
+                datetime.fromtimestamp(day_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
+                redact_secrets(exc),
+            )
+            return day_ts, "failed", 0, []
+
+        if status != "ok":
+            return day_ts, status, int(scanned or 0), []
+
+        day_rows: list[tuple[int, int, int, int, int, int, str, str, str]] = []
+        for tpid, mlist in by_pid.items():
+            for m in mlist:
+                mode_str = str(m.get("mode") or "")
+                ct_val = int(m.get("completion_time", 0) or 0)
+                mid = int(m.get("match_id", 0) or 0)
+                if ct_val <= 0 or mid <= 0 or mode_str not in AUTOMATCH_MODES:
+                    continue
+                opps = MatchDatabase._extract_automatch_steam_opponents(mode_str, int(tpid), m.get("opponents"))
+                if not opps:
+                    continue
+                win_int = 1 if bool(m.get("win")) else 0
+                uday = ct_val // 86400
+                for opp_pid, opp_alias, opp_country in opps:
+                    day_rows.append((int(tpid), opp_pid, mid, ct_val, uday, win_int, mode_str, opp_alias, opp_country))
+        return day_ts, "ok", int(scanned or 0), day_rows
+
+    processed_days = 0
+    for idx in range(0, len(day_timestamps), step):
+        chunk_ts = day_timestamps[idx : idx + step]
+        chunk_rows: list[tuple[int, int, int, int, int, int, str, str, str]] = []
+        if workers == 1:
+            results = [_fetch_one_day(dts) for dts in chunk_ts]
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+                results = list(pool.map(_fetch_one_day, chunk_ts))
+
+        for _dts, status, scanned, day_rows in results:
+            processed_days += 1
+            matches_scanned += scanned
+            if status == "ok":
+                days_ok += 1
+                if day_rows:
+                    chunk_rows.extend(day_rows)
+            elif status == "not_published":
+                days_not_published += 1
+            else:
+                days_failed += 1
+
+        if chunk_rows:
+            rows_extracted += len(chunk_rows)
+            rows_inserted += db.insert_nemesis_matches_batch(chunk_rows)
+
+        if callable(progress_callback):
+            progress_callback(processed_days, len(day_timestamps), rows_inserted, matches_scanned)
+
+    db.set_state("nemesis_open_data_backfill_range", f"{effective_start_str}..{effective_end_str}")
+    db.set_state("nemesis_open_data_backfill_ts", str(int(time.time())))
+
+    return {
+        "start_date": effective_start_str,
+        "end_date": effective_end_str,
+        "days_requested": len(day_timestamps),
+        "days_ok": days_ok,
+        "days_not_published": days_not_published,
+        "days_failed": days_failed,
+        "matches_scanned": matches_scanned,
+        "nemesis_rows_extracted": rows_extracted,
+        "nemesis_rows_inserted": rows_inserted,
+        "coverage_after": db.get_nemesis_coverage_summary(),
+    }
 
 
 def main() -> int:

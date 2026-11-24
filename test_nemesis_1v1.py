@@ -194,6 +194,115 @@ class TestNemesisAllModes(unittest.TestCase):
             im_nem_1 = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_nem_1, ap)))
             self.assertEqual(im_nem_1.height - im_plain.height, 42)
 
+    def test_insert_nemesis_matches_batch_and_open_data_backfill_since_2023(self) -> None:
+        from monitor import NEMESIS_OPEN_DATA_EARLIEST_DATE, backfill_nemesis_history_from_open_data
+
+        class _FakeCoh3Stats:
+            def __init__(self) -> None:
+                self.called_days: list[int] = []
+
+            def fetch_open_data_day_matches(
+                self,
+                day_utc_midnight_ts: int,
+                players: list[dict[str, object]],
+                only_automatch: bool = False,
+                roster_maps: object = None,
+                retries: int = 2,
+            ) -> tuple[dict[int, list[dict[str, object]]], str, int]:
+                self.called_days.append(day_utc_midnight_ts)
+                # Dia 2023-06-30 (1688083200): 2 partidas Automatch contra o mesmo rival Steam -> dispara Nemesis!
+                if day_utc_midnight_ts == 1688083200:
+                    return (
+                        {
+                            79327: [
+                                {
+                                    "match_id": 1001,
+                                    "mode": "1v1",
+                                    "completion_time": 1688086800,
+                                    "win": True,
+                                    "opponents": [
+                                        {
+                                            "profile_id": 999999,
+                                            "alias": "Rival2023",
+                                            "steam_id": "76561198000999999",
+                                            "country": "de",
+                                        }
+                                    ],
+                                },
+                                {
+                                    "match_id": 1002,
+                                    "mode": "1v1",
+                                    "completion_time": 1688090400,
+                                    "win": False,
+                                    "opponents": [
+                                        {
+                                            "profile_id": 999999,
+                                            "alias": "Rival2023",
+                                            "steam_id": "76561198000999999",
+                                            "country": "de",
+                                        }
+                                    ],
+                                },
+                            ]
+                        },
+                        "ok",
+                        5000,
+                    )
+                return {}, "not_published", 0
+
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "nemesis_backfill.db")
+            fake = _FakeCoh3Stats()
+            players = [{"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro", "alias": "Chacineiro"}]
+            # Solicita desde 2023-02-23 (lançamento CoH3): função deve clampar para 2023-06-30 automaticamente
+            res = backfill_nemesis_history_from_open_data(
+                db,
+                players,
+                coh3stats=fake,  # type: ignore[arg-type]
+                start_date="2023-02-23",
+                end_date="2023-07-01",
+                max_workers=1,
+            )
+            self.assertEqual(res["start_date"], NEMESIS_OPEN_DATA_EARLIEST_DATE)
+            self.assertEqual(res["end_date"], "2023-07-01")
+            self.assertEqual(res["days_requested"], 2)
+            self.assertEqual(res["days_ok"], 1)
+            self.assertEqual(res["days_not_published"], 1)
+            self.assertEqual(res["nemesis_rows_inserted"], 2)
+
+            # Reexecução deve ser 100% idempotente (0 linhas duplicadas)
+            res2 = backfill_nemesis_history_from_open_data(
+                db,
+                players,
+                coh3stats=fake,  # type: ignore[arg-type]
+                start_date="2023-06-30",
+                end_date="2023-07-01",
+                max_workers=1,
+            )
+            self.assertEqual(res2["nemesis_rows_inserted"], 0)
+            cov = db.get_nemesis_coverage_summary()
+            self.assertEqual(cov["total_rows"], 2)
+            self.assertEqual(cov["unique_matches"], 2)
+            self.assertEqual(cov["distinct_nemesis_pairs"], 1)
+            self.assertEqual(cov["trigger_day_events"], 1)
+
+            # Partida em 2026 contra Rival2023 já herda o histórico completo desde junho/2023!
+            status_2026 = db.get_nemesis_status(
+                [79327],
+                999999,
+                up_to_completion_time=1_795_000_000,
+                up_to_match_id=99_999_999,
+                current_opponent_alias="Rival2023NewNick",
+                current_opponent_steam_id="76561198000999999",
+            )
+            self.assertIsNotNone(status_2026)
+            assert status_2026 is not None
+            self.assertTrue(status_2026["triggered"])
+            self.assertEqual(status_2026["total"], 2)
+            self.assertEqual(status_2026["wins"], 1)
+            self.assertEqual(status_2026["losses"], 1)
+            self.assertEqual(status_2026["opponent_alias"], "Rival2023NewNick")
+
 
 if __name__ == "__main__":
     unittest.main()

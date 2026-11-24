@@ -548,6 +548,68 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         self.assertIn(HttpsOnlySchemeHandler, handler_types)
         self.assertIn(StrictNoRedirectHandler, handler_types)
 
+    def test_family_sharing_xml_html_parser_and_live_scoring_boost(self) -> None:
+        xml_priv_limited = """<?xml version="1.0" encoding="UTF-8"?>
+        <profile>
+            <steamID64>76561198722284920</steamID64>
+            <privacyState>private</privacyState>
+            <isLimitedAccount>1</isLimitedAccount>
+        </profile>"""
+        parsed_priv = sa.SteamProfileOSINTClient.parse_profile_xml(xml_priv_limited, current_year=2026)
+        self.assertTrue(parsed_priv["ok"])
+        self.assertTrue(parsed_priv["is_private"])
+        self.assertTrue(parsed_priv["is_limited_account"])
+        self.assertFalse(parsed_priv["member_since_current_year"])
+
+        xml_pub_yearless = """<?xml version="1.0" encoding="UTF-8"?>
+        <profile>
+            <steamID64>76561198723667226</steamID64>
+            <privacyState>public</privacyState>
+            <isLimitedAccount>1</isLimitedAccount>
+            <memberSince>March 23</memberSince>
+            <customURL><![CDATA[]]></customURL>
+        </profile>"""
+        parsed_pub = sa.SteamProfileOSINTClient.parse_profile_xml(xml_pub_yearless, current_year=2026)
+        self.assertTrue(parsed_pub["is_limited_account"])
+        self.assertEqual(parsed_pub["member_since_year"], 2026)
+        self.assertTrue(parsed_pub["member_since_current_year"])
+
+        fp = sa.SteamProfileOSINTClient.parse_profile_html_footprint(
+            '<span class="friendPlayerLevelNum">0</span>'
+            '<a href="https://steamcommunity.com/profiles/76561198723667226/friends/"><span class="profile_count_link_total">4</span></a>'
+        )
+        self.assertEqual(fp["steam_level"], 0)
+        self.assertEqual(fp["friends_count"], 4)
+
+        # Unattributed BR burner com isLimitedAccount=1 + conta criada este ano deve disparar com chip Family Sharing!
+        cand = {
+            "profile_id": 1_985_001,
+            "steam_id": "76561199985000001",
+            "alias": "ContaTesteBR",
+            "country": "br",
+            "max_elo": 1520,
+            "total_matches": 60,
+            "total_wins": 42,
+        }
+        tel = sa.PlayerTelemetry(profile_id=1_985_001, games=15, wins=11)
+        res_no_fs = sa.score_unattributed_br_burner(cand, tel, cand_osint={})
+        res_fs = sa.score_unattributed_br_burner(
+            cand,
+            tel,
+            cand_osint={
+                "ok": True,
+                "is_limited_account": True,
+                "member_since_current_year": True,
+                "steam_level": 0,
+                "friends_count": 3,
+            },
+        )
+        self.assertFalse(res_no_fs["triggered"])
+        self.assertTrue(res_fs["triggered"])
+        self.assertGreaterEqual(res_fs["probability_pct"], 80)
+        self.assertIn("Family Sharing (conta limitada)", res_fs["top_reasons"])
+        self.assertIn("Steam criada este ano", res_fs["top_reasons"])
+
 
 if __name__ == "__main__":
     unittest.main()
