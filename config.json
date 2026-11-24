@@ -527,6 +527,16 @@
         "⭐ Monitorado BR"
       ],
       "is_custom": true
+    },
+    {
+      "profile_id": 1482961,
+      "alias": "Vog (Smurf: arc)",
+      "original_alias": "Vog (Smurf: arc)",
+      "steam_id": "76561199886227102",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
     }
   ],
   "auto_follow_top_br": true,
@@ -900,6 +910,18 @@
         "Državljan H",
         "Državljan H (arc)",
         "Državljan H (Smurf: arc)"
+      ]
+    },
+    {
+      "profile_id": 1482961,
+      "steam_id": "76561199886227102",
+      "original_alias": "Vog (Smurf: arc)",
+      "alias": "Vog (Smurf: arc)",
+      "is_core_roster": true,
+      "known_aliases": [
+        "Vog",
+        "Vog (arc)",
+        "Vog (Smurf: arc)"
       ]
     }
   ],
