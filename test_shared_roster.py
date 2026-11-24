@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 39 Players Monitorados de exibição passiva
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 81 Players Monitorados de exibição passiva
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 39)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 81)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -186,6 +186,12 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (40833, "Tokai Teio"),
             (991551, "Caveira-."),
             (667564, "Friedhelm Winter"),
+            (357310, "Sleeping Sheep"),
+            (845669, "PH0BB05"),
+            (17169, "Guh"),
+            (71299, "Bruno.s"),
+            (13516, "Pax Xavier youtube"),
+            (970468, "Московский метро"),
         ):
             self.assertIn(mon_pid, other_by_pid)
             self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)
