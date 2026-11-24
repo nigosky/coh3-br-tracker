@@ -1749,8 +1749,9 @@ def _patch_match_card_with_battlegroups(
     *,
     log_suffix: str = "com Battlegroups",
 ) -> bool:
-    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis e Alertas Smurf preservados."""
+    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis, Criptonita e Alertas Smurf preservados."""
     enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+    enrich_group_with_kryptonite(db, grp, roster_maps=roster_maps)
     if not grp.get("smurf_alerts"):
         recs = grp.get("records") or []
         prim = grp.get("primary") or (recs[0] if recs else {})
@@ -2062,6 +2063,151 @@ def enrich_group_with_nemesis(
         grp["primary"]["nemesis"] = top_nem
         grp["primary"]["nemesis_list"] = nemesis_list
     return nemesis_list
+
+
+def enrich_group_with_kryptonite(
+    db: MatchDatabase,
+    grp: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Avalia em tempo real a condição de 'Criptonita' em partidas Automatch PvP (1v1, 2v2, 3v3, 4v4)
+    para cada Veterano DERROTADO na partida, seguindo a cascata estrita de prioridade:
+      1. Mapa específico;
+      2. Battlegroup inimigo específico;
+      3. Adversário específico (histórico desde 2023);
+      4. Parceiro / aliado específico (último caso).
+    """
+    recs = grp.get("records") or [grp.get("primary") or grp]
+    primary = recs[0]
+
+    # Limpa eventuais valores anteriores (ex.: reavaliação após PATCH de Battlegroups do cohdb)
+    grp.pop("kryptonite", None)
+    grp.pop("kryptonite_list", None)
+    for r in recs:
+        if isinstance(r, dict):
+            r.pop("kryptonite", None)
+            r.pop("kryptonite_list", None)
+    if isinstance(grp.get("primary"), dict):
+        grp["primary"].pop("kryptonite", None)
+        grp["primary"].pop("kryptonite_list", None)
+
+    if str(primary.get("mode") or "").strip() not in AUTOMATCH_MODES:
+        return []
+
+    match_id = int(grp.get("match_id") or primary.get("match_id") or 0)
+    comp_ts = int(primary.get("completion_time", 0) or 0)
+    if match_id <= 0 or comp_ts <= 0:
+        return []
+
+    _, pid_map = roster_maps if roster_maps is not None else build_roster_lookup_maps()
+
+    # Consolida o mapa de battlegroups de qualquer registro irmão do grupo
+    bgs_map: dict[str, dict[str, Any]] = {}
+    for src in (grp.get("primary"), *recs):
+        if isinstance(src, dict) and isinstance(src.get("battlegroups"), dict):
+            for k, v in src["battlegroups"].items():
+                if isinstance(v, dict) and str(k) not in bgs_map:
+                    bgs_map[str(k)] = v
+
+    def _canonical_pid_group(tpid: int) -> tuple[int, list[int], str]:
+        entry = pid_map.get(tpid) or {}
+        canon = int(entry.get("merged_into_profile_id") or tpid)
+        group = [tpid]
+        if canon > 0 and canon not in group:
+            group.append(canon)
+        for r_pid, r_ent in pid_map.items():
+            m_pid = int(r_ent.get("merged_into_profile_id") or r_pid)
+            if m_pid == canon and r_pid not in group:
+                group.append(r_pid)
+        disp = str(entry.get("original_alias") or "").strip()
+        return canon, group, disp
+
+    def _resolve_participant_alias(part: dict[str, Any]) -> str:
+        ppid = int(part.get("profile_id", 0) or 0)
+        rent = pid_map.get(ppid) if ppid > 0 else None
+        if isinstance(rent, dict) and str(rent.get("original_alias") or "").strip():
+            return str(rent["original_alias"]).strip()
+        return str(part.get("alias") or "").strip() or (f"ID #{ppid}" if ppid > 0 else "Jogador")
+
+    by_veteran: dict[int, dict[str, Any]] = {}
+    for rec in recs:
+        if not isinstance(rec, dict) or bool(rec.get("win")):
+            continue
+        tpid = int(rec.get("tracked_profile_id", 0) or 0)
+        if tpid <= 0:
+            continue
+        canon_pid, pid_group, roster_disp = _canonical_pid_group(tpid)
+        if canon_pid in by_veteran:
+            continue
+        tracked_disp = roster_disp or str(rec.get("tracked_alias") or f"Jogador {tpid}").strip()
+
+        raw_opps = rec.get("opponents") if isinstance(rec.get("opponents"), list) else []
+        raw_allies = rec.get("allies") if isinstance(rec.get("allies"), list) else []
+
+        enemy_bgs: list[tuple[str, str]] = []
+        norm_opps: list[dict[str, Any]] = []
+        for o in raw_opps:
+            if not isinstance(o, dict):
+                continue
+            opid = int(o.get("profile_id", 0) or 0)
+            norm_opps.append({"profile_id": opid, "alias": _resolve_participant_alias(o)})
+            if opid > 0:
+                bg_ent = bgs_map.get(str(opid))
+                if isinstance(bg_ent, dict):
+                    bk = str(bg_ent.get("key") or "").strip()
+                    bn = str(bg_ent.get("name") or "").strip()
+                    if bk or bn:
+                        enemy_bgs.append((bk, bn or bk))
+
+        norm_allies: list[dict[str, Any]] = []
+        for a in raw_allies:
+            if not isinstance(a, dict):
+                continue
+            apid = int(a.get("profile_id", 0) or 0)
+            if apid > 0 and apid not in pid_group:
+                norm_allies.append({"profile_id": apid, "alias": _resolve_participant_alias(a)})
+
+        krypt = db.get_kryptonite_status(
+            tracked_profile_ids=pid_group,
+            up_to_completion_time=comp_ts,
+            up_to_match_id=match_id,
+            current_win=False,
+            current_map_clean=str(rec.get("map_clean") or primary.get("map_clean") or ""),
+            current_map_raw=str(rec.get("map_raw") or primary.get("map_raw") or ""),
+            current_enemy_battlegroups=enemy_bgs,
+            current_opponents=norm_opps,
+            current_allies=norm_allies,
+        )
+        if not krypt:
+            continue
+        krypt["tracked_profile_id"] = tpid
+        krypt["tracked_alias"] = tracked_disp
+        by_veteran[canon_pid] = krypt
+
+    if not by_veteran:
+        return []
+
+    kryptonite_list = sorted(
+        by_veteran.values(),
+        key=lambda x: (
+            int(x.get("priority", 99)),
+            -(int(x.get("losses", 0)) - int(x.get("wins", 0))),
+            -int(x.get("losses", 0)),
+            float(x.get("win_rate", 100.0)),
+        ),
+    )
+    top_k = kryptonite_list[0]
+    grp["kryptonite"] = top_k
+    grp["kryptonite_list"] = kryptonite_list
+    for r in recs:
+        if isinstance(r, dict):
+            r["kryptonite"] = top_k
+            r["kryptonite_list"] = kryptonite_list
+    if isinstance(grp.get("primary"), dict):
+        grp["primary"]["kryptonite"] = top_k
+        grp["primary"]["kryptonite_list"] = kryptonite_list
+    return kryptonite_list
 
 
 def run_cycle(
@@ -2906,12 +3052,13 @@ def backfill_nemesis_history_from_open_data(
                 datetime.fromtimestamp(day_ts, tz=timezone.utc).strftime("%Y-%m-%d"),
                 redact_secrets(exc),
             )
-            return day_ts, "failed", 0, []
+            return day_ts, "failed", 0, [], []
 
         if status != "ok":
-            return day_ts, status, int(scanned or 0), []
+            return day_ts, status, int(scanned or 0), [], []
 
         day_rows: list[tuple[int, int, int, int, int, int, str, str, str]] = []
+        day_krypt_rows: list[tuple[int, int, int, int, str, str, str]] = []
         for tpid, mlist in by_pid.items():
             for m in mlist:
                 mode_str = str(m.get("mode") or "")
@@ -2926,25 +3073,47 @@ def backfill_nemesis_history_from_open_data(
                 uday = ct_val // 86400
                 for opp_pid, opp_alias, opp_country in opps:
                     day_rows.append((int(tpid), opp_pid, mid, ct_val, uday, win_int, mode_str, opp_alias, opp_country))
-        return day_ts, "ok", int(scanned or 0), day_rows
+                mclean = str(m.get("map_clean") or "").strip()
+                raw_allies = m.get("allies") if isinstance(m.get("allies"), list) else []
+                compact_allies = [
+                    {"profile_id": int(a.get("profile_id", 0) or 0), "alias": str(a.get("alias") or "")[:64]}
+                    for a in raw_allies
+                    if isinstance(a, dict) and int(a.get("profile_id", 0) or 0) > 0 and int(a.get("profile_id", 0) or 0) != int(tpid)
+                ]
+                day_krypt_rows.append(
+                    (
+                        int(tpid),
+                        mid,
+                        ct_val,
+                        win_int,
+                        mode_str,
+                        mclean,
+                        json.dumps(compact_allies, ensure_ascii=False, separators=(",", ":")),
+                    )
+                )
+        return day_ts, "ok", int(scanned or 0), day_rows, day_krypt_rows
 
     processed_days = 0
+    krypt_rows_inserted = 0
     for idx in range(0, len(day_timestamps), step):
         chunk_ts = day_timestamps[idx : idx + step]
         chunk_rows: list[tuple[int, int, int, int, int, int, str, str, str]] = []
+        chunk_krypt_rows: list[tuple[int, int, int, int, str, str, str]] = []
         if workers == 1:
             results = [_fetch_one_day(dts) for dts in chunk_ts]
         else:
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
                 results = list(pool.map(_fetch_one_day, chunk_ts))
 
-        for _dts, status, scanned, day_rows in results:
+        for _dts, status, scanned, day_rows, day_krypt_rows in results:
             processed_days += 1
             matches_scanned += scanned
             if status == "ok":
                 days_ok += 1
                 if day_rows:
                     chunk_rows.extend(day_rows)
+                if day_krypt_rows:
+                    chunk_krypt_rows.extend(day_krypt_rows)
             elif status == "not_published":
                 days_not_published += 1
             else:
@@ -2953,6 +3122,8 @@ def backfill_nemesis_history_from_open_data(
         if chunk_rows:
             rows_extracted += len(chunk_rows)
             rows_inserted += db.insert_nemesis_matches_batch(chunk_rows)
+        if chunk_krypt_rows:
+            krypt_rows_inserted += db.insert_kryptonite_matches_batch(chunk_krypt_rows)
 
         if callable(progress_callback):
             progress_callback(processed_days, len(day_timestamps), rows_inserted, matches_scanned)
@@ -2970,6 +3141,7 @@ def backfill_nemesis_history_from_open_data(
         "matches_scanned": matches_scanned,
         "nemesis_rows_extracted": rows_extracted,
         "nemesis_rows_inserted": rows_inserted,
+        "kryptonite_rows_inserted": krypt_rows_inserted,
         "coverage_after": db.get_nemesis_coverage_summary(),
     }
 

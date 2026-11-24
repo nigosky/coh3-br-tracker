@@ -1969,6 +1969,175 @@ def _draw_smurf_alert_footer_bar(
             draw.text((pill_x + 2, line2_y), sig_disp, font=sig_fnt, fill=(224, 196, 156, 255))
 
 
+def _draw_kryptonite_crystal_icon(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    size: int = 13,
+    color: tuple[int, int, int, int] = (236, 253, 245, 255),
+) -> None:
+    """Desenha um cristal facetado vetorial nítido de Criptonita para o selo CRIPTONITA."""
+    rx = max(3.5, size * 0.34)
+    ry = max(5.0, size * 0.50)
+    pts = [
+        (cx, cy - ry),
+        (cx + rx, cy - ry * 0.32),
+        (cx + rx * 0.85, cy + ry * 0.45),
+        (cx, cy + ry),
+        (cx - rx * 0.85, cy + ry * 0.45),
+        (cx - rx, cy - ry * 0.32),
+    ]
+    draw.polygon(pts, fill=(52, 211, 153, 220), outline=color)
+    draw.line([(cx, cy - ry + 1.0), (cx, cy + ry - 1.0)], fill=color, width=1)
+    draw.line([(cx - rx * 0.75, cy - ry * 0.25), (cx + rx * 0.75, cy - ry * 0.25)], fill=color, width=1)
+
+
+_KRYPTONITE_KIND_LABELS: dict[str, str] = {
+    "map": "Mapa",
+    "battlegroup": "BG",
+    "opponent": "Rival",
+    "partner": "Parceiro",
+}
+
+
+def _draw_kryptonite_footer_bar(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    y_bar: int,
+    bar_h: int,
+    kryptonite_entries: list[dict[str, Any]],
+    fallback_tracked_alias: str,
+    is_duel: bool = False,
+) -> None:
+    """Desenha a faixa tática verde-esmeralda inferior de CRIPTONITA (até 2 linhas compactas)."""
+    if not kryptonite_entries:
+        return
+
+    visible = kryptonite_entries[:2]
+    extra_entries = max(0, len(kryptonite_entries) - len(visible))
+
+    bg_col = (13, 34, 24, 255) if not is_duel else (20, 36, 22, 255)
+    top_border = (34, 197, 94, 230)
+    left_bar = (74, 222, 128, 255)
+
+    draw.rectangle((0, y_bar, width, y_bar + bar_h), fill=bg_col)
+    draw.line([(0, y_bar), (width, y_bar)], fill=top_border, width=2)
+    draw.rectangle((0, y_bar, 8, y_bar + bar_h), fill=left_bar)
+
+    row_h = 34 if len(visible) > 1 else bar_h
+    base_y = y_bar + (3 if len(visible) > 1 else 0)
+    badge_txt = "CRIPTONITA"
+    badge_fnt = pick_font(badge_txt, size=13, bold=True, condensed=True)
+    badge_tw = text_width(draw, badge_txt, badge_fnt)
+    pill_w = int(badge_tw + 32)
+    pill_h = 24
+    pill_x = 20
+
+    for idx, krypt in enumerate(visible):
+        ry = base_y + idx * row_h
+        if idx > 0:
+            draw.line([(16, ry), (width - 16, ry)], fill=(28, 78, 52, 200), width=1)
+
+        kind = str(krypt.get("kind") or "map").strip().lower()
+        kind_lbl = _KRYPTONITE_KIND_LABELS.get(kind, "Alvo")
+        target_label = str(krypt.get("label") or "Desconhecido").strip()
+        bg_key = str(krypt.get("bg_key") or "").strip()
+        wins = int(krypt.get("wins", 0) or 0)
+        losses = int(krypt.get("losses", 0) or 0)
+        total = int(krypt.get("total", wins + losses) or (wins + losses))
+        wr_pct = int(round(float(krypt.get("win_rate", 0.0) or 0.0)))
+        br_alias = str(krypt.get("tracked_alias") or fallback_tracked_alias or "Veterano").strip()
+
+        # Pílula CRIPTONITA à esquerda
+        pill_y = ry + (row_h - pill_h) // 2 + (1 if len(visible) == 1 else 0)
+        draw.rounded_rectangle(
+            (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h),
+            radius=6,
+            fill=(21, 128, 61, 255),
+            outline=(74, 222, 128, 230),
+            width=1,
+        )
+        content_w = 18 + badge_tw
+        content_x = pill_x + (pill_w - content_w) / 2.0
+        _draw_kryptonite_crystal_icon(draw, content_x + 6, pill_y + pill_h / 2.0, size=13, color=(236, 253, 245, 255))
+        draw.text((content_x + 18, pill_y + 4), badge_txt, font=badge_fnt, fill=(236, 253, 245, 255))
+
+        # Metadados à direita (WR% + total de jogos + extras)
+        meta_txt = f"{wr_pct}% WR  •  {total} jogos"
+        if idx == len(visible) - 1 and extra_entries > 0:
+            meta_txt = f"{meta_txt}  •  +{extra_entries}"
+        meta_fnt = pick_font(meta_txt, size=13, bold=True, condensed=True)
+        meta_w = text_width(draw, meta_txt, meta_fnt)
+        meta_x = width - 20 - meta_w
+        ty_meta = ry + (row_h - 16) // 2 + 1
+        draw.text((meta_x, ty_meta), meta_txt, font=meta_fnt, fill=(110, 231, 183, 255))
+
+        # Bloco central: <Veterano>  •  <Tipo:> [ícone BG] <Alvo>   <W>V - <L>D
+        cursor_x = pill_x + pill_w + 16
+        avail_px = max(160, int(meta_x - cursor_x - 18))
+
+        sep_dot = "  •  "
+        kind_prefix = f"{kind_lbl}: "
+        w_str = f"{wins}V"
+        dash_str = " - "
+        l_str = f"{losses}D"
+        sep_fnt = pick_font(sep_dot, size=14, bold=False)
+        kind_fnt = pick_font(kind_prefix, size=14, bold=True)
+        score_fnt = pick_font("99V - 99D", size=16, bold=True, condensed=True)
+
+        bg_icon_im = get_battlegroup_icon(bg_key, size=18) if (kind == "battlegroup" and bg_key) else None
+        bg_icon_w = 23 if bg_icon_im is not None else 0
+
+        fixed_w = (
+            text_width(draw, sep_dot, sep_fnt)
+            + text_width(draw, kind_prefix, kind_fnt)
+            + bg_icon_w
+            + 14
+            + text_width(draw, w_str, score_fnt)
+            + text_width(draw, dash_str, score_fnt)
+            + text_width(draw, l_str, score_fnt)
+        )
+        name_budget = max(90, int(avail_px - fixed_w))
+        br_max = max(56, int(name_budget * 0.42))
+        tgt_max = max(64, int(name_budget - br_max))
+
+        br_disp, br_fnt = truncate_to_px(draw, br_alias, max_px=br_max, size=15, bold=True)
+        tgt_disp, tgt_fnt = truncate_to_px(draw, target_label, max_px=tgt_max, size=15, bold=True)
+
+        ty_name = ry + (row_h - 18) // 2
+        ty_score = ry + (row_h - 19) // 2
+
+        draw.text(
+            (cursor_x, ty_name),
+            br_disp,
+            font=br_fnt,
+            fill=(253, 230, 138, 255) if is_duel else (125, 211, 252, 255),
+        )
+        cursor_x += text_width(draw, br_disp, br_fnt)
+
+        draw.text((cursor_x, ty_name + 1), sep_dot, font=sep_fnt, fill=(92, 148, 118, 255))
+        cursor_x += text_width(draw, sep_dot, sep_fnt)
+
+        draw.text((cursor_x, ty_name + 1), kind_prefix, font=kind_fnt, fill=(134, 239, 172, 255))
+        cursor_x += text_width(draw, kind_prefix, kind_fnt)
+
+        if bg_icon_im is not None:
+            img.paste(bg_icon_im, (int(cursor_x), int(ry + (row_h - 18) // 2)), bg_icon_im)
+            cursor_x += bg_icon_w
+
+        draw.text((cursor_x, ty_name), tgt_disp, font=tgt_fnt, fill=(241, 245, 249, 255))
+        cursor_x += text_width(draw, tgt_disp, tgt_fnt) + 14
+
+        draw.text((cursor_x, ty_score), w_str, font=score_fnt, fill=(74, 222, 128, 255))
+        cursor_x += text_width(draw, w_str, score_fnt)
+
+        draw.text((cursor_x, ty_score), dash_str, font=score_fnt, fill=(148, 163, 184, 255))
+        cursor_x += text_width(draw, dash_str, score_fnt)
+
+        draw.text((cursor_x, ty_score), l_str, font=score_fnt, fill=(248, 113, 113, 255))
+
+
 def render_single_match_card_png(
     grp: dict[str, Any],
     avatar_provider: SteamAvatarProvider,
@@ -1989,10 +2158,20 @@ def render_single_match_card_png(
         if isinstance(nemesis_raw, dict) and bool(nemesis_raw.get("triggered")):
             nemesis_entries = [nemesis_raw]
 
-    # Nemesis aplica-se a todos os modos Automatch (1v1, 2v2, 3v3, 4v4), excluindo Custom/IA
+    raw_krypt_list = grp.get("kryptonite_list") or primary.get("kryptonite_list")
+    kryptonite_entries: list[dict[str, Any]] = []
+    if isinstance(raw_krypt_list, list):
+        kryptonite_entries = [k for k in raw_krypt_list if isinstance(k, dict) and bool(k.get("triggered"))]
+    if not kryptonite_entries:
+        krypt_raw = grp.get("kryptonite") or primary.get("kryptonite")
+        if isinstance(krypt_raw, dict) and bool(krypt_raw.get("triggered")):
+            kryptonite_entries = [krypt_raw]
+
+    # Nemesis e Criptonita aplicam-se a todos os modos Automatch (1v1, 2v2, 3v3, 4v4), excluindo Custom/IA
     mode_lbl = format_mode_vs(str(primary.get("mode") or ""))
     if mode_lbl not in ("1 vs 1", "2 vs 2", "3 vs 3", "4 vs 4"):
         nemesis_entries = []
+        kryptonite_entries = []
 
     nemesis_opp_pids = {
         int(n.get("opponent_profile_id", 0) or 0)
@@ -2018,8 +2197,9 @@ def render_single_match_card_png(
     row_pitch = 62 if has_any_bg else 52
     columns_bottom_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 20
     nemesis_bar_h = (74 if len(nemesis_entries) >= 2 else 42) if nemesis_entries else 0
+    kryptonite_bar_h = (74 if len(kryptonite_entries) >= 2 else 42) if kryptonite_entries else 0
     smurf_bar_h = (104 if len(smurf_entries) >= 2 else 56) if smurf_entries else 0
-    total_h = columns_bottom_h + nemesis_bar_h + smurf_bar_h
+    total_h = columns_bottom_h + nemesis_bar_h + kryptonite_bar_h + smurf_bar_h
 
     bg_fill = (28, 25, 20, 255) if is_duel else (26, 28, 34, 255)
     img = Image.new("RGBA", (width, total_h), bg_fill)
@@ -2121,11 +2301,34 @@ def render_single_match_card_png(
             is_duel=is_duel,
         )
 
+    if kryptonite_entries:
+        resolved_krypt: list[dict[str, Any]] = []
+        all_rendered = allies_p + axis_p
+        for k in kryptonite_entries:
+            kcopy = dict(k)
+            if not str(kcopy.get("tracked_alias") or "").strip():
+                k_tpid = int(kcopy.get("tracked_profile_id", 0) or 0)
+                kcopy["tracked_alias"] = next(
+                    (str(p.get("alias") or "") for p in all_rendered if int(p.get("profile_id", 0)) == k_tpid),
+                    str(primary.get("tracked_alias") or "Veterano"),
+                )
+            resolved_krypt.append(kcopy)
+        _draw_kryptonite_footer_bar(
+            img=img,
+            draw=draw,
+            width=width,
+            y_bar=columns_bottom_h + nemesis_bar_h,
+            bar_h=kryptonite_bar_h,
+            kryptonite_entries=resolved_krypt,
+            fallback_tracked_alias=str(primary.get("tracked_alias") or "Veterano"),
+            is_duel=is_duel,
+        )
+
     if smurf_entries:
         _draw_smurf_alert_footer_bar(
             draw=draw,
             width=width,
-            y_bar=columns_bottom_h + nemesis_bar_h,
+            y_bar=columns_bottom_h + nemesis_bar_h + kryptonite_bar_h,
             bar_h=smurf_bar_h,
             smurf_alerts=smurf_entries,
             is_duel=is_duel,

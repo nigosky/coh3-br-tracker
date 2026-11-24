@@ -157,6 +157,23 @@ class MatchDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_nemesis_all_opp
                     ON nemesis_matches (opponent_profile_id, tracked_profile_id);
+
+                CREATE INDEX IF NOT EXISTS idx_recorded_tracked_comp
+                    ON recorded_matches (tracked_profile_id, completion_time);
+
+                CREATE TABLE IF NOT EXISTS kryptonite_matches (
+                    tracked_profile_id INTEGER NOT NULL,
+                    match_id INTEGER NOT NULL,
+                    completion_time INTEGER NOT NULL,
+                    win INTEGER NOT NULL,
+                    mode TEXT DEFAULT '',
+                    map_clean TEXT DEFAULT '',
+                    allies_json TEXT DEFAULT '[]',
+                    PRIMARY KEY (tracked_profile_id, match_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_kryptonite_tracked_comp
+                    ON kryptonite_matches (tracked_profile_id, completion_time);
                 """
             )
             existing_match_cols = {
@@ -729,6 +746,368 @@ class MatchDatabase:
             )
         after = int(conn.execute("SELECT COUNT(*) FROM nemesis_matches").fetchone()[0] or 0)
         return max(0, after - before)
+
+    def insert_kryptonite_matches_batch(
+        self,
+        rows: list[tuple[int, int, int, int, str, str, str]],
+    ) -> int:
+        """
+        Insere em lote (idempotente via INSERT OR IGNORE) metadados compactos de partidas Automatch PvP
+        na tabela `kryptonite_matches` (mapa e aliados humanos) para enriquecer a análise de Criptonita.
+        Cada tupla: `(tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json)`.
+        """
+        if not rows:
+            return 0
+        valid_rows = [
+            (
+                int(tpid),
+                int(mid),
+                int(ct),
+                1 if int(win) else 0,
+                str(mode)[:24],
+                str(mclean or "").strip()[:96],
+                str(allies_j or "[]")[:4096],
+            )
+            for (tpid, mid, ct, win, mode, mclean, allies_j) in rows
+            if int(tpid) > 0 and int(mid) > 0 and int(ct) > 0 and str(mode) in AUTOMATCH_MODES
+        ]
+        if not valid_rows:
+            return 0
+        conn = self._connect()
+        before = int(conn.execute("SELECT COUNT(*) FROM kryptonite_matches").fetchone()[0] or 0)
+        with conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO kryptonite_matches (
+                    tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                valid_rows,
+            )
+        after = int(conn.execute("SELECT COUNT(*) FROM kryptonite_matches").fetchone()[0] or 0)
+        return max(0, after - before)
+
+    @staticmethod
+    def _is_kryptonite_weakness(wins: int, losses: int, *, max_wr_pct: float) -> bool:
+        """
+        Critério estatístico para caracterizar fraqueza real ('Criptonita'):
+        - 0V com >=4 derrotas seguidas (0% WR), OU
+        - >=5 jogos com >=4 derrotas e taxa de vitória <= `max_wr_pct`.
+        """
+        w = max(0, int(wins))
+        l = max(0, int(losses))
+        tot = w + l
+        if l < 4:
+            return False
+        if w == 0 and l >= 4:
+            return True
+        return tot >= 5 and ((w * 100.0) / tot) <= float(max_wr_pct)
+
+    def get_kryptonite_status(
+        self,
+        tracked_profile_ids: list[int] | set[int],
+        up_to_completion_time: int,
+        up_to_match_id: int,
+        *,
+        current_win: bool = False,
+        current_map_clean: str = "",
+        current_map_raw: str = "",
+        current_enemy_battlegroups: list[tuple[str, str]] | None = None,
+        current_opponents: list[dict[str, Any]] | None = None,
+        current_allies: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """
+        Avalia em cascata estrita se uma DERROTA Automatch PvP de um Veterano expõe sua 'Criptonita':
+        1. Mapa específico (<=35% WR em >=5 jogos ou 0V-4D+);
+        2. Battlegroup inimigo específico (<=35% WR em >=5 jogos ou 0V-4D+);
+        3. Adversário específico no histórico desde 2023 (<=30% WR em >=5 jogos ou 0V-4D+);
+        4. Parceiro / aliado específico em último caso (<=30% WR em >=5 jogos ou 0V-4D+).
+        Retorna apenas o nível mais prioritário acionado (ou None se nenhuma fraqueza se aplicar).
+        """
+        if current_win:
+            return None
+        clean_pids = sorted({int(p) for p in tracked_profile_ids if int(p) > 0})
+        ct = int(up_to_completion_time or 0)
+        mid = int(up_to_match_id or 0)
+        if not clean_pids or ct <= 0 or mid <= 0:
+            return None
+
+        pid_set = set(clean_pids)
+        pid_ph = ",".join("?" for _ in clean_pids)
+        mode_ph = ",".join("?" for _ in AUTOMATCH_MODES)
+        mode_params = tuple(AUTOMATCH_MODES)
+        conn = self._connect()
+
+        def _build_result(
+            *,
+            priority: int,
+            kind: str,
+            label: str,
+            wins: int,
+            losses: int,
+            bg_key: str = "",
+            target_profile_id: int = 0,
+        ) -> dict[str, Any]:
+            tot = wins + losses
+            return {
+                "triggered": True,
+                "priority": priority,
+                "kind": kind,
+                "label": str(label).strip(),
+                "bg_key": str(bg_key or "").strip(),
+                "target_profile_id": int(target_profile_id or 0),
+                "wins": wins,
+                "losses": losses,
+                "total": tot,
+                "diff": wins - losses,
+                "win_rate": round((wins * 100.0) / tot, 1) if tot > 0 else 0.0,
+            }
+
+        # ------------------------------------------------------------------
+        # Prioridade 1: MAPA (fraqueza do Veterano no mapa atual)
+        # ------------------------------------------------------------------
+        disp_map = str(current_map_clean or "").strip() or clean_map_name(str(current_map_raw or "")).strip()
+        norm_map = disp_map.casefold()
+        if norm_map:
+            map_outcomes: dict[int, int] = {}
+            rec_rows = conn.execute(
+                f"""
+                SELECT match_id, win, map_clean, map_raw
+                FROM recorded_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND mode IN ({mode_ph})
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *mode_params, ct, ct, mid),
+            ).fetchall()
+            for r in rec_rows:
+                rm_disp = str(r["map_clean"] or "").strip() or clean_map_name(str(r["map_raw"] or "")).strip()
+                if rm_disp.casefold() == norm_map:
+                    map_outcomes[int(r["match_id"])] = 1 if int(r["win"] or 0) else 0
+
+            km_rows = conn.execute(
+                f"""
+                SELECT match_id, win, map_clean
+                FROM kryptonite_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND mode IN ({mode_ph})
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *mode_params, ct, ct, mid),
+            ).fetchall()
+            for r in km_rows:
+                rm_disp = str(r["map_clean"] or "").strip()
+                if rm_disp.casefold() == norm_map:
+                    rm_mid = int(r["match_id"])
+                    if rm_mid not in map_outcomes:
+                        map_outcomes[rm_mid] = 1 if int(r["win"] or 0) else 0
+
+            map_outcomes[mid] = 0  # garante a derrota atual sem duplicar
+            m_wins = sum(1 for v in map_outcomes.values() if v == 1)
+            m_losses = len(map_outcomes) - m_wins
+            if self._is_kryptonite_weakness(m_wins, m_losses, max_wr_pct=35.0):
+                return _build_result(
+                    priority=1,
+                    kind="map",
+                    label=disp_map,
+                    wins=m_wins,
+                    losses=m_losses,
+                )
+
+        # ------------------------------------------------------------------
+        # Prioridade 2: BATTLEGROUP INIMIGO
+        # ------------------------------------------------------------------
+        target_bgs: dict[str, tuple[str, str]] = {}
+        for raw_k, raw_n in (current_enemy_battlegroups or ()):
+            bk = str(raw_k or "").strip().lower()
+            bn = str(raw_n or "").strip()
+            canon = bk or bn.casefold()
+            if canon and canon not in target_bgs:
+                target_bgs[canon] = (bk, bn or bk)
+
+        if target_bgs:
+            bg_outcomes: dict[str, dict[int, int]] = {c: {} for c in target_bgs}
+            bg_rows = conn.execute(
+                f"""
+                SELECT match_id, win, opponents_json, battlegroups_json
+                FROM recorded_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND mode IN ({mode_ph})
+                  AND COALESCE(battlegroups_json, '') NOT IN ('', '{{}}', 'null')
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *mode_params, ct, ct, mid),
+            ).fetchall()
+            for r in bg_rows:
+                try:
+                    opps_parsed = json.loads(r["opponents_json"] or "[]")
+                    bgs_parsed = json.loads(r["battlegroups_json"] or "{}")
+                except Exception:
+                    continue
+                if not isinstance(opps_parsed, list) or not isinstance(bgs_parsed, dict):
+                    continue
+                rm_mid = int(r["match_id"])
+                rm_win = 1 if int(r["win"] or 0) else 0
+                seen_in_match: set[str] = set()
+                for o in opps_parsed:
+                    if not isinstance(o, dict):
+                        continue
+                    opid_str = str(int(o.get("profile_id", 0) or 0))
+                    bg_entry = bgs_parsed.get(opid_str)
+                    if not isinstance(bg_entry, dict):
+                        continue
+                    ebk = str(bg_entry.get("key") or "").strip().lower()
+                    ebn = str(bg_entry.get("name") or "").strip()
+                    ecanon = ebk or ebn.casefold()
+                    if ecanon in target_bgs:
+                        seen_in_match.add(ecanon)
+                    elif ebn and ebn.casefold() in target_bgs:
+                        seen_in_match.add(ebn.casefold())
+                for c in seen_in_match:
+                    bg_outcomes[c][rm_mid] = rm_win
+
+            best_bg: dict[str, Any] | None = None
+            best_bg_rank: tuple[int, int, float] = (-1, -1, -1.0)
+            for canon, (bk, bn) in target_bgs.items():
+                out_map = bg_outcomes[canon]
+                out_map[mid] = 0
+                bw = sum(1 for v in out_map.values() if v == 1)
+                bl = len(out_map) - bw
+                if self._is_kryptonite_weakness(bw, bl, max_wr_pct=35.0):
+                    wr = (bw * 100.0) / (bw + bl)
+                    rank_key = (bl - bw, bl, -wr)
+                    if rank_key > best_bg_rank:
+                        best_bg_rank = rank_key
+                        best_bg = _build_result(
+                            priority=2,
+                            kind="battlegroup",
+                            label=bn,
+                            bg_key=bk,
+                            wins=bw,
+                            losses=bl,
+                        )
+            if best_bg is not None:
+                return best_bg
+
+        # ------------------------------------------------------------------
+        # Prioridade 3: ADVERSÁRIO ESPECÍFICO (histórico completo desde 2023)
+        # ------------------------------------------------------------------
+        opp_alias_by_pid: dict[int, str] = {}
+        for o in (current_opponents or ()):
+            if not isinstance(o, dict):
+                continue
+            opid = int(o.get("profile_id", 0) or 0)
+            if opid > 0 and opid not in pid_set:
+                opp_alias_by_pid[opid] = str(o.get("alias") or "").strip() or f"ID #{opid}"
+
+        if opp_alias_by_pid:
+            opp_pids = sorted(opp_alias_by_pid.keys())
+            opp_ph = ",".join("?" for _ in opp_pids)
+            opp_outcomes: dict[int, dict[int, int]] = {op: {} for op in opp_pids}
+            nem_rows = conn.execute(
+                f"""
+                SELECT opponent_profile_id, match_id, win
+                FROM nemesis_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND opponent_profile_id IN ({opp_ph})
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *opp_pids, ct, ct, mid),
+            ).fetchall()
+            for r in nem_rows:
+                op = int(r["opponent_profile_id"])
+                if op in opp_outcomes:
+                    opp_outcomes[op][int(r["match_id"])] = 1 if int(r["win"] or 0) else 0
+
+            best_opp: dict[str, Any] | None = None
+            best_opp_rank: tuple[int, int, float] = (-1, -1, -1.0)
+            for op, oalias in opp_alias_by_pid.items():
+                out_map = opp_outcomes[op]
+                out_map[mid] = 0
+                ow = sum(1 for v in out_map.values() if v == 1)
+                ol = len(out_map) - ow
+                if self._is_kryptonite_weakness(ow, ol, max_wr_pct=30.0):
+                    wr = (ow * 100.0) / (ow + ol)
+                    rank_key = (ol - ow, ol, -wr)
+                    if rank_key > best_opp_rank:
+                        best_opp_rank = rank_key
+                        best_opp = _build_result(
+                            priority=3,
+                            kind="opponent",
+                            label=oalias,
+                            target_profile_id=op,
+                            wins=ow,
+                            losses=ol,
+                        )
+            if best_opp is not None:
+                return best_opp
+
+        # ------------------------------------------------------------------
+        # Prioridade 4 (último caso): PARCEIRO / ALIADO ESPECÍFICO
+        # ------------------------------------------------------------------
+        ally_alias_by_pid: dict[int, str] = {}
+        for a in (current_allies or ()):
+            if not isinstance(a, dict):
+                continue
+            apid = int(a.get("profile_id", 0) or 0)
+            if apid > 0 and apid not in pid_set:
+                ally_alias_by_pid[apid] = str(a.get("alias") or "").strip() or f"ID #{apid}"
+
+        if ally_alias_by_pid:
+            ally_target_set = set(ally_alias_by_pid.keys())
+            ally_outcomes: dict[int, dict[int, int]] = {ap: {} for ap in ally_target_set}
+
+            for table_name in ("recorded_matches", "kryptonite_matches"):
+                a_rows = conn.execute(
+                    f"""
+                    SELECT match_id, win, allies_json
+                    FROM {table_name}
+                    WHERE tracked_profile_id IN ({pid_ph})
+                      AND mode IN ({mode_ph})
+                      AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                    """,
+                    (*clean_pids, *mode_params, ct, ct, mid),
+                ).fetchall()
+                for r in a_rows:
+                    try:
+                        allies_parsed = json.loads(r["allies_json"] or "[]")
+                    except Exception:
+                        continue
+                    if not isinstance(allies_parsed, list):
+                        continue
+                    rm_mid = int(r["match_id"])
+                    rm_win = 1 if int(r["win"] or 0) else 0
+                    for al in allies_parsed:
+                        if not isinstance(al, dict):
+                            continue
+                        apid = int(al.get("profile_id", 0) or 0)
+                        if apid in ally_target_set and rm_mid not in ally_outcomes[apid]:
+                            ally_outcomes[apid][rm_mid] = rm_win
+
+            best_ally: dict[str, Any] | None = None
+            best_ally_rank: tuple[int, int, float] = (-1, -1, -1.0)
+            for ap, aalias in ally_alias_by_pid.items():
+                out_map = ally_outcomes[ap]
+                out_map[mid] = 0
+                aw = sum(1 for v in out_map.values() if v == 1)
+                al_l = len(out_map) - aw
+                if self._is_kryptonite_weakness(aw, al_l, max_wr_pct=30.0):
+                    wr = (aw * 100.0) / (aw + al_l)
+                    rank_key = (al_l - aw, al_l, -wr)
+                    if rank_key > best_ally_rank:
+                        best_ally_rank = rank_key
+                        best_ally = _build_result(
+                            priority=4,
+                            kind="partner",
+                            label=aalias,
+                            target_profile_id=ap,
+                            wins=aw,
+                            losses=al_l,
+                        )
+            if best_ally is not None:
+                return best_ally
+
+        return None
 
     def get_nemesis_coverage_summary(self) -> dict[str, Any]:
         """Retorna estatísticas resumidas de cobertura histórica da tabela `nemesis_matches`."""
