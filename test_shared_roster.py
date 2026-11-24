@@ -193,7 +193,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (845669, "PH0BB05"),
             (17169, "Guh"),
             (71299, "Bruno.s"),
-            (13516, "Pax Xavier youtube"),
+            (13516, "NEBADON"),
             (970468, "Московский метро"),
             (649535, "pensss"),
             (765837, "Southland"),
