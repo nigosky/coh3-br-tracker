@@ -56,6 +56,7 @@ DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
 CURRENT_SUMMARY_CONTENT_VERSION = "v7_17_duration_label"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
+CURRENT_RIVALRY_RULE_VERSION = "v2_lifetime_multiday_fregues"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 DEFAULT_QUIET_AUDIT_HOURS = 3
@@ -1969,6 +1970,145 @@ def refresh_recent_cards_after_roster_changes(
     return patched_count
 
 
+def refresh_recent_cards_after_rivalry_rule_change(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    *,
+    max_age_sec: int = 259200,
+    max_patches: int = 50,
+) -> int:
+    """
+    Executa uma única atualização silenciosa (PATCH) nos cards recentes (<=72h) do Discord após a
+    migração das regras vitalícias de Nêmesis/Freguês (2023+, >= 2 dias distintos), removendo
+    falsos Nêmesis da regra diária legada (ex.: 2V-0D no mesmo dia) e aplicando Freguês/Nêmesis atuais.
+    """
+    if not discord.is_configured or not hasattr(discord, "edit_match_card"):
+        return 0
+    if (db.get_state("rivalry_card_rules_version") or "").strip() == CURRENT_RIVALRY_RULE_VERSION:
+        return 0
+
+    recent_rows = db.get_recent_posted_matches(max_age_sec=max_age_sec, limit=100)
+    if not recent_rows:
+        db.set_state("rivalry_card_rules_version", CURRENT_RIVALRY_RULE_VERSION)
+        return 0
+
+    done_mids: set[int] = set()
+    raw_done = (db.get_state("rivalry_card_patch_done_v2") or "").strip()
+    if raw_done:
+        try:
+            parsed_done = json.loads(raw_done)
+            if isinstance(parsed_done, list):
+                done_mids = {int(x) for x in parsed_done if int(x) > 0}
+        except Exception:
+            done_mids = set()
+
+    _, pid_map = roster_maps
+
+    def _canon_group(tpid: int) -> list[int]:
+        entry = pid_map.get(tpid) or {}
+        canon = int(entry.get("merged_into_profile_id") or tpid)
+        grp_ids = [tpid]
+        if canon > 0 and canon not in grp_ids:
+            grp_ids.append(canon)
+        for r_pid, r_ent in pid_map.items():
+            if int(r_ent.get("merged_into_profile_id") or r_pid) == canon and r_pid not in grp_ids:
+                grp_ids.append(r_pid)
+        return grp_ids
+
+    patched_count = 0
+    all_ok = True
+    for m_grp in group_matches_by_id(recent_rows):
+        recs = m_grp.get("records") or []
+        if not recs:
+            continue
+        primary = recs[0]
+        if str(primary.get("mode") or "").strip() not in AUTOMATCH_MODES:
+            continue
+        match_id = int(m_grp.get("match_id") or primary.get("match_id") or 0)
+        comp_ts = int(primary.get("completion_time", 0) or 0)
+        if match_id <= 0 or comp_ts <= 0 or match_id in done_mids:
+            continue
+
+        hydrated_bgs: dict[str, Any] = {}
+        for rec in recs:
+            if isinstance(rec.get("battlegroups"), dict) and rec["battlegroups"] and not hydrated_bgs:
+                hydrated_bgs = dict(rec["battlegroups"])
+        if hydrated_bgs:
+            for rec in recs:
+                if not rec.get("battlegroups"):
+                    rec["battlegroups"] = dict(hydrated_bgs)
+        for rec in recs:
+            enrich_match_with_roster(rec, roster_maps)
+
+        had_legacy = False
+        for rec in recs:
+            tpid = int(rec.get("tracked_profile_id", 0) or 0)
+            if tpid <= 0:
+                continue
+            pid_group = _canon_group(tpid)
+            for opp in rec.get("opponents") or []:
+                if not isinstance(opp, dict):
+                    continue
+                opp_pid = int(opp.get("profile_id", 0) or 0)
+                if opp_pid > 0 and opp_pid not in pid_group:
+                    if db.had_legacy_same_day_nemesis(pid_group, opp_pid, comp_ts, match_id):
+                        had_legacy = True
+                        break
+            if had_legacy:
+                break
+
+        new_nem = enrich_group_with_nemesis(db, m_grp, roster_maps=roster_maps)
+        new_freg = enrich_group_with_fregues(db, m_grp, roster_maps=roster_maps)
+        if not had_legacy and not new_nem and not new_freg:
+            continue
+
+        existing_msg_id = next(
+            (
+                str(r.get("discord_message_id") or "").strip()
+                for r in recs
+                if str(r.get("discord_message_id") or "").strip().isdigit()
+                and len(str(r.get("discord_message_id") or "").strip()) >= 15
+            ),
+            "",
+        )
+        if not existing_msg_id:
+            continue
+
+        if patched_count >= max(1, int(max_patches)):
+            all_ok = False
+            break
+
+        if _patch_match_card_with_battlegroups(
+            db,
+            discord,
+            m_grp,
+            existing_msg_id,
+            roster_maps,
+            log_suffix="com atualização Nêmesis/Freguês (2023+)",
+        ):
+            patched_count += 1
+            done_mids.add(match_id)
+        else:
+            all_ok = False
+
+    if all_ok:
+        db.set_state("rivalry_card_rules_version", CURRENT_RIVALRY_RULE_VERSION)
+        if raw_done:
+            db.set_state("rivalry_card_patch_done_v2", "[]")
+    elif done_mids:
+        db.set_state(
+            "rivalry_card_patch_done_v2",
+            json.dumps(sorted(done_mids), separators=(",", ":")),
+        )
+    if patched_count > 0:
+        logger.info(
+            "[RIVALRY PATCH] %d card(s) recente(s) atualizado(s) silenciosamente no Discord após migração Nêmesis/Freguês (2023+).",
+            patched_count,
+        )
+    return patched_count
+
+
 def _enrich_group_with_rivalry(
     db: MatchDatabase,
     grp: dict[str, Any],
@@ -2943,12 +3083,20 @@ def run_cycle(
                 max_age_sec=roster_patch_window_sec,
                 max_patches=15,
             )
+            rivalry_patched_cards = refresh_recent_cards_after_rivalry_rule_change(
+                db=db,
+                discord=discord,
+                roster_maps=roster_maps,
+                max_age_sec=roster_patch_window_sec,
+                max_patches=50,
+            )
             min_panel_ts = max(display_since_ts, now_ts - window_sec) if cleanup_hours > 0 else display_since_ts
 
             if (
                 cards_confirmed > 0
                 or bg_patched_cards > 0
                 or roster_patched_cards > 0
+                or rivalry_patched_cards > 0
                 or newly_finished
                 or players_changed
                 or tracked_changed
