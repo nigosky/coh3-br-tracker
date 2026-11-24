@@ -507,6 +507,16 @@
         "⭐ Monitorado BR"
       ],
       "is_custom": true
+    },
+    {
+      "profile_id": 1119784,
+      "alias": "Tracker",
+      "original_alias": "Tracker",
+      "steam_id": "76561198000067932",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
     }
   ],
   "auto_follow_top_br": true,
