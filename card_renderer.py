@@ -1817,12 +1817,16 @@ def _draw_nemesis_footer_bar(
         score_fnt = pick_font("99V - 99D", size=16, bold=True, condensed=True)
         vs_fnt = pick_font(vs_str, size=14, bold=False)
 
+        is_krypt_nem = bool(nem.get("is_kryptonite"))
+        krypt_icon_w = 18 if is_krypt_nem else 0
+
         fixed_score_w = (
             text_width(draw, w_str, score_fnt)
             + text_width(draw, sep_str, score_fnt)
             + text_width(draw, l_str, score_fnt)
             + text_width(draw, vs_str, vs_fnt)
             + 12
+            + krypt_icon_w
         )
         name_budget = max(80, int(avail_px - fixed_score_w))
         br_max = max(50, int(name_budget * 0.48))
@@ -1848,6 +1852,10 @@ def _draw_nemesis_footer_bar(
 
         draw.text((cursor_x, ty_name + 1), vs_str, font=vs_fnt, fill=(180, 154, 162, 255))
         cursor_x += text_width(draw, vs_str, vs_fnt)
+
+        if is_krypt_nem:
+            _draw_kryptonite_crystal_icon(draw, cursor_x + 6, ry + row_h / 2.0, size=13, color=(167, 243, 208, 255))
+            cursor_x += krypt_icon_w
 
         draw.text((cursor_x, ty_name), opp_disp, font=opp_fnt, fill=(241, 245, 249, 255))
 
@@ -1995,6 +2003,7 @@ def _draw_kryptonite_crystal_icon(
 _KRYPTONITE_KIND_LABELS: dict[str, str] = {
     "map": "Mapa",
     "battlegroup": "BG",
+    "nemesis": "Nêmesis",
     "opponent": "Rival",
     "partner": "Parceiro",
 }
@@ -2010,7 +2019,7 @@ def _draw_kryptonite_footer_bar(
     fallback_tracked_alias: str,
     is_duel: bool = False,
 ) -> None:
-    """Desenha a faixa tática verde-esmeralda inferior de CRIPTONITA (até 2 linhas compactas)."""
+    """Desenha a faixa tática verde-esmeralda inferior de CRIPTONITA (até 2 linhas compactas, cruzada com Nêmesis)."""
     if not kryptonite_entries:
         return
 
@@ -2040,13 +2049,16 @@ def _draw_kryptonite_footer_bar(
             draw.line([(16, ry), (width - 16, ry)], fill=(28, 78, 52, 200), width=1)
 
         kind = str(krypt.get("kind") or "map").strip().lower()
-        kind_lbl = _KRYPTONITE_KIND_LABELS.get(kind, "Alvo")
+        is_nem_kind = kind == "nemesis" or bool(krypt.get("is_nemesis"))
+        kind_lbl = _KRYPTONITE_KIND_LABELS.get("nemesis" if is_nem_kind else kind, "Alvo")
         target_label = str(krypt.get("label") or "Desconhecido").strip()
         bg_key = str(krypt.get("bg_key") or "").strip()
         wins = int(krypt.get("wins", 0) or 0)
         losses = int(krypt.get("losses", 0) or 0)
         total = int(krypt.get("total", wins + losses) or (wins + losses))
         wr_pct = int(round(float(krypt.get("win_rate", 0.0) or 0.0)))
+        loss_streak = int(krypt.get("loss_streak", 0) or 0)
+        has_nem_combo = isinstance(krypt.get("nemesis_cross"), dict) and not is_nem_kind
         br_alias = str(krypt.get("tracked_alias") or fallback_tracked_alias or "Veterano").strip()
 
         # Pílula CRIPTONITA à esquerda
@@ -2063,17 +2075,27 @@ def _draw_kryptonite_footer_bar(
         _draw_kryptonite_crystal_icon(draw, content_x + 6, pill_y + pill_h / 2.0, size=13, color=(236, 253, 245, 255))
         draw.text((content_x + 18, pill_y + 4), badge_txt, font=badge_fnt, fill=(236, 253, 245, 255))
 
-        # Metadados à direita (WR% + total de jogos + extras)
-        meta_txt = f"{wr_pct}% WR  •  {total} jogos"
+        # Metadados à direita (WR% + jogos + combo Nêmesis ou sequência de derrotas + extras)
+        meta_parts = [f"{wr_pct}% WR", f"{total} jogos"]
+        if has_nem_combo:
+            meta_parts.append("+Nêmesis")
+        elif loss_streak >= 4:
+            meta_parts.append(f"{loss_streak}D seg.")
         if idx == len(visible) - 1 and extra_entries > 0:
-            meta_txt = f"{meta_txt}  •  +{extra_entries}"
+            meta_parts.append(f"+{extra_entries}")
+        meta_txt = "  •  ".join(meta_parts)
         meta_fnt = pick_font(meta_txt, size=13, bold=True, condensed=True)
         meta_w = text_width(draw, meta_txt, meta_fnt)
         meta_x = width - 20 - meta_w
         ty_meta = ry + (row_h - 16) // 2 + 1
-        draw.text((meta_x, ty_meta), meta_txt, font=meta_fnt, fill=(110, 231, 183, 255))
+        draw.text(
+            (meta_x, ty_meta),
+            meta_txt,
+            font=meta_fnt,
+            fill=(253, 164, 175, 255) if has_nem_combo else (110, 231, 183, 255),
+        )
 
-        # Bloco central: <Veterano>  •  <Tipo:> [ícone BG] <Alvo>   <W>V - <L>D
+        # Bloco central: <Veterano>  •  [espadas] <Tipo:> [ícone BG] <Alvo>   <W>V - <L>D
         cursor_x = pill_x + pill_w + 16
         avail_px = max(160, int(meta_x - cursor_x - 18))
 
@@ -2088,9 +2110,11 @@ def _draw_kryptonite_footer_bar(
 
         bg_icon_im = get_battlegroup_icon(bg_key, size=18) if (kind == "battlegroup" and bg_key) else None
         bg_icon_w = 23 if bg_icon_im is not None else 0
+        nem_icon_w = 18 if is_nem_kind else 0
 
         fixed_w = (
             text_width(draw, sep_dot, sep_fnt)
+            + nem_icon_w
             + text_width(draw, kind_prefix, kind_fnt)
             + bg_icon_w
             + 14
@@ -2119,7 +2143,16 @@ def _draw_kryptonite_footer_bar(
         draw.text((cursor_x, ty_name + 1), sep_dot, font=sep_fnt, fill=(92, 148, 118, 255))
         cursor_x += text_width(draw, sep_dot, sep_fnt)
 
-        draw.text((cursor_x, ty_name + 1), kind_prefix, font=kind_fnt, fill=(134, 239, 172, 255))
+        if is_nem_kind:
+            _draw_nemesis_swords_icon(draw, cursor_x + 6, ry + row_h / 2.0, size=12, color=(251, 113, 133, 255))
+            cursor_x += nem_icon_w
+
+        draw.text(
+            (cursor_x, ty_name + 1),
+            kind_prefix,
+            font=kind_fnt,
+            fill=(251, 113, 133, 255) if is_nem_kind else (134, 239, 172, 255),
+        )
         cursor_x += text_width(draw, kind_prefix, kind_fnt)
 
         if bg_icon_im is not None:
@@ -2171,6 +2204,9 @@ def render_single_match_card_png(
     mode_lbl = format_mode_vs(str(primary.get("mode") or ""))
     if mode_lbl not in ("1 vs 1", "2 vs 2", "3 vs 3", "4 vs 4"):
         nemesis_entries = []
+        kryptonite_entries = []
+    elif not any(isinstance(r, dict) and not bool(r.get("win")) for r in recs):
+        # Garantia extra: Criptonita NUNCA aparece em cards de vitória
         kryptonite_entries = []
 
     nemesis_opp_pids = {

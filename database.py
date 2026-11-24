@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 import time
@@ -169,6 +170,7 @@ class MatchDatabase:
                     mode TEXT DEFAULT '',
                     map_clean TEXT DEFAULT '',
                     allies_json TEXT DEFAULT '[]',
+                    enemy_bgs_json TEXT DEFAULT '',
                     PRIMARY KEY (tracked_profile_id, match_id)
                 );
 
@@ -186,6 +188,12 @@ class MatchDatabase:
             if "smurf_alerts_json" not in existing_match_cols:
                 conn.execute("ALTER TABLE recorded_matches ADD COLUMN smurf_alerts_json TEXT DEFAULT ''")
 
+            existing_krypt_cols = {
+                str(r["name"]) for r in conn.execute("PRAGMA table_info(kryptonite_matches)").fetchall()
+            }
+            if "enemy_bgs_json" not in existing_krypt_cols:
+                conn.execute("ALTER TABLE kryptonite_matches ADD COLUMN enemy_bgs_json TEXT DEFAULT ''")
+
             existing_player_cols = {
                 str(r["name"]) for r in conn.execute("PRAGMA table_info(tracked_players)").fetchall()
             }
@@ -193,6 +201,7 @@ class MatchDatabase:
                 conn.execute("ALTER TABLE tracked_players ADD COLUMN original_alias TEXT DEFAULT ''")
 
             self._ensure_nemesis_all_modes_backfill(conn)
+            self._ensure_kryptonite_backfill(conn)
             self._sync_sibling_match_metadata(conn)
 
     @staticmethod
@@ -374,6 +383,131 @@ class MatchDatabase:
         conn.execute(
             """
             INSERT INTO bot_state (key, value) VALUES ('nemesis_all_modes_backfilled_v1', '1')
+            ON CONFLICT(key) DO UPDATE SET value = '1'
+            """
+        )
+
+    @staticmethod
+    def _extract_compact_ally_pids(tracked_profile_id: int, allies: Any) -> list[int]:
+        """Extrai lista ordenada e deduplicada de `profile_id` de aliados humanos (aceita dicts ou ints)."""
+        tpid = int(tracked_profile_id or 0)
+        if not isinstance(allies, list) or not allies:
+            return []
+        out: set[int] = set()
+        for a in allies:
+            if isinstance(a, dict):
+                ap = int(a.get("profile_id", 0) or 0)
+            elif isinstance(a, (int, float)) or (isinstance(a, str) and a.strip().isdigit()):
+                ap = int(a)
+            else:
+                ap = 0
+            if ap > 0 and ap != tpid:
+                out.add(ap)
+        return sorted(out)
+
+    @staticmethod
+    def _extract_enemy_bg_tokens(opponents: Any, battlegroups: Any) -> list[str]:
+        """Extrai tokens canônicos únicos de Battlegroups do time adversário para persistência permanente."""
+        if not isinstance(opponents, list) or not isinstance(battlegroups, dict) or not battlegroups:
+            return []
+        seen: set[str] = set()
+        for o in opponents:
+            if not isinstance(o, dict):
+                continue
+            opid = int(o.get("profile_id", 0) or 0)
+            if opid <= 0:
+                continue
+            bg_ent = battlegroups.get(str(opid)) or battlegroups.get(opid)
+            if not isinstance(bg_ent, dict):
+                continue
+            bk = str(bg_ent.get("key") or "").strip().lower()
+            bn = str(bg_ent.get("name") or "").strip()
+            tok = bk or bn.casefold()
+            if tok:
+                seen.add(tok)
+        return sorted(seen)
+
+    def _ensure_kryptonite_backfill(self, conn: sqlite3.Connection) -> None:
+        """
+        Popula `kryptonite_matches` uma única vez a partir de todas as partidas Automatch PvP em `recorded_matches`
+        (preservando mapa, aliados compactos e Battlegroups inimigos permanentemente mesmo após compactação de 30d).
+        """
+        row = conn.execute("SELECT value FROM bot_state WHERE key = 'kryptonite_local_backfilled_v1'").fetchone()
+        if row and str(row["value"]) == "1":
+            return
+
+        placeholders = ",".join("?" for _ in AUTOMATCH_MODES)
+        existing = conn.execute(
+            f"""
+            SELECT match_id, tracked_profile_id, mode, win, completion_time,
+                   map_clean, map_raw, allies_json, opponents_json, battlegroups_json
+            FROM recorded_matches
+            WHERE mode IN ({placeholders})
+            """,
+            tuple(AUTOMATCH_MODES),
+        ).fetchall()
+
+        to_upsert: list[tuple[int, int, int, int, str, str, str, str]] = []
+        for r in existing:
+            tpid = int(r["tracked_profile_id"] or 0)
+            mid = int(r["match_id"] or 0)
+            ct = int(r["completion_time"] or 0)
+            mode_str = str(r["mode"] or "")
+            if tpid <= 0 or mid <= 0 or ct <= 0 or mode_str not in AUTOMATCH_MODES:
+                continue
+            mclean = str(r["map_clean"] or "").strip() or clean_map_name(str(r["map_raw"] or "")).strip()
+            try:
+                allies_parsed = json.loads(r["allies_json"] or "[]")
+            except Exception:
+                allies_parsed = []
+            ally_pids = self._extract_compact_ally_pids(tpid, allies_parsed)
+
+            enemy_bgs: list[str] = []
+            if str(r["battlegroups_json"] or "").strip() not in ("", "{}", "null"):
+                try:
+                    opps_parsed = json.loads(r["opponents_json"] or "[]")
+                    bgs_parsed = json.loads(r["battlegroups_json"] or "{}")
+                    enemy_bgs = self._extract_enemy_bg_tokens(opps_parsed, bgs_parsed)
+                except Exception:
+                    enemy_bgs = []
+
+            to_upsert.append(
+                (
+                    tpid,
+                    mid,
+                    ct,
+                    1 if int(r["win"] or 0) else 0,
+                    mode_str[:24],
+                    mclean[:96],
+                    json.dumps(ally_pids, separators=(",", ":")),
+                    json.dumps(enemy_bgs, ensure_ascii=False, separators=(",", ":")) if enemy_bgs else "",
+                )
+            )
+
+        if to_upsert:
+            conn.executemany(
+                """
+                INSERT INTO kryptonite_matches (
+                    tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json, enemy_bgs_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tracked_profile_id, match_id) DO UPDATE SET
+                    enemy_bgs_json = CASE
+                        WHEN COALESCE(kryptonite_matches.enemy_bgs_json, '') = '' AND excluded.enemy_bgs_json != ''
+                        THEN excluded.enemy_bgs_json
+                        ELSE kryptonite_matches.enemy_bgs_json
+                    END,
+                    allies_json = CASE
+                        WHEN COALESCE(kryptonite_matches.allies_json, '[]') IN ('', '[]') AND excluded.allies_json != '[]'
+                        THEN excluded.allies_json
+                        ELSE kryptonite_matches.allies_json
+                    END
+                """,
+                to_upsert,
+            )
+
+        conn.execute(
+            """
+            INSERT INTO bot_state (key, value) VALUES ('kryptonite_local_backfilled_v1', '1')
             ON CONFLICT(key) DO UPDATE SET value = '1'
             """
         )
@@ -608,6 +742,41 @@ class MatchDatabase:
                             for opp_pid, opp_alias, opp_country in extracted_opps
                         ],
                     )
+            if mode_str in AUTOMATCH_MODES:
+                ct_val = int(match["completion_time"] or 0)
+                tpid_int = int(match["tracked_profile_id"] or 0)
+                if ct_val > 0 and tpid_int > 0 and mid > 0:
+                    mclean = str(match.get("map_clean") or "").strip() or clean_map_name(str(match.get("map_raw") or "")).strip()
+                    ally_pids = self._extract_compact_ally_pids(tpid_int, match.get("allies"))
+                    enemy_bgs = self._extract_enemy_bg_tokens(match.get("opponents"), match.get("battlegroups"))
+                    conn.execute(
+                        """
+                        INSERT INTO kryptonite_matches (
+                            tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json, enemy_bgs_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(tracked_profile_id, match_id) DO UPDATE SET
+                            enemy_bgs_json = CASE
+                                WHEN COALESCE(kryptonite_matches.enemy_bgs_json, '') = '' AND excluded.enemy_bgs_json != ''
+                                THEN excluded.enemy_bgs_json
+                                ELSE kryptonite_matches.enemy_bgs_json
+                            END,
+                            allies_json = CASE
+                                WHEN COALESCE(kryptonite_matches.allies_json, '[]') IN ('', '[]') AND excluded.allies_json != '[]'
+                                THEN excluded.allies_json
+                                ELSE kryptonite_matches.allies_json
+                            END
+                        """,
+                        (
+                            tpid_int,
+                            mid,
+                            ct_val,
+                            1 if match["win"] else 0,
+                            mode_str[:24],
+                            mclean[:96],
+                            json.dumps(ally_pids, separators=(",", ":")),
+                            json.dumps(enemy_bgs, ensure_ascii=False, separators=(",", ":")) if enemy_bgs else "",
+                        ),
+                    )
         return cur.rowcount > 0
 
     def get_nemesis_status(
@@ -749,28 +918,54 @@ class MatchDatabase:
 
     def insert_kryptonite_matches_batch(
         self,
-        rows: list[tuple[int, int, int, int, str, str, str]],
+        rows: list[tuple[Any, ...]],
     ) -> int:
         """
-        Insere em lote (idempotente via INSERT OR IGNORE) metadados compactos de partidas Automatch PvP
-        na tabela `kryptonite_matches` (mapa e aliados humanos) para enriquecer a análise de Criptonita.
-        Cada tupla: `(tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json)`.
+        Insere em lote (idempotente via INSERT OR IGNORE / upsert de BGs) metadados compactos de partidas
+        Automatch PvP na tabela `kryptonite_matches` (mapa, aliados compactos e BGs inimigos) desde o
+        lançamento do CoH3 (2023+). Aceita tuplas de 7 ou 8 elementos:
+        `(tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json[, enemy_bgs_json])`.
         """
         if not rows:
             return 0
-        valid_rows = [
-            (
-                int(tpid),
-                int(mid),
-                int(ct),
-                1 if int(win) else 0,
-                str(mode)[:24],
-                str(mclean or "").strip()[:96],
-                str(allies_j or "[]")[:4096],
+        valid_rows: list[tuple[int, int, int, int, str, str, str, str]] = []
+        for raw_row in rows:
+            if len(raw_row) < 7:
+                continue
+            tpid, mid, ct, win, mode, mclean, allies_j = raw_row[:7]
+            enemy_bgs_j = raw_row[7] if len(raw_row) >= 8 else ""
+            tpid_i = int(tpid)
+            mid_i = int(mid)
+            ct_i = int(ct)
+            mode_s = str(mode)
+            if tpid_i <= 0 or mid_i <= 0 or ct_i <= 0 or mode_s not in AUTOMATCH_MODES:
+                continue
+            # Normaliza aliados em lista compacta de inteiros quando vier em JSON de dicts ou ints
+            compact_allies_j = "[]"
+            if isinstance(allies_j, list):
+                compact_allies_j = json.dumps(self._extract_compact_ally_pids(tpid_i, allies_j), separators=(",", ":"))
+            else:
+                raw_aj = str(allies_j or "[]").strip()
+                if raw_aj and raw_aj != "[]":
+                    try:
+                        parsed_a = json.loads(raw_aj)
+                        compact_allies_j = json.dumps(
+                            self._extract_compact_ally_pids(tpid_i, parsed_a), separators=(",", ":")
+                        )
+                    except Exception:
+                        compact_allies_j = "[]"
+            valid_rows.append(
+                (
+                    tpid_i,
+                    mid_i,
+                    ct_i,
+                    1 if int(win) else 0,
+                    mode_s[:24],
+                    str(mclean or "").strip()[:96],
+                    compact_allies_j[:1024],
+                    str(enemy_bgs_j or "").strip()[:512],
+                )
             )
-            for (tpid, mid, ct, win, mode, mclean, allies_j) in rows
-            if int(tpid) > 0 and int(mid) > 0 and int(ct) > 0 and str(mode) in AUTOMATCH_MODES
-        ]
         if not valid_rows:
             return 0
         conn = self._connect()
@@ -778,30 +973,119 @@ class MatchDatabase:
         with conn:
             conn.executemany(
                 """
-                INSERT OR IGNORE INTO kryptonite_matches (
-                    tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO kryptonite_matches (
+                    tracked_profile_id, match_id, completion_time, win, mode, map_clean, allies_json, enemy_bgs_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(tracked_profile_id, match_id) DO UPDATE SET
+                    enemy_bgs_json = CASE
+                        WHEN COALESCE(kryptonite_matches.enemy_bgs_json, '') = '' AND excluded.enemy_bgs_json != ''
+                        THEN excluded.enemy_bgs_json
+                        ELSE kryptonite_matches.enemy_bgs_json
+                    END,
+                    allies_json = CASE
+                        WHEN COALESCE(kryptonite_matches.allies_json, '[]') IN ('', '[]') AND excluded.allies_json != '[]'
+                        THEN excluded.allies_json
+                        ELSE kryptonite_matches.allies_json
+                    END
                 """,
                 valid_rows,
             )
         after = int(conn.execute("SELECT COUNT(*) FROM kryptonite_matches").fetchone()[0] or 0)
         return max(0, after - before)
 
+    # Limiares estatísticos estritos para caracterizar fraqueza FLAGRANTE ('Criptonita') no histórico completo (2023+)
+    _KRYPTONITE_FLAGRANT_RULES: dict[str, dict[str, float]] = {
+        "map":         {"zero_win_l": 6, "min_n": 10, "min_diff": 6, "max_wr": 36.0, "max_p": 0.045, "min_drop": 14.0},
+        "battlegroup": {"zero_win_l": 5, "min_n": 8,  "min_diff": 5, "max_wr": 30.0, "max_p": 0.030, "min_drop": 12.0},
+        "nemesis":     {"zero_win_l": 5, "min_n": 6,  "min_diff": 5, "max_wr": 30.0, "max_p": 0.040, "min_drop": 0.0},
+        "opponent":    {"zero_win_l": 6, "min_n": 8,  "min_diff": 6, "max_wr": 25.0, "max_p": 0.020, "min_drop": 0.0},
+        "partner":     {"zero_win_l": 6, "min_n": 10, "min_diff": 6, "max_wr": 36.0, "max_p": 0.025, "min_drop": 13.0},
+    }
+
     @staticmethod
-    def _is_kryptonite_weakness(wins: int, losses: int, *, max_wr_pct: float) -> bool:
+    def _binomial_le_prob(wins: int, total: int, p: float = 0.5) -> float:
+        """Calcula P(X <= wins) exata sob Binomial(total, p) para filtrar ruído de amostra pequena."""
+        n = int(total)
+        k = int(wins)
+        if n <= 0 or k < 0 or k >= n:
+            return 1.0
+        prob = min(0.99, max(0.01, float(p)))
+        if prob == 0.5:
+            acc = 0.0
+            for i in range(k + 1):
+                acc += math.ldexp(math.comb(n, i), -n)
+            return min(1.0, acc)
+        log_p = math.log(prob)
+        log_q = math.log(1.0 - prob)
+        log_nf = math.lgamma(n + 1)
+        acc = 0.0
+        for i in range(k + 1):
+            lp = log_nf - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * log_p + (n - i) * log_q
+            acc += math.exp(lp)
+        return min(1.0, acc)
+
+    @classmethod
+    def is_flagrant_kryptonite(
+        cls,
+        wins: int,
+        losses: int,
+        *,
+        kind: str = "map",
+        career_wr_pct: float = 50.0,
+    ) -> bool:
         """
-        Critério estatístico para caracterizar fraqueza real ('Criptonita'):
-        - 0V com >=4 derrotas seguidas (0% WR), OU
-        - >=5 jogos com >=4 derrotas e taxa de vitória <= `max_wr_pct`.
+        Critério estatístico estrito para disparar Criptonita APENAS quando a fraqueza é FLAGRANTE:
+        - Rejeita ruído de amostra pequena (ex.: 1V-4D, 2V-4D, 0V-4D);
+        - Combina volume mínimo, saldo negativo mínimo (`losses - wins`), WR% máximo, significância
+          binomial unilateral contra a linha de base do próprio Veterano e queda mínima em pontos percentuais
+          (para Mapa, BG e Parceiro) para evitar falsos positivos em contas com WR geral baixo.
         """
         w = max(0, int(wins))
         l = max(0, int(losses))
         tot = w + l
-        if l < 4:
+        if tot <= 0 or l <= w:
             return False
-        if w == 0 and l >= 4:
+        rule = cls._KRYPTONITE_FLAGRANT_RULES.get(kind, cls._KRYPTONITE_FLAGRANT_RULES["map"])
+        if w == 0 and l >= int(rule["zero_win_l"]):
             return True
-        return tot >= 5 and ((w * 100.0) / tot) <= float(max_wr_pct)
+        wr_pct = (w * 100.0) / tot
+        diff = l - w
+        if tot < int(rule["min_n"]) or diff < int(rule["min_diff"]) or wr_pct > float(rule["max_wr"]):
+            return False
+        base_wr = min(85.0, max(35.0, float(career_wr_pct)))
+        base_p = min(0.50, max(0.35, base_wr / 100.0))
+        if cls._binomial_le_prob(w, tot, base_p) > float(rule["max_p"]):
+            return False
+        min_drop = float(rule.get("min_drop", 0.0))
+        if min_drop > 0.0 and wr_pct > 15.0 and (base_wr - wr_pct) < min_drop:
+            return False
+        return True
+
+    @classmethod
+    def _is_kryptonite_weakness(
+        cls,
+        wins: int,
+        losses: int,
+        *,
+        max_wr_pct: float = 35.0,
+        kind: str = "",
+        career_wr_pct: float = 50.0,
+    ) -> bool:
+        """Wrapper compatível que delega para o critério estrito `is_flagrant_kryptonite`."""
+        eff_kind = kind or ("map" if float(max_wr_pct) >= 32.0 else "opponent")
+        return cls.is_flagrant_kryptonite(wins, losses, kind=eff_kind, career_wr_pct=career_wr_pct)
+
+    @staticmethod
+    def _compute_loss_streak(outcomes: dict[int, tuple[int, int]]) -> int:
+        """Conta a sequência atual de derrotas seguidas (do jogo mais recente para trás). `outcomes`: `{mid: (ct, win)}`."""
+        ordered = sorted(outcomes.items(), key=lambda kv: (kv[1][0], kv[0]), reverse=True)
+        streak = 0
+        for _mid, (_ct, win_flag) in ordered:
+            if int(win_flag) == 0:
+                streak += 1
+            else:
+                break
+        return streak
 
     def get_kryptonite_status(
         self,
@@ -817,12 +1101,13 @@ class MatchDatabase:
         current_allies: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         """
-        Avalia em cascata estrita se uma DERROTA Automatch PvP de um Veterano expõe sua 'Criptonita':
-        1. Mapa específico (<=35% WR em >=5 jogos ou 0V-4D+);
-        2. Battlegroup inimigo específico (<=35% WR em >=5 jogos ou 0V-4D+);
-        3. Adversário específico no histórico desde 2023 (<=30% WR em >=5 jogos ou 0V-4D+);
-        4. Parceiro / aliado específico em último caso (<=30% WR em >=5 jogos ou 0V-4D+).
-        Retorna apenas o nível mais prioritário acionado (ou None se nenhuma fraqueza se aplicar).
+        Avalia em cascata estrita se uma DERROTA Automatch PvP de um Veterano expõe uma 'Criptonita' FLAGRANTE
+        considerando TODO o histórico do jogo desde o lançamento (2023+) e cruzado com o sistema Nêmesis:
+          1. Mapa específico (2023+ em `kryptonite_matches` ∪ `recorded_matches`);
+          2. Battlegroup inimigo específico (permanente em `kryptonite_matches.enemy_bgs_json` ∪ `recorded_matches`);
+          3. Adversário / Nêmesis específico (2023+ em `nemesis_matches`, cruzado com trigger Nêmesis);
+          4. Parceiro / aliado específico em último caso (2023+ em `kryptonite_matches` ∪ `recorded_matches`).
+        Retorna apenas o nível mais prioritário acionado (ou None se a derrota não for flagrante).
         """
         if current_win:
             return None
@@ -838,6 +1123,101 @@ class MatchDatabase:
         mode_params = tuple(AUTOMATCH_MODES)
         conn = self._connect()
 
+        # Linha de base de carreira Automatch do Veterano desde o lançamento (2023+)
+        career_row = conn.execute(
+            f"""
+            SELECT COUNT(*) AS n, COALESCE(SUM(win), 0) AS w
+            FROM (
+                SELECT match_id, MAX(win) AS win
+                FROM (
+                    SELECT match_id, win
+                    FROM kryptonite_matches
+                    WHERE tracked_profile_id IN ({pid_ph})
+                      AND mode IN ({mode_ph})
+                      AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                    UNION ALL
+                    SELECT match_id, win
+                    FROM recorded_matches
+                    WHERE tracked_profile_id IN ({pid_ph})
+                      AND mode IN ({mode_ph})
+                      AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                )
+                GROUP BY match_id
+            )
+            """,
+            (*clean_pids, *mode_params, ct, ct, mid, *clean_pids, *mode_params, ct, ct, mid),
+        ).fetchone()
+        career_n = int(career_row["n"] or 0) if career_row else 0
+        career_w = int(career_row["w"] or 0) if career_row else 0
+        career_wr_pct = round((career_w * 100.0) / career_n, 1) if career_n >= 20 else 50.0
+
+        # Pré-carrega o histórico completo 2023+ contra os oponentes atuais e cruza com o sistema Nêmesis
+        opp_alias_by_pid: dict[int, str] = {}
+        for o in (current_opponents or ()):
+            if not isinstance(o, dict):
+                continue
+            opid = int(o.get("profile_id", 0) or 0)
+            if opid > 0 and opid not in pid_set:
+                opp_alias_by_pid[opid] = str(o.get("alias") or "").strip() or f"ID #{opid}"
+
+        opp_outcomes: dict[int, dict[int, tuple[int, int]]] = {op: {} for op in opp_alias_by_pid}
+        opp_day_counts: dict[int, dict[int, int]] = {op: {} for op in opp_alias_by_pid}
+        if opp_alias_by_pid:
+            opp_pids = sorted(opp_alias_by_pid.keys())
+            opp_ph = ",".join("?" for _ in opp_pids)
+            nem_rows = conn.execute(
+                f"""
+                SELECT opponent_profile_id, match_id, completion_time, utc_day, win
+                FROM nemesis_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND opponent_profile_id IN ({opp_ph})
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *opp_pids, ct, ct, mid),
+            ).fetchall()
+            for r in nem_rows:
+                op = int(r["opponent_profile_id"])
+                rm_mid = int(r["match_id"])
+                if op in opp_outcomes and rm_mid not in opp_outcomes[op]:
+                    rm_ct = int(r["completion_time"] or 0)
+                    rm_win = 1 if int(r["win"] or 0) else 0
+                    opp_outcomes[op][rm_mid] = (rm_ct, rm_win)
+                    ud = int(r["utc_day"] or (rm_ct // 86400))
+                    opp_day_counts[op][ud] = opp_day_counts[op].get(ud, 0) + 1
+
+        cur_utc_day = ct // 86400
+        active_nemesis_info: dict[int, dict[str, Any]] = {}
+        dominant_nemesis_cross: dict[str, Any] | None = None
+        dom_nem_rank: tuple[int, int, int] = (-1, -1, -1)
+        for op, oalias in opp_alias_by_pid.items():
+            out_map = opp_outcomes[op]
+            if mid not in out_map:
+                out_map[mid] = (ct, 0)
+                opp_day_counts[op][cur_utc_day] = opp_day_counts[op].get(cur_utc_day, 0) + 1
+            else:
+                out_map[mid] = (ct, 0)
+            is_nem = any(cnt >= 2 for cnt in opp_day_counts[op].values())
+            if is_nem:
+                ow = sum(1 for _c, wv in out_map.values() if wv == 1)
+                ol = len(out_map) - ow
+                is_flag_nem = self.is_flagrant_kryptonite(ow, ol, kind="nemesis", career_wr_pct=career_wr_pct)
+                info = {
+                    "opponent_profile_id": op,
+                    "opponent_alias": oalias,
+                    "wins": ow,
+                    "losses": ol,
+                    "total": ow + ol,
+                    "same_day_games": int(opp_day_counts[op].get(cur_utc_day, 0)),
+                    "is_flagrant": is_flag_nem,
+                    "loss_streak": self._compute_loss_streak(out_map),
+                }
+                active_nemesis_info[op] = info
+                if ol > ow:
+                    rk = (1 if is_flag_nem else 0, ol - ow, ol)
+                    if rk > dom_nem_rank:
+                        dom_nem_rank = rk
+                        dominant_nemesis_cross = info
+
         def _build_result(
             *,
             priority: int,
@@ -845,11 +1225,15 @@ class MatchDatabase:
             label: str,
             wins: int,
             losses: int,
+            loss_streak: int = 0,
             bg_key: str = "",
             target_profile_id: int = 0,
+            is_nemesis: bool = False,
+            nemesis_same_day_games: int = 0,
+            attach_nemesis_cross: bool = False,
         ) -> dict[str, Any]:
             tot = wins + losses
-            return {
+            res: dict[str, Any] = {
                 "triggered": True,
                 "priority": priority,
                 "kind": kind,
@@ -861,33 +1245,28 @@ class MatchDatabase:
                 "total": tot,
                 "diff": wins - losses,
                 "win_rate": round((wins * 100.0) / tot, 1) if tot > 0 else 0.0,
+                "career_win_rate": career_wr_pct,
+                "loss_streak": int(loss_streak or 0),
+                "is_nemesis": bool(is_nemesis),
+                "nemesis_same_day_games": int(nemesis_same_day_games or 0),
+                "flagrant_nemesis_opp_pids": sorted(
+                    op_id for op_id, ninfo in active_nemesis_info.items() if ninfo.get("is_flagrant")
+                ),
             }
+            if attach_nemesis_cross and dominant_nemesis_cross is not None:
+                res["nemesis_cross"] = dict(dominant_nemesis_cross)
+            return res
 
         # ------------------------------------------------------------------
-        # Prioridade 1: MAPA (fraqueza do Veterano no mapa atual)
+        # Prioridade 1: MAPA (histórico completo desde 2023)
         # ------------------------------------------------------------------
         disp_map = str(current_map_clean or "").strip() or clean_map_name(str(current_map_raw or "")).strip()
         norm_map = disp_map.casefold()
         if norm_map:
-            map_outcomes: dict[int, int] = {}
-            rec_rows = conn.execute(
-                f"""
-                SELECT match_id, win, map_clean, map_raw
-                FROM recorded_matches
-                WHERE tracked_profile_id IN ({pid_ph})
-                  AND mode IN ({mode_ph})
-                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
-                """,
-                (*clean_pids, *mode_params, ct, ct, mid),
-            ).fetchall()
-            for r in rec_rows:
-                rm_disp = str(r["map_clean"] or "").strip() or clean_map_name(str(r["map_raw"] or "")).strip()
-                if rm_disp.casefold() == norm_map:
-                    map_outcomes[int(r["match_id"])] = 1 if int(r["win"] or 0) else 0
-
+            map_outcomes: dict[int, tuple[int, int]] = {}
             km_rows = conn.execute(
                 f"""
-                SELECT match_id, win, map_clean
+                SELECT match_id, completion_time, win, map_clean
                 FROM kryptonite_matches
                 WHERE tracked_profile_id IN ({pid_ph})
                   AND mode IN ({mode_ph})
@@ -898,38 +1277,87 @@ class MatchDatabase:
             for r in km_rows:
                 rm_disp = str(r["map_clean"] or "").strip()
                 if rm_disp.casefold() == norm_map:
-                    rm_mid = int(r["match_id"])
-                    if rm_mid not in map_outcomes:
-                        map_outcomes[rm_mid] = 1 if int(r["win"] or 0) else 0
+                    map_outcomes[int(r["match_id"])] = (int(r["completion_time"] or 0), 1 if int(r["win"] or 0) else 0)
 
-            map_outcomes[mid] = 0  # garante a derrota atual sem duplicar
-            m_wins = sum(1 for v in map_outcomes.values() if v == 1)
+            rec_rows = conn.execute(
+                f"""
+                SELECT match_id, completion_time, win, map_clean, map_raw
+                FROM recorded_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND mode IN ({mode_ph})
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *mode_params, ct, ct, mid),
+            ).fetchall()
+            for r in rec_rows:
+                rm_mid = int(r["match_id"])
+                if rm_mid in map_outcomes:
+                    continue
+                rm_disp = str(r["map_clean"] or "").strip() or clean_map_name(str(r["map_raw"] or "")).strip()
+                if rm_disp.casefold() == norm_map:
+                    map_outcomes[rm_mid] = (int(r["completion_time"] or 0), 1 if int(r["win"] or 0) else 0)
+
+            map_outcomes[mid] = (ct, 0)
+            m_wins = sum(1 for _c, wv in map_outcomes.values() if wv == 1)
             m_losses = len(map_outcomes) - m_wins
-            if self._is_kryptonite_weakness(m_wins, m_losses, max_wr_pct=35.0):
+            if self.is_flagrant_kryptonite(m_wins, m_losses, kind="map", career_wr_pct=career_wr_pct):
                 return _build_result(
                     priority=1,
                     kind="map",
                     label=disp_map,
                     wins=m_wins,
                     losses=m_losses,
+                    loss_streak=self._compute_loss_streak(map_outcomes),
+                    attach_nemesis_cross=True,
                 )
 
         # ------------------------------------------------------------------
-        # Prioridade 2: BATTLEGROUP INIMIGO
+        # Prioridade 2: BATTLEGROUP INIMIGO (permanente em kryptonite_matches + recorded_matches)
         # ------------------------------------------------------------------
         target_bgs: dict[str, tuple[str, str]] = {}
+        name_to_canon: dict[str, str] = {}
         for raw_k, raw_n in (current_enemy_battlegroups or ()):
             bk = str(raw_k or "").strip().lower()
             bn = str(raw_n or "").strip()
             canon = bk or bn.casefold()
             if canon and canon not in target_bgs:
                 target_bgs[canon] = (bk, bn or bk)
+                if bn:
+                    name_to_canon[bn.casefold()] = canon
 
         if target_bgs:
-            bg_outcomes: dict[str, dict[int, int]] = {c: {} for c in target_bgs}
+            bg_outcomes: dict[str, dict[int, tuple[int, int]]] = {c: {} for c in target_bgs}
+
+            km_bg_rows = conn.execute(
+                f"""
+                SELECT match_id, completion_time, win, enemy_bgs_json
+                FROM kryptonite_matches
+                WHERE tracked_profile_id IN ({pid_ph})
+                  AND mode IN ({mode_ph})
+                  AND COALESCE(enemy_bgs_json, '') NOT IN ('', '[]', 'null')
+                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
+                """,
+                (*clean_pids, *mode_params, ct, ct, mid),
+            ).fetchall()
+            for r in km_bg_rows:
+                try:
+                    toks = json.loads(r["enemy_bgs_json"] or "[]")
+                except Exception:
+                    continue
+                if not isinstance(toks, list):
+                    continue
+                rm_mid = int(r["match_id"])
+                rm_ct = int(r["completion_time"] or 0)
+                rm_win = 1 if int(r["win"] or 0) else 0
+                for raw_tok in toks:
+                    tl = str(raw_tok or "").strip().lower()
+                    matched_c = tl if tl in target_bgs else name_to_canon.get(tl, "")
+                    if matched_c:
+                        bg_outcomes[matched_c][rm_mid] = (rm_ct, rm_win)
+
             bg_rows = conn.execute(
                 f"""
-                SELECT match_id, win, opponents_json, battlegroups_json
+                SELECT match_id, completion_time, win, opponents_json, battlegroups_json
                 FROM recorded_matches
                 WHERE tracked_profile_id IN ({pid_ph})
                   AND mode IN ({mode_ph})
@@ -947,6 +1375,7 @@ class MatchDatabase:
                 if not isinstance(opps_parsed, list) or not isinstance(bgs_parsed, dict):
                     continue
                 rm_mid = int(r["match_id"])
+                rm_ct = int(r["completion_time"] or 0)
                 rm_win = 1 if int(r["win"] or 0) else 0
                 seen_in_match: set[str] = set()
                 for o in opps_parsed:
@@ -961,19 +1390,20 @@ class MatchDatabase:
                     ecanon = ebk or ebn.casefold()
                     if ecanon in target_bgs:
                         seen_in_match.add(ecanon)
-                    elif ebn and ebn.casefold() in target_bgs:
-                        seen_in_match.add(ebn.casefold())
+                    elif ebn and ebn.casefold() in name_to_canon:
+                        seen_in_match.add(name_to_canon[ebn.casefold()])
                 for c in seen_in_match:
-                    bg_outcomes[c][rm_mid] = rm_win
+                    if rm_mid not in bg_outcomes[c]:
+                        bg_outcomes[c][rm_mid] = (rm_ct, rm_win)
 
             best_bg: dict[str, Any] | None = None
             best_bg_rank: tuple[int, int, float] = (-1, -1, -1.0)
             for canon, (bk, bn) in target_bgs.items():
                 out_map = bg_outcomes[canon]
-                out_map[mid] = 0
-                bw = sum(1 for v in out_map.values() if v == 1)
+                out_map[mid] = (ct, 0)
+                bw = sum(1 for _c, wv in out_map.values() if wv == 1)
                 bl = len(out_map) - bw
-                if self._is_kryptonite_weakness(bw, bl, max_wr_pct=35.0):
+                if self.is_flagrant_kryptonite(bw, bl, kind="battlegroup", career_wr_pct=career_wr_pct):
                     wr = (bw * 100.0) / (bw + bl)
                     rank_key = (bl - bw, bl, -wr)
                     if rank_key > best_bg_rank:
@@ -985,65 +1415,47 @@ class MatchDatabase:
                             bg_key=bk,
                             wins=bw,
                             losses=bl,
+                            loss_streak=self._compute_loss_streak(out_map),
+                            attach_nemesis_cross=True,
                         )
             if best_bg is not None:
                 return best_bg
 
         # ------------------------------------------------------------------
-        # Prioridade 3: ADVERSÁRIO ESPECÍFICO (histórico completo desde 2023)
+        # Prioridade 3: ADVERSÁRIO / NÊMESIS ESPECÍFICO (histórico completo desde 2023)
         # ------------------------------------------------------------------
-        opp_alias_by_pid: dict[int, str] = {}
-        for o in (current_opponents or ()):
-            if not isinstance(o, dict):
-                continue
-            opid = int(o.get("profile_id", 0) or 0)
-            if opid > 0 and opid not in pid_set:
-                opp_alias_by_pid[opid] = str(o.get("alias") or "").strip() or f"ID #{opid}"
-
         if opp_alias_by_pid:
-            opp_pids = sorted(opp_alias_by_pid.keys())
-            opp_ph = ",".join("?" for _ in opp_pids)
-            opp_outcomes: dict[int, dict[int, int]] = {op: {} for op in opp_pids}
-            nem_rows = conn.execute(
-                f"""
-                SELECT opponent_profile_id, match_id, win
-                FROM nemesis_matches
-                WHERE tracked_profile_id IN ({pid_ph})
-                  AND opponent_profile_id IN ({opp_ph})
-                  AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
-                """,
-                (*clean_pids, *opp_pids, ct, ct, mid),
-            ).fetchall()
-            for r in nem_rows:
-                op = int(r["opponent_profile_id"])
-                if op in opp_outcomes:
-                    opp_outcomes[op][int(r["match_id"])] = 1 if int(r["win"] or 0) else 0
-
             best_opp: dict[str, Any] | None = None
-            best_opp_rank: tuple[int, int, float] = (-1, -1, -1.0)
+            best_opp_rank: tuple[int, int, int, float] = (-1, -1, -1, -1.0)
             for op, oalias in opp_alias_by_pid.items():
                 out_map = opp_outcomes[op]
-                out_map[mid] = 0
-                ow = sum(1 for v in out_map.values() if v == 1)
+                out_map[mid] = (ct, 0)
+                ow = sum(1 for _c, wv in out_map.values() if wv == 1)
                 ol = len(out_map) - ow
-                if self._is_kryptonite_weakness(ow, ol, max_wr_pct=30.0):
+                nem_info = active_nemesis_info.get(op)
+                is_nem = nem_info is not None
+                eff_kind = "nemesis" if is_nem else "opponent"
+                if self.is_flagrant_kryptonite(ow, ol, kind=eff_kind, career_wr_pct=career_wr_pct):
                     wr = (ow * 100.0) / (ow + ol)
-                    rank_key = (ol - ow, ol, -wr)
+                    rank_key = (1 if is_nem else 0, ol - ow, ol, -wr)
                     if rank_key > best_opp_rank:
                         best_opp_rank = rank_key
                         best_opp = _build_result(
                             priority=3,
-                            kind="opponent",
+                            kind=eff_kind,
                             label=oalias,
                             target_profile_id=op,
                             wins=ow,
                             losses=ol,
+                            loss_streak=self._compute_loss_streak(out_map),
+                            is_nemesis=is_nem,
+                            nemesis_same_day_games=int(nem_info.get("same_day_games", 0)) if nem_info else 0,
                         )
             if best_opp is not None:
                 return best_opp
 
         # ------------------------------------------------------------------
-        # Prioridade 4 (último caso): PARCEIRO / ALIADO ESPECÍFICO
+        # Prioridade 4 (último caso): PARCEIRO / ALIADO ESPECÍFICO (desde 2023)
         # ------------------------------------------------------------------
         ally_alias_by_pid: dict[int, str] = {}
         for a in (current_allies or ()):
@@ -1055,15 +1467,16 @@ class MatchDatabase:
 
         if ally_alias_by_pid:
             ally_target_set = set(ally_alias_by_pid.keys())
-            ally_outcomes: dict[int, dict[int, int]] = {ap: {} for ap in ally_target_set}
+            ally_outcomes: dict[int, dict[int, tuple[int, int]]] = {ap: {} for ap in ally_target_set}
 
-            for table_name in ("recorded_matches", "kryptonite_matches"):
+            for table_name in ("kryptonite_matches", "recorded_matches"):
                 a_rows = conn.execute(
                     f"""
-                    SELECT match_id, win, allies_json
+                    SELECT match_id, completion_time, win, allies_json
                     FROM {table_name}
                     WHERE tracked_profile_id IN ({pid_ph})
                       AND mode IN ({mode_ph})
+                      AND COALESCE(allies_json, '[]') NOT IN ('', '[]')
                       AND (completion_time < ? OR (completion_time = ? AND match_id <= ?))
                     """,
                     (*clean_pids, *mode_params, ct, ct, mid),
@@ -1076,22 +1489,26 @@ class MatchDatabase:
                     if not isinstance(allies_parsed, list):
                         continue
                     rm_mid = int(r["match_id"])
+                    rm_ct = int(r["completion_time"] or 0)
                     rm_win = 1 if int(r["win"] or 0) else 0
                     for al in allies_parsed:
-                        if not isinstance(al, dict):
-                            continue
-                        apid = int(al.get("profile_id", 0) or 0)
+                        if isinstance(al, dict):
+                            apid = int(al.get("profile_id", 0) or 0)
+                        elif isinstance(al, (int, float)) or (isinstance(al, str) and al.strip().isdigit()):
+                            apid = int(al)
+                        else:
+                            apid = 0
                         if apid in ally_target_set and rm_mid not in ally_outcomes[apid]:
-                            ally_outcomes[apid][rm_mid] = rm_win
+                            ally_outcomes[apid][rm_mid] = (rm_ct, rm_win)
 
             best_ally: dict[str, Any] | None = None
             best_ally_rank: tuple[int, int, float] = (-1, -1, -1.0)
             for ap, aalias in ally_alias_by_pid.items():
                 out_map = ally_outcomes[ap]
-                out_map[mid] = 0
-                aw = sum(1 for v in out_map.values() if v == 1)
+                out_map[mid] = (ct, 0)
+                aw = sum(1 for _c, wv in out_map.values() if wv == 1)
                 al_l = len(out_map) - aw
-                if self._is_kryptonite_weakness(aw, al_l, max_wr_pct=30.0):
+                if self.is_flagrant_kryptonite(aw, al_l, kind="partner", career_wr_pct=career_wr_pct):
                     wr = (aw * 100.0) / (aw + al_l)
                     rank_key = (al_l - aw, al_l, -wr)
                     if rank_key > best_ally_rank:
@@ -1103,11 +1520,36 @@ class MatchDatabase:
                             target_profile_id=ap,
                             wins=aw,
                             losses=al_l,
+                            loss_streak=self._compute_loss_streak(out_map),
+                            attach_nemesis_cross=True,
                         )
             if best_ally is not None:
                 return best_ally
 
         return None
+
+    def get_kryptonite_coverage_summary(self) -> dict[str, Any]:
+        """Retorna estatísticas resumidas de cobertura histórica da tabela `kryptonite_matches` (2023+)."""
+        conn = self._connect()
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS total_rows,
+                   COUNT(DISTINCT match_id) AS unique_matches,
+                   COUNT(DISTINCT tracked_profile_id) AS tracked_players,
+                   SUM(CASE WHEN COALESCE(enemy_bgs_json, '') NOT IN ('', '[]', 'null') THEN 1 ELSE 0 END) AS rows_with_bg,
+                   MIN(completion_time) AS min_ct,
+                   MAX(completion_time) AS max_ct
+            FROM kryptonite_matches
+            """
+        ).fetchone()
+        return {
+            "total_rows": int(row["total_rows"] or 0) if row else 0,
+            "unique_matches": int(row["unique_matches"] or 0) if row else 0,
+            "tracked_players": int(row["tracked_players"] or 0) if row else 0,
+            "rows_with_bg": int(row["rows_with_bg"] or 0) if row else 0,
+            "min_completion_time": int(row["min_ct"] or 0) if row else 0,
+            "max_completion_time": int(row["max_ct"] or 0) if row else 0,
+        }
 
     def get_nemesis_coverage_summary(self) -> dict[str, Any]:
         """Retorna estatísticas resumidas de cobertura histórica da tabela `nemesis_matches`."""
@@ -1186,21 +1628,40 @@ class MatchDatabase:
         match_id: int,
         battlegroups: dict[int, dict[str, str]] | dict[str, dict[str, str]],
     ) -> int:
-        """Persiste o mapa `{profile_id: {'key': ..., 'name': ...}}` em todas as linhas da partida."""
+        """Persiste o mapa `{profile_id: {'key': ..., 'name': ...}}` em todas as linhas da partida e sincroniza `enemy_bgs_json` em `kryptonite_matches`."""
         mid = int(match_id or 0)
         if mid <= 0:
             return 0
-        payload = json.dumps(
-            {str(k): v for k, v in (battlegroups or {}).items() if isinstance(v, dict)},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        norm_bgs = {str(k): v for k, v in (battlegroups or {}).items() if isinstance(v, dict)}
+        payload = json.dumps(norm_bgs, ensure_ascii=False, separators=(",", ":"))
         conn = self._connect()
         with conn:
             cur = conn.execute(
                 "UPDATE recorded_matches SET battlegroups_json = ? WHERE match_id = ?",
                 (payload, mid),
             )
+            if norm_bgs:
+                rec_rows = conn.execute(
+                    "SELECT tracked_profile_id, mode, opponents_json FROM recorded_matches WHERE match_id = ?",
+                    (mid,),
+                ).fetchall()
+                for r in rec_rows:
+                    if str(r["mode"] or "") not in AUTOMATCH_MODES:
+                        continue
+                    try:
+                        opps_parsed = json.loads(r["opponents_json"] or "[]")
+                    except Exception:
+                        continue
+                    enemy_bgs = self._extract_enemy_bg_tokens(opps_parsed, norm_bgs)
+                    if enemy_bgs:
+                        conn.execute(
+                            "UPDATE kryptonite_matches SET enemy_bgs_json = ? WHERE tracked_profile_id = ? AND match_id = ?",
+                            (
+                                json.dumps(enemy_bgs, ensure_ascii=False, separators=(",", ":")),
+                                int(r["tracked_profile_id"]),
+                                mid,
+                            ),
+                        )
         return int(cur.rowcount or 0)
 
     def update_match_smurf_alerts(

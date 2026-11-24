@@ -557,19 +557,28 @@ def cmd_backfill_nemesis(args: argparse.Namespace) -> int:
         if getattr(args, "vacuum", False):
             db._connect().execute("VACUUM")
             cov = db.get_nemesis_coverage_summary()
+            kcov = db.get_kryptonite_coverage_summary()
         else:
             cov = res["coverage_after"]
+            kcov = res.get("kryptonite_coverage_after") or db.get_kryptonite_coverage_summary()
 
     min_ct = int(cov.get("min_completion_time", 0) or 0)
     max_ct = int(cov.get("max_completion_time", 0) or 0)
     min_d = datetime.utcfromtimestamp(min_ct).strftime("%Y-%m-%d") if min_ct > 0 else "N/D"
     max_d = datetime.utcfromtimestamp(max_ct).strftime("%Y-%m-%d") if max_ct > 0 else "N/D"
+    k_min_ct = int(kcov.get("min_completion_time", 0) or 0)
+    k_max_ct = int(kcov.get("max_completion_time", 0) or 0)
+    k_min_d = datetime.utcfromtimestamp(k_min_ct).strftime("%Y-%m-%d") if k_min_ct > 0 else "N/D"
+    k_max_d = datetime.utcfromtimestamp(k_max_ct).strftime("%Y-%m-%d") if k_max_ct > 0 else "N/D"
     print(
         f"\n[CONCLUÍDO] Dias OK: {res['days_ok']}/{res['days_requested']} (404: {res['days_not_published']}, erros: {res['days_failed']}) | "
-        f"Partidas Open Data varridas: {res['matches_scanned']:,} | Novos confrontos inseridos: +{res['nemesis_rows_inserted']:,}\n"
+        f"Partidas Open Data varridas: {res['matches_scanned']:,} | Novos confrontos Nemesis: +{res['nemesis_rows_inserted']:,} | "
+        f"Novas partidas Criptonita: +{res.get('kryptonite_rows_inserted', 0):,}\n"
         f"[COBERTURA NEMESIS] Total linhas: {cov['total_rows']:,} | Partidas únicas: {cov['unique_matches']:,} | "
         f"Período: {min_d} .. {max_d} | Pares Nemesis distintos: {cov['distinct_nemesis_pairs']:,} | "
-        f"Eventos >=2x/dia: {cov['trigger_day_events']:,}",
+        f"Eventos >=2x/dia: {cov['trigger_day_events']:,}\n"
+        f"[COBERTURA CRIPTONITA] Total linhas: {kcov['total_rows']:,} | Partidas únicas: {kcov['unique_matches']:,} | "
+        f"Período: {k_min_d} .. {k_max_d} | Partidas com BGs permanentes: {kcov.get('rows_with_bg', 0):,}",
         flush=True,
     )
     return 0

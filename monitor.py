@@ -26,6 +26,7 @@ from relic_api import (
     RelicAPIClient,
     VeteransRadarClient,
     build_roster_lookup_maps,
+    clean_map_name,
     enrich_match_with_roster,
     fetch_custom_players_stats,
     format_bound_display_alias,
@@ -2130,7 +2131,20 @@ def enrich_group_with_kryptonite(
             return str(rent["original_alias"]).strip()
         return str(part.get("alias") or "").strip() or (f"ID #{ppid}" if ppid > 0 else "Jogador")
 
+    # Limpa marcações cruzadas anteriores em nemesis_list antes de reavaliar
+    for src in (grp, grp.get("primary"), *recs):
+        if isinstance(src, dict):
+            n_list = src.get("nemesis_list")
+            if isinstance(n_list, list):
+                for nem_item in n_list:
+                    if isinstance(nem_item, dict):
+                        nem_item.pop("is_kryptonite", None)
+            n_top = src.get("nemesis")
+            if isinstance(n_top, dict):
+                n_top.pop("is_kryptonite", None)
+
     by_veteran: dict[int, dict[str, Any]] = {}
+    flagrant_nemesis_pairs: set[tuple[int, int]] = set()
     for rec in recs:
         if not isinstance(rec, dict) or bool(rec.get("win")):
             continue
@@ -2183,7 +2197,33 @@ def enrich_group_with_kryptonite(
             continue
         krypt["tracked_profile_id"] = tpid
         krypt["tracked_alias"] = tracked_disp
+        for f_opp in krypt.get("flagrant_nemesis_opp_pids") or []:
+            f_opp_i = int(f_opp or 0)
+            if f_opp_i > 0:
+                flagrant_nemesis_pairs.add((canon_pid, f_opp_i))
         by_veteran[canon_pid] = krypt
+
+    # Propaga sinalização cruzada `is_kryptonite=True` para a faixa NÊMESIS quando um Nêmesis flagrante venceu o Veterano
+    if flagrant_nemesis_pairs:
+        seen_nem_objs: set[int] = set()
+        for src in (grp, grp.get("primary"), *recs):
+            if not isinstance(src, dict):
+                continue
+            cand_nems: list[Any] = []
+            if isinstance(src.get("nemesis_list"), list):
+                cand_nems.extend(src["nemesis_list"])
+            if isinstance(src.get("nemesis"), dict):
+                cand_nems.append(src["nemesis"])
+            for nem_item in cand_nems:
+                if not isinstance(nem_item, dict) or id(nem_item) in seen_nem_objs:
+                    continue
+                seen_nem_objs.add(id(nem_item))
+                n_tpid = int(nem_item.get("tracked_profile_id", 0) or 0)
+                n_opid = int(nem_item.get("opponent_profile_id", 0) or 0)
+                if n_tpid > 0 and n_opid > 0:
+                    n_canon, _, _ = _canonical_pid_group(n_tpid)
+                    if (n_canon, n_opid) in flagrant_nemesis_pairs:
+                        nem_item["is_kryptonite"] = True
 
     if not by_veteran:
         return []
@@ -2192,6 +2232,7 @@ def enrich_group_with_kryptonite(
         by_veteran.values(),
         key=lambda x: (
             int(x.get("priority", 99)),
+            -(1 if x.get("is_nemesis") else 0),
             -(int(x.get("losses", 0)) - int(x.get("wins", 0))),
             -int(x.get("losses", 0)),
             float(x.get("win_rate", 100.0)),
@@ -2583,6 +2624,23 @@ def run_cycle(
                         int(top_nem.get("losses", 0)),
                         "NOVO TRIGGER" if top_nem.get("is_new_trigger") else "ATIVO",
                         extra_nem,
+                        grp["match_id"],
+                    )
+                krypt_list = enrich_group_with_kryptonite(db, grp, roster_maps=roster_maps)
+                if krypt_list:
+                    top_k = krypt_list[0]
+                    extra_k = f" (+{len(krypt_list) - 1} vet(s))" if len(krypt_list) > 1 else ""
+                    combo_tag = " +NÊMESIS" if isinstance(top_k.get("nemesis_cross"), dict) else ""
+                    logger.info(
+                        "[CRIPTONITA] %s • %s: %s -> %dV-%dD (%.1f%% WR%s)%s [#%d]",
+                        top_k.get("tracked_alias"),
+                        str(top_k.get("kind") or "").upper(),
+                        top_k.get("label"),
+                        int(top_k.get("wins", 0)),
+                        int(top_k.get("losses", 0)),
+                        float(top_k.get("win_rate", 0.0)),
+                        combo_tag,
+                        extra_k,
                         grp["match_id"],
                     )
                 if smurf_ctx is not None:
@@ -3073,13 +3131,17 @@ def backfill_nemesis_history_from_open_data(
                 uday = ct_val // 86400
                 for opp_pid, opp_alias, opp_country in opps:
                     day_rows.append((int(tpid), opp_pid, mid, ct_val, uday, win_int, mode_str, opp_alias, opp_country))
-                mclean = str(m.get("map_clean") or "").strip()
+                mclean = str(m.get("map_clean") or "").strip() or clean_map_name(str(m.get("map_raw") or "")).strip()
                 raw_allies = m.get("allies") if isinstance(m.get("allies"), list) else []
-                compact_allies = [
-                    {"profile_id": int(a.get("profile_id", 0) or 0), "alias": str(a.get("alias") or "")[:64]}
-                    for a in raw_allies
-                    if isinstance(a, dict) and int(a.get("profile_id", 0) or 0) > 0 and int(a.get("profile_id", 0) or 0) != int(tpid)
-                ]
+                compact_ally_pids = sorted(
+                    {
+                        int(a.get("profile_id", 0) or 0)
+                        for a in raw_allies
+                        if isinstance(a, dict)
+                        and int(a.get("profile_id", 0) or 0) > 0
+                        and int(a.get("profile_id", 0) or 0) != int(tpid)
+                    }
+                )
                 day_krypt_rows.append(
                     (
                         int(tpid),
@@ -3088,7 +3150,7 @@ def backfill_nemesis_history_from_open_data(
                         win_int,
                         mode_str,
                         mclean,
-                        json.dumps(compact_allies, ensure_ascii=False, separators=(",", ":")),
+                        json.dumps(compact_ally_pids, separators=(",", ":")),
                     )
                 )
         return day_ts, "ok", int(scanned or 0), day_rows, day_krypt_rows
@@ -3143,6 +3205,7 @@ def backfill_nemesis_history_from_open_data(
         "nemesis_rows_inserted": rows_inserted,
         "kryptonite_rows_inserted": krypt_rows_inserted,
         "coverage_after": db.get_nemesis_coverage_summary(),
+        "kryptonite_coverage_after": db.get_kryptonite_coverage_summary(),
     }
 
 
