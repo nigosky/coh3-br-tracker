@@ -1,4 +1,4 @@
-"""Testes unitários da regra de Nemesis em todos os modos Automatch (1v1, 2v2, 3v3, 4v4) e card gráfico."""
+"""Testes unitários das regras vitalícias (2023+) de Nêmesis e Freguês em todos os modos Automatch e card gráfico."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from PIL import Image
 
 import card_renderer
 from database import MatchDatabase
-from monitor import enrich_group_with_nemesis
+from monitor import enrich_group_with_fregues, enrich_group_with_nemesis
 
 
 def _make_match(
@@ -76,123 +76,367 @@ def _make_match(
     }
 
 
-class TestNemesisAllModes(unittest.TestCase):
-    def test_trigger_requires_two_games_same_utc_day_and_persists_across_modes(self) -> None:
-        day_base = 20_000 * 86400  # 00:00 UTC exato
+class TestNemesisAndFreguesLifetime(unittest.TestCase):
+    def test_symmetric_dominance_thresholds_reject_noise_and_balanced_scores(self) -> None:
+        # Rejeita amostras pequenas ou confrontos equilibrados (mesmo jogando várias vezes no mesmo dia)
+        for w, l in [(0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (2, 1), (1, 3), (3, 1), (2, 4), (4, 2), (3, 5), (5, 3), (10, 15), (15, 10)]:
+            self.assertFalse(MatchDatabase.is_nemesis_record(w, l), f"Nemesis não deve disparar em {w}V-{l}D")
+            self.assertFalse(MatchDatabase.is_fregues_record(w, l), f"Freguês não deve disparar em {w}V-{l}D")
+
+        # Aceita domínio recorrente real em Nêmesis (Veterano apanhando) e Freguês (adversário apanhando)
+        for dom, und in [(4, 0), (5, 0), (4, 1), (5, 1), (5, 2), (6, 3), (8, 4), (10, 5), (13, 7), (15, 4), (21, 2)]:
+            self.assertTrue(MatchDatabase.is_nemesis_record(und, dom), f"Nemesis deveria disparar em {und}V-{dom}D")
+            self.assertFalse(MatchDatabase.is_fregues_record(und, dom), f"Freguês nunca pode coexistir em {und}V-{dom}D")
+            self.assertTrue(MatchDatabase.is_fregues_record(dom, und), f"Freguês deveria disparar em {dom}V-{und}D")
+            self.assertFalse(MatchDatabase.is_nemesis_record(dom, und), f"Nemesis nunca pode coexistir em {dom}V-{und}D")
+
+    def test_nemesis_and_fregues_work_across_years_without_same_day_requirement(self) -> None:
+        # Confrontos espaçados ao longo de 2023, 2024, 2025 e 2026 (NUNCA 2 jogos no mesmo dia!)
+        ts_2023 = 1_690_000_000  # Jul/2023
+        ts_2024 = 1_715_000_000  # Mai/2024
+        ts_2025 = 1_745_000_000  # Abr/2025
+        ts_2026_a = 1_775_000_000  # Abr/2026
+        ts_2026_b = 1_795_000_000  # Nov/2026
+
         with tempfile.TemporaryDirectory() as td:
-            db = MatchDatabase(Path(td) / "nemesis.db")
-            opp_sid = "76561198000011111"
+            db = MatchDatabase(Path(td) / "rivalry.db")
+            nem_sid = "76561198000011111"
+            freg_sid = "76561198000022222"
 
-            # Dia 1 (2v2): 1 jogo -> não dispara Nemesis
-            m1 = _make_match(
-                101, 900358, "Margheriti", [(777001, "RivalOldNick", opp_sid), (777002, "RandomGuy", "76561198000011112")],
-                day_base + 3600, True, mode="2v2",
-            )
-            db.insert_match(m1)
-            self.assertIsNone(
-                db.get_nemesis_status([900358], 777001, m1["completion_time"], m1["match_id"], "RivalOldNick", opp_sid)
-            )
+            # 1) NÊMESIS ao longo de 4 anos e 4 modos diferentes (0V-4D sem NENHUM dia repetido!)
+            nem_schedule = [
+                (101, ts_2023, False, "2v2", "Algoz2023"),
+                (102, ts_2024, False, "Team Games (3v3)", "Algoz2024"),
+                (103, ts_2025, False, "Team Games (4v4)", "Algoz2025"),
+                (104, ts_2026_a, False, "1v1", "Algoz2026"),
+                (105, ts_2026_b, True, "2v2", "AlgozAtual"),
+            ]
+            for idx, (mid, ts, win_flag, mode, nick) in enumerate(nem_schedule):
+                m = _make_match(mid, 900358, "Margheriti", [(777001, nick, nem_sid)], ts, win_flag, mode=mode)
+                db.insert_match(m)
+                st_nem = db.get_nemesis_status([900358], 777001, ts, mid, nick, nem_sid)
+                st_freg = db.get_fregues_status([900358], 777001, ts, mid, nick, nem_sid)
+                self.assertIsNone(st_freg)
+                if idx < 3:
+                    # 0V-1D, 0V-2D, 0V-3D -> ainda não atinge domínio recorrente
+                    self.assertIsNone(st_nem)
+                elif idx == 3:
+                    # 4ª derrota (0V-4D, 1 jogo por ano!) -> DISPARA NOVO NEMESIS!
+                    self.assertIsNotNone(st_nem)
+                    assert st_nem is not None
+                    self.assertTrue(st_nem["triggered"])
+                    self.assertEqual(st_nem["kind"], "nemesis")
+                    self.assertTrue(st_nem["is_new_trigger"])
+                    self.assertEqual((st_nem["wins"], st_nem["losses"], st_nem["total"]), (0, 4, 4))
+                    self.assertEqual(st_nem["same_day_games"], 1)
+                    self.assertEqual(st_nem["since_year"], 2023)
+                    self.assertEqual(st_nem["loss_streak"], 4)
+                    self.assertEqual(st_nem["opponent_alias"], "Algoz2026")
+                    self.assertEqual(st_nem["modes"], ["1v1", "2v2", "Team Games (3v3)", "Team Games (4v4)"])
+                else:
+                    # 5º jogo: Veterano finalmente vence (1V-4D, 20% WR) -> continua NEMESIS ativo (não mais NOVO)
+                    self.assertIsNotNone(st_nem)
+                    assert st_nem is not None
+                    self.assertTrue(st_nem["triggered"])
+                    self.assertFalse(st_nem["is_new_trigger"])
+                    self.assertEqual((st_nem["wins"], st_nem["losses"], st_nem["total"]), (1, 4, 5))
+                    self.assertEqual(st_nem["loss_streak"], 0)
+                    self.assertEqual(st_nem["win_streak"], 1)
+                    self.assertEqual(st_nem["opponent_alias"], "AlgozAtual")
 
-            # Dia 2 (outro dia UTC, 3v3): ainda 1 jogo por dia UTC -> NÃO dispara Nemesis!
-            m2 = _make_match(
-                102, 900358, "Margheriti", [(777001, "RivalMidNick", opp_sid)],
-                day_base + 86400 + 3600, False, mode="Team Games (3v3)",
-            )
-            db.insert_match(m2)
-            self.assertIsNone(
-                db.get_nemesis_status([900358], 777001, m2["completion_time"], m2["match_id"], "RivalMidNick", opp_sid)
-            )
+            # 2) FREGUÊS ao longo de 4 anos (1V-0D -> 1V-1D -> 2V-1D -> 3V-1D -> 4V-1D -> 5V-1D)
+            freg_schedule = [
+                (201, ts_2023, True, "1v1", "FregOld"),
+                (202, ts_2024, False, "2v2", "FregMid"),
+                (203, ts_2025, True, "Team Games (3v3)", "Freg2025"),
+                (204, ts_2026_a, True, "Team Games (4v4)", "Freg2026"),
+                (205, ts_2026_b, True, "2v2", "FregNovo"),
+                (206, ts_2026_b + 86400, True, "1v1", "FregAtual"),
+            ]
+            for idx, (mid, ts, win_flag, mode, nick) in enumerate(freg_schedule):
+                m = _make_match(mid, 900358, "Margheriti", [(777002, nick, freg_sid)], ts, win_flag, mode=mode)
+                db.insert_match(m)
+                st_nem = db.get_nemesis_status([900358], 777002, ts, mid, nick, freg_sid)
+                st_freg = db.get_fregues_status([900358], 777002, ts, mid, nick, freg_sid)
+                self.assertIsNone(st_nem)
+                if idx < 4:
+                    # Até 3V-1D (4 jogos, saldo +2) -> ainda não dispara Freguês
+                    self.assertIsNone(st_freg)
+                elif idx == 4:
+                    # 4V-1D (5 jogos, saldo +3, 80% WR) -> DISPARA NOVO FREGUÊS!
+                    self.assertIsNotNone(st_freg)
+                    assert st_freg is not None
+                    self.assertTrue(st_freg["triggered"])
+                    self.assertEqual(st_freg["kind"], "fregues")
+                    self.assertTrue(st_freg["is_new_trigger"])
+                    self.assertEqual((st_freg["wins"], st_freg["losses"], st_freg["total"]), (4, 1, 5))
+                    self.assertEqual(st_freg["since_year"], 2023)
+                    self.assertEqual(st_freg["win_streak"], 3)
+                    self.assertEqual(st_freg["opponent_alias"], "FregNovo")
+                else:
+                    # 5V-1D (6 jogos, 83.3% WR, 4V seg.) -> continua FREGUÊS ativo (is_new_trigger=False)
+                    self.assertIsNotNone(st_freg)
+                    assert st_freg is not None
+                    self.assertTrue(st_freg["triggered"])
+                    self.assertFalse(st_freg["is_new_trigger"])
+                    self.assertEqual((st_freg["wins"], st_freg["losses"], st_freg["total"]), (5, 1, 6))
+                    self.assertEqual(st_freg["win_streak"], 4)
+                    self.assertEqual(st_freg["opponent_alias"], "FregAtual")
 
-            # Dia 2 (MESMO dia UTC, 4v4): 2º encontro no dia -> DISPARA NOVO NEMESIS e conta TODOS os modos Automatch!
-            m3 = _make_match(
-                103, 900358, "Margheriti", [(777001, "RivalNewNick", opp_sid)],
-                day_base + 86400 + 7200, True, mode="Team Games (4v4)",
-            )
-            db.insert_match(m3)
-            st3 = db.get_nemesis_status([900358], 777001, m3["completion_time"], m3["match_id"], "RivalNewNick", opp_sid)
-            self.assertIsNotNone(st3)
-            assert st3 is not None
-            self.assertTrue(st3["triggered"])
-            self.assertTrue(st3["is_new_trigger"])
-            self.assertEqual((st3["wins"], st3["losses"], st3["total"]), (2, 1, 3))
-            self.assertEqual(st3["same_day_games"], 2)
-            self.assertEqual(st3["opponent_alias"], "RivalNewNick")
-            self.assertEqual(st3["modes"], ["2v2", "Team Games (3v3)", "Team Games (4v4)"])
+            # Compactação de recorded_matches NÃO apaga histórico de Nêmesis nem de Freguês
+            db.run_periodic_maintenance(now_ts=ts_2026_b + 60 * 86400, json_retention_days=14)
+            st_nem_after = db.get_nemesis_status([900358], 777001, ts_2026_b, 105, "AlgozAtual", nem_sid)
+            st_freg_after = db.get_fregues_status([900358], 777002, ts_2026_b + 86400, 206, "FregAtual", freg_sid)
+            self.assertIsNotNone(st_nem_after)
+            self.assertIsNotNone(st_freg_after)
+            assert st_nem_after is not None and st_freg_after is not None
+            self.assertEqual(st_nem_after["total"], 5)
+            self.assertEqual(st_freg_after["total"], 6)
 
-            # Dia 5 (após trigger, em 1v1): 4º jogo -> continua contando e atualiza alias
-            m4 = _make_match(
-                104, 900358, "Margheriti", [(777001, "RivalLatest", opp_sid)],
-                day_base + 4 * 86400 + 1800, False, mode="1v1",
-            )
-            db.insert_match(m4)
-            st4 = db.get_nemesis_status([900358], 777001, m4["completion_time"], m4["match_id"], "RivalLatest", opp_sid)
-            self.assertIsNotNone(st4)
-            assert st4 is not None
-            self.assertTrue(st4["triggered"])
-            self.assertFalse(st4["is_new_trigger"])
-            self.assertEqual((st4["wins"], st4["losses"], st4["total"]), (2, 2, 4))
-            self.assertEqual(st4["same_day_games"], 1)
-            self.assertEqual(st4["opponent_alias"], "RivalLatest")
-
-            # Compactação de 30 dias em recorded_matches NÃO perde histórico Nemesis
-            db.run_periodic_maintenance(now_ts=day_base + 40 * 86400, json_retention_days=14)
-            st4_after = db.get_nemesis_status([900358], 777001, m4["completion_time"], m4["match_id"], "RivalLatest", opp_sid)
-            self.assertIsNotNone(st4_after)
-            assert st4_after is not None
-            self.assertEqual(st4_after["total"], 4)
-
-    def test_non_steam_and_custom_games_are_ignored(self) -> None:
+    def test_non_steam_and_custom_games_are_ignored_for_both_nemesis_and_fregues(self) -> None:
         day_base = 20_005 * 86400
         with tempfile.TemporaryDirectory() as td:
-            db = MatchDatabase(Path(td) / "nemesis_filter.db")
-            # Oponente sem SteamID64 válido -> ignorado (Only Steam players are tracked)
-            for idx in range(2):
-                m = _make_match(200 + idx, 900358, "Margheriti", [(888001, "ConsolePlayer", "")], day_base + idx * 1200, True, mode="2v2")
+            db = MatchDatabase(Path(td) / "rivalry_filter.db")
+            # Oponente sem SteamID64 válido -> ignorado (Steam-only)
+            for idx in range(5):
+                m = _make_match(200 + idx, 900358, "Margheriti", [(888001, "ConsolePlayer", "")], day_base + idx * 86400, True, mode="2v2")
                 db.insert_match(m)
-            self.assertIsNone(db.get_nemesis_status([900358], 888001, day_base + 2400, 201))
+            self.assertIsNone(db.get_fregues_status([900358], 888001, day_base + 5 * 86400, 204))
+            self.assertIsNone(db.get_nemesis_status([900358], 888001, day_base + 5 * 86400, 204))
 
-            # Partida Custom -> ignorada
-            for idx in range(2):
-                m = _make_match(300 + idx, 900358, "Margheriti", [(888002, "CustomFriend", "76561198000022222")], day_base + idx * 1200, True, mode="Custom")
+            # Partida Custom -> ignorada tanto para Nêmesis quanto para Freguês
+            for idx in range(5):
+                m = _make_match(300 + idx, 900358, "Margheriti", [(888002, "CustomFriend", "76561198000022222")], day_base + idx * 86400, False, mode="Custom")
                 db.insert_match(m)
-            self.assertIsNone(db.get_nemesis_status([900358], 888002, day_base + 2400, 301))
+            self.assertIsNone(db.get_nemesis_status([900358], 888002, day_base + 5 * 86400, 304))
+            self.assertIsNone(db.get_fregues_status([900358], 888002, day_base + 5 * 86400, 304))
 
-    def test_card_renderer_single_and_multi_rival_team_nemesis_heights(self) -> None:
+    def test_card_renderer_nemesis_and_fregues_heights_stacking_and_distinct_colors(self) -> None:
         day_base = 20_010 * 86400
         with tempfile.TemporaryDirectory() as td:
-            db = MatchDatabase(Path(td) / "nemesis_card.db")
+            db = MatchDatabase(Path(td) / "rivalry_card.db")
             ap = card_renderer.SteamAvatarProvider(db, allow_network=False)
             opps_2v2 = [
                 (777009, "Hans_DE", "76561198000033333"),
                 (777010, "Fritz_DE", "76561198000033334"),
             ]
             ally_2v2 = [(79327, "Chacineiro", "76561197963172584")]
-            m1 = _make_match(401, 900358, "Margheriti", opps_2v2, day_base + 1000, True, mode="2v2", allies=ally_2v2)
-            m2 = _make_match(402, 900358, "Margheriti", opps_2v2, day_base + 2500, False, mode="2v2", allies=ally_2v2)
-            db.insert_match(m1)
-            db.insert_match(m2)
 
-            grp_plain = {"match_id": 401, "primary": dict(m1), "records": [dict(m1)]}
+            # 4 derrotas em dias separados contra ambos os oponentes -> ambos viram NÊMESIS (0V-4D)
+            last_nem_m = None
+            for idx in range(4):
+                m = _make_match(401 + idx, 900358, "Margheriti", opps_2v2, day_base + idx * 86400, False, mode="2v2", allies=ally_2v2)
+                db.insert_match(m)
+                last_nem_m = m
+            assert last_nem_m is not None
+
+            m_first = _make_match(401, 900358, "Margheriti", opps_2v2, day_base, False, mode="2v2", allies=ally_2v2)
+            grp_plain = {"match_id": 401, "primary": dict(m_first), "records": [dict(m_first)]}
             self.assertEqual(enrich_group_with_nemesis(db, grp_plain), [])
+            self.assertEqual(enrich_group_with_fregues(db, grp_plain), [])
             im_plain = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_plain, ap)))
 
-            # Em m2, AMBOS os oponentes do 2v2 dispararam Nemesis -> faixa dupla (+74px)
-            grp_nem_2 = {"match_id": 402, "primary": dict(m2), "records": [dict(m2)]}
+            # Em #404, AMBOS os oponentes viraram Nêmesis -> faixa dupla (+74px)
+            grp_nem_2 = {"match_id": 404, "primary": dict(last_nem_m), "records": [dict(last_nem_m)]}
             nems = enrich_group_with_nemesis(db, grp_nem_2)
+            fregs_empty = enrich_group_with_fregues(db, grp_nem_2)
             self.assertEqual(len(nems), 2)
+            self.assertEqual(fregs_empty, [])
             im_nem_2 = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_nem_2, ap)))
             self.assertEqual(im_nem_2.height - im_plain.height, 74)
 
-            # Com 1 único rival Nemesis -> faixa simples (+42px)
+            # Com 1 único rival Nêmesis -> faixa simples (+42px)
             grp_nem_1 = {
-                "match_id": 402,
-                "primary": dict(m2, nemesis=nems[0], nemesis_list=[nems[0]]),
-                "records": [dict(m2, nemesis=nems[0], nemesis_list=[nems[0]])],
+                "match_id": 404,
+                "primary": dict(last_nem_m, nemesis=nems[0], nemesis_list=[nems[0]]),
+                "records": [dict(last_nem_m, nemesis=nems[0], nemesis_list=[nems[0]])],
                 "nemesis": nems[0],
                 "nemesis_list": [nems[0]],
             }
             im_nem_1 = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_nem_1, ap)))
             self.assertEqual(im_nem_1.height - im_plain.height, 42)
+
+            # Agora 4 vitórias de Chacineiro em dias separados contra os mesmos 2 oponentes -> ambos viram FREGUÊS!
+            last_freg_m = None
+            for idx in range(4):
+                mf = _make_match(
+                    501 + idx,
+                    79327,
+                    "Chacineiro",
+                    opps_2v2,
+                    day_base + (10 + idx) * 86400,
+                    True,
+                    mode="2v2",
+                    allies=[(900358, "Margheriti", "76561198070545853")],
+                )
+                db.insert_match(mf)
+                last_freg_m = mf
+            assert last_freg_m is not None
+
+            grp_freg_2 = {"match_id": 504, "primary": dict(last_freg_m), "records": [dict(last_freg_m)]}
+            fregs = enrich_group_with_fregues(db, grp_freg_2)
+            self.assertEqual(len(fregs), 2)
+            self.assertTrue(all(f["is_new_trigger"] for f in fregs))
+            im_freg_2 = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_freg_2, ap)))
+            self.assertEqual(im_freg_2.height - im_plain.height, 74)
+
+            grp_freg_1 = {
+                "match_id": 504,
+                "primary": dict(last_freg_m, fregues=fregs[0], fregues_list=[fregs[0]]),
+                "records": [dict(last_freg_m, fregues=fregs[0], fregues_list=[fregs[0]])],
+                "fregues": fregs[0],
+                "fregues_list": [fregs[0]],
+            }
+            im_freg_1 = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_freg_1, ap)))
+            self.assertEqual(im_freg_1.height - im_plain.height, 42)
+
+            # Empilhamento simultâneo Nêmesis (+42) + Freguês (+42) e verificação de cores claramente distintas!
+            grp_both = {
+                "match_id": 504,
+                "primary": dict(last_freg_m),
+                "records": [dict(last_freg_m)],
+                "nemesis": nems[0],
+                "nemesis_list": [nems[0]],
+                "fregues": fregs[0],
+                "fregues_list": [fregs[0]],
+            }
+            im_both = Image.open(io.BytesIO(card_renderer.render_single_match_card_png(grp_both, ap)))
+            self.assertEqual(im_both.height - im_plain.height, 42 + 42)
+
+            # Verifica a faixa lateral esquerda (x=4): Nemesis é carmesim (R alto, G/B baixos)
+            # e Freguês é turquesa/teal (G e B altos, R baixo) -> impossível confundir!
+            nem_left_px = im_both.getpixel((4, im_plain.height + 20))
+            freg_left_px = im_both.getpixel((4, im_plain.height + 42 + 20))
+            self.assertGreater(nem_left_px[0], 180)
+            self.assertLess(nem_left_px[1], 90)
+            self.assertLess(freg_left_px[0], 80)
+            self.assertGreater(freg_left_px[1], 160)
+            self.assertGreater(freg_left_px[2], 150)
+
+            # Em partida Custom, nem Nêmesis nem Freguês são renderizados no card
+            m_custom = dict(last_freg_m, mode="Custom")
+            im_custom = Image.open(
+                io.BytesIO(
+                    card_renderer.render_single_match_card_png(
+                        {
+                            "match_id": 504,
+                            "primary": m_custom,
+                            "records": [m_custom],
+                            "nemesis_list": [nems[0]],
+                            "fregues_list": [fregs[0]],
+                        },
+                        ap,
+                    )
+                )
+            )
+            self.assertEqual(im_custom.height, im_plain.height)
+
+    def test_single_day_encounters_never_enter_nemesis_or_fregues_and_retroactive_patch(self) -> None:
+        from monitor import (
+            CURRENT_RIVALRY_RULE_VERSION,
+            build_roster_lookup_maps,
+            refresh_recent_cards_after_rivalry_rule_change,
+        )
+
+        day_1 = 20_781 * 86400  # 00:00 UTC
+        day_2 = day_1 + 86400
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "single_day_block.db")
+            sid_a = "76561198000138424"
+            sid_b = "76561198000555555"
+
+            # 1) Caso real do Chacineiro: 2 vitórias seguidas HOJE (2V-0D em 1 único dia) ->
+            # NUNCA pode ser Nêmesis nem Freguês!
+            m_c1 = _make_match(92781139, 79327, "Chacineiro", [(138424, "RivalHoje", sid_a)], day_1 + 3600, True, mode="1v1")
+            m_c2 = _make_match(92783829, 79327, "Chacineiro", [(138424, "RivalHoje", sid_a)], day_1 + 5400, True, mode="1v1")
+            db.insert_match(m_c1, discord_message_id="1574803348354498731")
+            db.insert_match(m_c2, discord_message_id="1574809726280269885")
+            self.assertIsNone(db.get_nemesis_status([79327], 138424, day_1 + 5400, 92783829, "RivalHoje", sid_a))
+            self.assertIsNone(db.get_fregues_status([79327], 138424, day_1 + 5400, 92783829, "RivalHoje", sid_a))
+            self.assertTrue(db.had_legacy_same_day_nemesis([79327], 138424, day_1 + 5400, 92783829))
+
+            # 2) Mesmo perdendo 0V-4D ou 0V-5D TUDO NO MESMO DIA UTC -> bloqueado (evita encontros diários)!
+            for i in range(5):
+                m_loss = _make_match(700 + i, 900358, "Margheriti", [(555555, "Sessao1Dia", sid_b)], day_1 + 1000 + i * 1200, False, mode="1v1")
+                db.insert_match(m_loss)
+            self.assertIsNone(db.get_nemesis_status([900358], 555555, day_1 + 10000, 704, "Sessao1Dia", sid_b))
+
+            # 3) No 2º dia distinto (6ª derrota, 0V-6D em 2 dias UTC) -> agora SIM entra em NOVO NEMESIS!
+            m_day2 = _make_match(705, 900358, "Margheriti", [(555555, "Sessao1Dia", sid_b)], day_2 + 1000, False, mode="1v1")
+            db.insert_match(m_day2)
+            st_nem = db.get_nemesis_status([900358], 555555, day_2 + 1000, 705, "Sessao1Dia", sid_b)
+            self.assertIsNotNone(st_nem)
+            assert st_nem is not None
+            self.assertTrue(st_nem["triggered"])
+            self.assertTrue(st_nem["is_new_trigger"])
+            self.assertEqual(st_nem["distinct_days"], 2)
+            self.assertEqual((st_nem["wins"], st_nem["losses"]), (0, 6))
+
+            # 4) Mesmo ganhando 4V-0D TUDO NO MESMO DIA UTC -> bloqueado para Freguês até ocorrer 2º dia distinto!
+            for i in range(4):
+                m_win = _make_match(800 + i, 900358, "Margheriti", [(666666, "Freg1Dia", "76561198000666666")], day_1 + 1000 + i * 1200, True, mode="1v1")
+                db.insert_match(m_win)
+            self.assertIsNone(db.get_fregues_status([900358], 666666, day_1 + 10000, 803, "Freg1Dia", "76561198000666666"))
+            m_win_d2 = _make_match(804, 900358, "Margheriti", [(666666, "Freg1Dia", "76561198000666666")], day_2 + 1500, True, mode="1v1")
+            db.insert_match(m_win_d2)
+            st_freg = db.get_fregues_status([900358], 666666, day_2 + 1500, 804, "Freg1Dia", "76561198000666666")
+            self.assertIsNotNone(st_freg)
+            assert st_freg is not None
+            self.assertTrue(st_freg["is_new_trigger"])
+            self.assertEqual(st_freg["distinct_days"], 2)
+
+            # 5) PATCH retroativo único limpa o card #92783829 (2V-0D hoje do Chacineiro) no Discord sem Nemesis/Freguês!
+            class _FakeDiscordPatch:
+                is_configured = True
+
+                def __init__(self) -> None:
+                    self.edits: list[tuple[str, int, bool, bool]] = []
+
+                def edit_match_card(self, msg_id: str, grp: dict) -> str:
+                    self.edits.append((msg_id, int(grp["match_id"]), bool(grp.get("nemesis")), bool(grp.get("fregues"))))
+                    return msg_id
+
+            db.sync_tracked_players(
+                [
+                    {
+                        "profile_id": 79327,
+                        "alias": "Chacineiro",
+                        "original_alias": "Chacineiro",
+                        "steam_id": "76561197963172584",
+                    }
+                ]
+            )
+            fake_discord = _FakeDiscordPatch()
+            # Simula timestamps recentes no MESMO dia UTC (m_c1 antes de m_c2)
+            now_real = int(__import__("time").time())
+            today_mid = (now_real // 86400) * 86400
+            ct_c2 = max(today_mid + 3600, now_real - 300)
+            ct_c1 = max(today_mid + 60, ct_c2 - 1800)
+            with db._connect() as conn:
+                conn.execute("UPDATE recorded_matches SET completion_time = ?, recorded_at = ? WHERE match_id = 92781139", (ct_c1, ct_c1 + 30))
+                conn.execute("UPDATE recorded_matches SET completion_time = ?, recorded_at = ? WHERE match_id = 92783829", (ct_c2, ct_c2 + 30))
+                conn.execute("UPDATE nemesis_matches SET completion_time = ?, utc_day = ? WHERE match_id = 92781139", (ct_c1, ct_c1 // 86400))
+                conn.execute("UPDATE nemesis_matches SET completion_time = ?, utc_day = ? WHERE match_id = 92783829", (ct_c2, ct_c2 // 86400))
+
+            patched = refresh_recent_cards_after_rivalry_rule_change(
+                db=db,
+                discord=fake_discord,  # type: ignore[arg-type]
+                roster_maps=build_roster_lookup_maps(),
+                max_age_sec=259200,
+            )
+            self.assertEqual(patched, 1)
+            self.assertEqual(fake_discord.edits, [("1574809726280269885", 92783829, False, False)])
+            self.assertEqual(db.get_state("rivalry_card_rules_version"), CURRENT_RIVALRY_RULE_VERSION)
+
+            # 2ª execução não refaz PATCH (idempotente)
+            self.assertEqual(
+                refresh_recent_cards_after_rivalry_rule_change(
+                    db=db,
+                    discord=fake_discord,  # type: ignore[arg-type]
+                    roster_maps=build_roster_lookup_maps(),
+                ),
+                0,
+            )
 
     def test_insert_nemesis_matches_batch_and_open_data_backfill_since_2023(self) -> None:
         from monitor import NEMESIS_OPEN_DATA_EARLIEST_DATE, backfill_nemesis_history_from_open_data
@@ -210,16 +454,53 @@ class TestNemesisAllModes(unittest.TestCase):
                 retries: int = 2,
             ) -> tuple[dict[int, list[dict[str, object]]], str, int]:
                 self.called_days.append(day_utc_midnight_ts)
-                # Dia 2023-06-30 (1688083200): 2 partidas Automatch contra o mesmo rival Steam -> dispara Nemesis!
+                # Dia 2023-06-30 (1688083200): 3 derrotas contra Rival2023 e 3 vitórias contra Fregues2023
                 if day_utc_midnight_ts == 1688083200:
+                    matches_day = []
+                    for i in range(3):
+                        matches_day.append(
+                            {
+                                "match_id": 1001 + i,
+                                "mode": "1v1",
+                                "completion_time": 1688086800 + i * 1800,
+                                "win": False,
+                                "opponents": [
+                                    {
+                                        "profile_id": 999999,
+                                        "alias": "Rival2023",
+                                        "steam_id": "76561198000999999",
+                                        "country": "de",
+                                    }
+                                ],
+                            }
+                        )
+                        matches_day.append(
+                            {
+                                "match_id": 2001 + i,
+                                "mode": "2v2",
+                                "completion_time": 1688099000 + i * 1800,
+                                "win": True,
+                                "opponents": [
+                                    {
+                                        "profile_id": 888888,
+                                        "alias": "Fregues2023",
+                                        "steam_id": "76561198000888888",
+                                        "country": "us",
+                                    }
+                                ],
+                            }
+                        )
+                    return {79327: matches_day}, "ok", 5000
+                # Dia 2023-07-01 (1688169600): 4º confronto em 2º dia distinto -> completa Nêmesis e Freguês!
+                if day_utc_midnight_ts == 1688169600:
                     return (
                         {
                             79327: [
                                 {
-                                    "match_id": 1001,
+                                    "match_id": 1004,
                                     "mode": "1v1",
-                                    "completion_time": 1688086800,
-                                    "win": True,
+                                    "completion_time": 1688173200,
+                                    "win": False,
                                     "opponents": [
                                         {
                                             "profile_id": 999999,
@@ -230,16 +511,16 @@ class TestNemesisAllModes(unittest.TestCase):
                                     ],
                                 },
                                 {
-                                    "match_id": 1002,
-                                    "mode": "1v1",
-                                    "completion_time": 1688090400,
-                                    "win": False,
+                                    "match_id": 2004,
+                                    "mode": "2v2",
+                                    "completion_time": 1688176800,
+                                    "win": True,
                                     "opponents": [
                                         {
-                                            "profile_id": 999999,
-                                            "alias": "Rival2023",
-                                            "steam_id": "76561198000999999",
-                                            "country": "de",
+                                            "profile_id": 888888,
+                                            "alias": "Fregues2023",
+                                            "steam_id": "76561198000888888",
+                                            "country": "us",
                                         }
                                     ],
                                 },
@@ -260,15 +541,15 @@ class TestNemesisAllModes(unittest.TestCase):
                 players,
                 coh3stats=fake,  # type: ignore[arg-type]
                 start_date="2023-02-23",
-                end_date="2023-07-01",
+                end_date="2023-07-02",
                 max_workers=1,
             )
             self.assertEqual(res["start_date"], NEMESIS_OPEN_DATA_EARLIEST_DATE)
-            self.assertEqual(res["end_date"], "2023-07-01")
-            self.assertEqual(res["days_requested"], 2)
-            self.assertEqual(res["days_ok"], 1)
+            self.assertEqual(res["end_date"], "2023-07-02")
+            self.assertEqual(res["days_requested"], 3)
+            self.assertEqual(res["days_ok"], 2)
             self.assertEqual(res["days_not_published"], 1)
-            self.assertEqual(res["nemesis_rows_inserted"], 2)
+            self.assertEqual(res["nemesis_rows_inserted"], 8)
 
             # Reexecução deve ser 100% idempotente (0 linhas duplicadas)
             res2 = backfill_nemesis_history_from_open_data(
@@ -276,18 +557,18 @@ class TestNemesisAllModes(unittest.TestCase):
                 players,
                 coh3stats=fake,  # type: ignore[arg-type]
                 start_date="2023-06-30",
-                end_date="2023-07-01",
+                end_date="2023-07-02",
                 max_workers=1,
             )
             self.assertEqual(res2["nemesis_rows_inserted"], 0)
             cov = db.get_nemesis_coverage_summary()
-            self.assertEqual(cov["total_rows"], 2)
-            self.assertEqual(cov["unique_matches"], 2)
+            self.assertEqual(cov["total_rows"], 8)
+            self.assertEqual(cov["unique_matches"], 8)
             self.assertEqual(cov["distinct_nemesis_pairs"], 1)
-            self.assertEqual(cov["trigger_day_events"], 1)
+            self.assertEqual(cov["distinct_fregues_pairs"], 1)
 
-            # Partida em 2026 contra Rival2023 já herda o histórico completo desde junho/2023!
-            status_2026 = db.get_nemesis_status(
+            # Partida em 2026 já herda o histórico completo desde junho/2023 para Nêmesis E Freguês!
+            status_nem_2026 = db.get_nemesis_status(
                 [79327],
                 999999,
                 up_to_completion_time=1_795_000_000,
@@ -295,13 +576,29 @@ class TestNemesisAllModes(unittest.TestCase):
                 current_opponent_alias="Rival2023NewNick",
                 current_opponent_steam_id="76561198000999999",
             )
-            self.assertIsNotNone(status_2026)
-            assert status_2026 is not None
-            self.assertTrue(status_2026["triggered"])
-            self.assertEqual(status_2026["total"], 2)
-            self.assertEqual(status_2026["wins"], 1)
-            self.assertEqual(status_2026["losses"], 1)
-            self.assertEqual(status_2026["opponent_alias"], "Rival2023NewNick")
+            self.assertIsNotNone(status_nem_2026)
+            assert status_nem_2026 is not None
+            self.assertTrue(status_nem_2026["triggered"])
+            self.assertEqual((status_nem_2026["wins"], status_nem_2026["losses"], status_nem_2026["total"]), (0, 4, 4))
+            self.assertEqual(status_nem_2026["distinct_days"], 2)
+            self.assertEqual(status_nem_2026["since_year"], 2023)
+            self.assertEqual(status_nem_2026["opponent_alias"], "Rival2023NewNick")
+
+            status_freg_2026 = db.get_fregues_status(
+                [79327],
+                888888,
+                up_to_completion_time=1_795_000_000,
+                up_to_match_id=99_999_999,
+                current_opponent_alias="Fregues2023NewNick",
+                current_opponent_steam_id="76561198000888888",
+            )
+            self.assertIsNotNone(status_freg_2026)
+            assert status_freg_2026 is not None
+            self.assertTrue(status_freg_2026["triggered"])
+            self.assertEqual((status_freg_2026["wins"], status_freg_2026["losses"], status_freg_2026["total"]), (4, 0, 4))
+            self.assertEqual(status_freg_2026["distinct_days"], 2)
+            self.assertEqual(status_freg_2026["since_year"], 2023)
+            self.assertEqual(status_freg_2026["opponent_alias"], "Fregues2023NewNick")
 
 
 if __name__ == "__main__":

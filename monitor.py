@@ -56,6 +56,7 @@ DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
 CURRENT_SUMMARY_CONTENT_VERSION = "v7_17_duration_label"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
+CURRENT_RIVALRY_RULE_VERSION = "v2_lifetime_multiday_fregues"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 DEFAULT_QUIET_AUDIT_HOURS = 3
@@ -1750,8 +1751,9 @@ def _patch_match_card_with_battlegroups(
     *,
     log_suffix: str = "com Battlegroups",
 ) -> bool:
-    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis, Criptonita e Alertas Smurf preservados."""
+    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis, Freguês, Criptonita e Alertas Smurf preservados."""
     enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+    enrich_group_with_fregues(db, grp, roster_maps=roster_maps)
     enrich_group_with_kryptonite(db, grp, roster_maps=roster_maps)
     if not grp.get("smurf_alerts"):
         recs = grp.get("records") or []
@@ -1968,18 +1970,175 @@ def refresh_recent_cards_after_roster_changes(
     return patched_count
 
 
-def enrich_group_with_nemesis(
+def refresh_recent_cards_after_rivalry_rule_change(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    *,
+    max_age_sec: int = 259200,
+    max_patches: int = 50,
+) -> int:
+    """
+    Executa uma única atualização silenciosa (PATCH) nos cards recentes (<=72h) do Discord após a
+    migração das regras vitalícias de Nêmesis/Freguês (2023+, >= 2 dias distintos), removendo
+    falsos Nêmesis da regra diária legada (ex.: 2V-0D no mesmo dia) e aplicando Freguês/Nêmesis atuais.
+    """
+    if not discord.is_configured or not hasattr(discord, "edit_match_card"):
+        return 0
+    if (db.get_state("rivalry_card_rules_version") or "").strip() == CURRENT_RIVALRY_RULE_VERSION:
+        return 0
+
+    recent_rows = db.get_recent_posted_matches(max_age_sec=max_age_sec, limit=100)
+    if not recent_rows:
+        db.set_state("rivalry_card_rules_version", CURRENT_RIVALRY_RULE_VERSION)
+        return 0
+
+    done_mids: set[int] = set()
+    raw_done = (db.get_state("rivalry_card_patch_done_v2") or "").strip()
+    if raw_done:
+        try:
+            parsed_done = json.loads(raw_done)
+            if isinstance(parsed_done, list):
+                done_mids = {int(x) for x in parsed_done if int(x) > 0}
+        except Exception:
+            done_mids = set()
+
+    _, pid_map = roster_maps
+
+    def _canon_group(tpid: int) -> list[int]:
+        entry = pid_map.get(tpid) or {}
+        canon = int(entry.get("merged_into_profile_id") or tpid)
+        grp_ids = [tpid]
+        if canon > 0 and canon not in grp_ids:
+            grp_ids.append(canon)
+        for r_pid, r_ent in pid_map.items():
+            if int(r_ent.get("merged_into_profile_id") or r_pid) == canon and r_pid not in grp_ids:
+                grp_ids.append(r_pid)
+        return grp_ids
+
+    patched_count = 0
+    all_ok = True
+    for m_grp in group_matches_by_id(recent_rows):
+        recs = m_grp.get("records") or []
+        if not recs:
+            continue
+        primary = recs[0]
+        if str(primary.get("mode") or "").strip() not in AUTOMATCH_MODES:
+            continue
+        match_id = int(m_grp.get("match_id") or primary.get("match_id") or 0)
+        comp_ts = int(primary.get("completion_time", 0) or 0)
+        if match_id <= 0 or comp_ts <= 0 or match_id in done_mids:
+            continue
+
+        hydrated_bgs: dict[str, Any] = {}
+        for rec in recs:
+            if isinstance(rec.get("battlegroups"), dict) and rec["battlegroups"] and not hydrated_bgs:
+                hydrated_bgs = dict(rec["battlegroups"])
+        if hydrated_bgs:
+            for rec in recs:
+                if not rec.get("battlegroups"):
+                    rec["battlegroups"] = dict(hydrated_bgs)
+        for rec in recs:
+            enrich_match_with_roster(rec, roster_maps)
+
+        had_legacy = False
+        for rec in recs:
+            tpid = int(rec.get("tracked_profile_id", 0) or 0)
+            if tpid <= 0:
+                continue
+            pid_group = _canon_group(tpid)
+            for opp in rec.get("opponents") or []:
+                if not isinstance(opp, dict):
+                    continue
+                opp_pid = int(opp.get("profile_id", 0) or 0)
+                if opp_pid > 0 and opp_pid not in pid_group:
+                    if db.had_legacy_same_day_nemesis(pid_group, opp_pid, comp_ts, match_id):
+                        had_legacy = True
+                        break
+            if had_legacy:
+                break
+
+        new_nem = enrich_group_with_nemesis(db, m_grp, roster_maps=roster_maps)
+        new_freg = enrich_group_with_fregues(db, m_grp, roster_maps=roster_maps)
+        if not had_legacy and not new_nem and not new_freg:
+            continue
+
+        existing_msg_id = next(
+            (
+                str(r.get("discord_message_id") or "").strip()
+                for r in recs
+                if str(r.get("discord_message_id") or "").strip().isdigit()
+                and len(str(r.get("discord_message_id") or "").strip()) >= 15
+            ),
+            "",
+        )
+        if not existing_msg_id:
+            continue
+
+        if patched_count >= max(1, int(max_patches)):
+            all_ok = False
+            break
+
+        if _patch_match_card_with_battlegroups(
+            db,
+            discord,
+            m_grp,
+            existing_msg_id,
+            roster_maps,
+            log_suffix="com atualização Nêmesis/Freguês (2023+)",
+        ):
+            patched_count += 1
+            done_mids.add(match_id)
+        else:
+            all_ok = False
+
+    if all_ok:
+        db.set_state("rivalry_card_rules_version", CURRENT_RIVALRY_RULE_VERSION)
+        if raw_done:
+            db.set_state("rivalry_card_patch_done_v2", "[]")
+    elif done_mids:
+        db.set_state(
+            "rivalry_card_patch_done_v2",
+            json.dumps(sorted(done_mids), separators=(",", ":")),
+        )
+    if patched_count > 0:
+        logger.info(
+            "[RIVALRY PATCH] %d card(s) recente(s) atualizado(s) silenciosamente no Discord após migração Nêmesis/Freguês (2023+).",
+            patched_count,
+        )
+    return patched_count
+
+
+def _enrich_group_with_rivalry(
     db: MatchDatabase,
     grp: dict[str, Any],
+    *,
+    kind: str,
     roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Calcula em tempo real a condição de Nemesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4):
-    trigger >= 2 confrontos Automatch no mesmo dia UTC contra o mesmo oponente Steam; após o trigger,
-    contabiliza todas as partidas Automatch contra aquele oponente. Retorna lista ordenada de rivalidades ativas.
+    Calcula em tempo real a condição simétrica de Nêmesis ('nemesis') ou Freguês ('fregues')
+    em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4) ao longo de todo o histórico CoH3 (2023+).
     """
+    if kind not in ("nemesis", "fregues"):
+        raise ValueError(f"Tipo de rivalidade inválido: {kind}")
+
     recs = grp.get("records") or [grp.get("primary") or grp]
     primary = recs[0]
+    single_key = kind
+    list_key = f"{kind}_list"
+
+    # Limpa eventuais valores anteriores antes de reavaliar (ex.: PATCH retroativo de card)
+    grp.pop(single_key, None)
+    grp.pop(list_key, None)
+    for r in recs:
+        if isinstance(r, dict):
+            r.pop(single_key, None)
+            r.pop(list_key, None)
+    if isinstance(grp.get("primary"), dict):
+        grp["primary"].pop(single_key, None)
+        grp["primary"].pop(list_key, None)
+
     if str(primary.get("mode") or "").strip() not in AUTOMATCH_MODES:
         return []
 
@@ -2003,6 +2162,16 @@ def enrich_group_with_nemesis(
         disp = str(entry.get("original_alias") or "").strip()
         return canon, group, disp
 
+    def _rank_key(item: dict[str, Any]) -> tuple[int, int, int, float]:
+        w = int(item.get("wins", 0) or 0)
+        l = int(item.get("losses", 0) or 0)
+        is_new = 1 if item.get("is_new_trigger") else 0
+        wr = float(item.get("win_rate", 0.0) or 0.0)
+        if kind == "nemesis":
+            return (l - w, l, is_new, -wr)
+        return (w - l, w, is_new, wr)
+
+    status_fn = db.get_nemesis_status if kind == "nemesis" else db.get_fregues_status
     best_by_opponent: dict[int, dict[str, Any]] = {}
     seen_pairs: set[tuple[int, int]] = set()
 
@@ -2024,7 +2193,7 @@ def enrich_group_with_nemesis(
                 continue
             seen_pairs.add((canon_pid, opp_pid))
 
-            nem = db.get_nemesis_status(
+            entry = status_fn(
                 tracked_profile_ids=pid_group,
                 opponent_profile_id=opp_pid,
                 up_to_completion_time=comp_ts,
@@ -2032,38 +2201,52 @@ def enrich_group_with_nemesis(
                 current_opponent_alias=str(opp.get("alias") or ""),
                 current_opponent_steam_id=str(opp.get("steam_id") or ""),
             )
-            if not nem:
+            if not entry:
                 continue
-            nem["tracked_alias"] = tracked_disp
+            entry["tracked_alias"] = tracked_disp
             prev = best_by_opponent.get(opp_pid)
-            if prev is None or (
-                int(nem["total"]),
-                1 if nem["is_new_trigger"] else 0,
-                int(nem["same_day_games"]),
-            ) > (
-                int(prev["total"]),
-                1 if prev["is_new_trigger"] else 0,
-                int(prev["same_day_games"]),
-            ):
-                best_by_opponent[opp_pid] = nem
+            if prev is None or _rank_key(entry) > _rank_key(prev):
+                best_by_opponent[opp_pid] = entry
 
     if not best_by_opponent:
         return []
 
-    nemesis_list = sorted(
-        best_by_opponent.values(),
-        key=lambda x: (-int(x["total"]), -(1 if x["is_new_trigger"] else 0), -int(x["same_day_games"])),
-    )
-    top_nem = nemesis_list[0]
-    grp["nemesis"] = top_nem
-    grp["nemesis_list"] = nemesis_list
+    rivalry_list = sorted(best_by_opponent.values(), key=_rank_key, reverse=True)
+    top_entry = rivalry_list[0]
+    grp[single_key] = top_entry
+    grp[list_key] = rivalry_list
     for r in recs:
-        r["nemesis"] = top_nem
-        r["nemesis_list"] = nemesis_list
+        if isinstance(r, dict):
+            r[single_key] = top_entry
+            r[list_key] = rivalry_list
     if isinstance(grp.get("primary"), dict):
-        grp["primary"]["nemesis"] = top_nem
-        grp["primary"]["nemesis_list"] = nemesis_list
-    return nemesis_list
+        grp["primary"][single_key] = top_entry
+        grp["primary"][list_key] = rivalry_list
+    return rivalry_list
+
+
+def enrich_group_with_nemesis(
+    db: MatchDatabase,
+    grp: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Calcula em tempo real a condição de Nêmesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4)
+    ao longo de todo o histórico CoH3 (2023+): adversários de quem os Veteranos apanham regularmente.
+    """
+    return _enrich_group_with_rivalry(db, grp, kind="nemesis", roster_maps=roster_maps)
+
+
+def enrich_group_with_fregues(
+    db: MatchDatabase,
+    grp: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Calcula em tempo real a condição de Freguês em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4)
+    ao longo de todo o histórico CoH3 (2023+): adversários que apanham regularmente dos Veteranos.
+    """
+    return _enrich_group_with_rivalry(db, grp, kind="fregues", roster_maps=roster_maps)
 
 
 def enrich_group_with_kryptonite(
@@ -2626,6 +2809,20 @@ def run_cycle(
                         extra_nem,
                         grp["match_id"],
                     )
+                freg_list = enrich_group_with_fregues(db, grp, roster_maps=roster_maps)
+                if freg_list:
+                    top_freg = freg_list[0]
+                    extra_freg = f" (+{len(freg_list) - 1} freguês(es))" if len(freg_list) > 1 else ""
+                    logger.info(
+                        "[FREGUES] %s vs %s -> %dV-%dD (%s)%s [#%d]",
+                        top_freg.get("tracked_alias"),
+                        top_freg.get("opponent_alias"),
+                        int(top_freg.get("wins", 0)),
+                        int(top_freg.get("losses", 0)),
+                        "NOVO TRIGGER" if top_freg.get("is_new_trigger") else "ATIVO",
+                        extra_freg,
+                        grp["match_id"],
+                    )
                 krypt_list = enrich_group_with_kryptonite(db, grp, roster_maps=roster_maps)
                 if krypt_list:
                     top_k = krypt_list[0]
@@ -2886,12 +3083,20 @@ def run_cycle(
                 max_age_sec=roster_patch_window_sec,
                 max_patches=15,
             )
+            rivalry_patched_cards = refresh_recent_cards_after_rivalry_rule_change(
+                db=db,
+                discord=discord,
+                roster_maps=roster_maps,
+                max_age_sec=roster_patch_window_sec,
+                max_patches=50,
+            )
             min_panel_ts = max(display_since_ts, now_ts - window_sec) if cleanup_hours > 0 else display_since_ts
 
             if (
                 cards_confirmed > 0
                 or bg_patched_cards > 0
                 or roster_patched_cards > 0
+                or rivalry_patched_cards > 0
                 or newly_finished
                 or players_changed
                 or tracked_changed

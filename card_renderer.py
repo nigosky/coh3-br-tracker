@@ -1616,10 +1616,12 @@ def _draw_two_team_columns(
     is_duel: bool = False,
     has_any_bg: bool = False,
     nemesis_opponent_pids: set[int] | None = None,
+    fregues_opponent_pids: set[int] | None = None,
     smurf_opponent_pids: set[int] | None = None,
 ) -> None:
     """Desenha as duas colunas amplas (Allies à esquerda, Axis à direita) com Battlegroup tático sob o nick."""
     nem_pids = nemesis_opponent_pids or set()
+    freg_pids = fregues_opponent_pids or set()
     smurf_pids = smurf_opponent_pids or set()
     hdr_bg = (30, 26, 18, 255) if is_duel else (22, 24, 30, 255)
     sep_col = (96, 78, 34, 255) if is_duel else (46, 50, 62, 255)
@@ -1693,6 +1695,7 @@ def _draw_two_team_columns(
             is_tracked = bool(pl.get("is_tracked"))
             is_veterano = is_tracked or bool(pl.get("is_br_roster"))
             is_nemesis_opp = pl_pid > 0 and pl_pid in nem_pids
+            is_fregues_opp = pl_pid > 0 and pl_pid in freg_pids
             is_smurf_opp = (not is_veterano) and pl_pid > 0 and pl_pid in smurf_pids
 
             if is_veterano:
@@ -1710,10 +1713,12 @@ def _draw_two_team_columns(
 
             badge_sz = 20 if has_any_bg else 22
             nem_badge_sz = 18
+            freg_badge_sz = 18
             smurf_badge_sz = 18
             badge_reserve = (
                 ((badge_sz + 8) if is_veterano else 0)
                 + ((nem_badge_sz + 7) if is_nemesis_opp else 0)
+                + ((freg_badge_sz + 7) if is_fregues_opp else 0)
                 + ((smurf_badge_sz + 7) if is_smurf_opp else 0)
             )
             alias_sz = (20 if is_veterano else 18) if has_any_bg else (21 if is_veterano else 19)
@@ -1729,6 +1734,8 @@ def _draw_two_team_columns(
                     alias_color = (253, 212, 118, 255)
                 elif is_nemesis_opp:
                     alias_color = (253, 196, 206, 255)
+                elif is_fregues_opp:
+                    alias_color = (153, 246, 228, 255)
                 else:
                     alias_color = (182, 190, 204, 255) if has_any_bg else (176, 184, 198, 255)
                 if has_any_bg:
@@ -1768,6 +1775,23 @@ def _draw_two_team_columns(
                     color=(255, 241, 242, 255),
                 )
                 badge_cursor_x += nem_badge_sz + 5
+            if is_fregues_opp:
+                fb_y = alias_y + 2
+                draw.rounded_rectangle(
+                    (badge_cursor_x, fb_y, badge_cursor_x + freg_badge_sz, fb_y + freg_badge_sz),
+                    radius=4,
+                    fill=(15, 118, 110, 255),
+                    outline=(94, 234, 212, 220),
+                    width=1,
+                )
+                _draw_fregues_target_icon(
+                    draw,
+                    badge_cursor_x + freg_badge_sz / 2.0,
+                    fb_y + freg_badge_sz / 2.0,
+                    size=11,
+                    color=(240, 253, 250, 255),
+                )
+                badge_cursor_x += freg_badge_sz + 5
             if is_smurf_opp:
                 sb_y = alias_y + 2
                 draw.rounded_rectangle(
@@ -1915,16 +1939,18 @@ def _draw_nemesis_footer_bar(
         _draw_nemesis_swords_icon(draw, content_x + 6, pill_y + pill_h / 2, size=13, color=(255, 241, 242, 255))
         draw.text((content_x + 18, pill_y + 4), badge_txt, font=badge_fnt, fill=(255, 241, 242, 255))
 
-        # Metadados à direita (taxa de vitória + contagem de jogos + eventuais rivais extras em 3v3/4v4)
-        if same_day >= 2 and total == same_day:
-            meta_txt = f"{wr_pct}%  •  {same_day} jogos hoje (UTC)"
-        elif same_day >= 2:
-            meta_txt = f"{wr_pct}%  •  {total} jogos ({same_day} hoje UTC)"
-        else:
-            meta_txt = f"{wr_pct}%  •  {total} jogos no histórico"
+        # Metadados à direita (WR% + contagem histórica 2023+ + sequência ou ano inicial + rivais extras)
+        loss_streak = int(nem.get("loss_streak", 0) or 0)
+        since_year = int(nem.get("since_year", 0) or 0)
+        meta_parts = [f"{wr_pct}% WR", f"{total} jogos"]
+        if loss_streak >= 4:
+            meta_parts.append(f"{loss_streak}D seg.")
+        elif since_year >= 2023:
+            meta_parts.append(f"desde {since_year}")
         if idx == len(visible) - 1 and extra_rivals > 0:
             lbl_extra = "rival" if extra_rivals == 1 else "rivais"
-            meta_txt = f"{meta_txt}  •  +{extra_rivals} {lbl_extra}"
+            meta_parts.append(f"+{extra_rivals} {lbl_extra}")
+        meta_txt = "  •  ".join(meta_parts)
 
         meta_fnt = pick_font(meta_txt, size=13, bold=True, condensed=True)
         meta_w = text_width(draw, meta_txt, meta_fnt)
@@ -1982,6 +2008,164 @@ def _draw_nemesis_footer_bar(
         if is_krypt_nem:
             _draw_kryptonite_crystal_icon(draw, cursor_x + 6, ry + row_h / 2.0, size=13, color=(236, 252, 203, 255))
             cursor_x += krypt_icon_w
+
+        draw.text((cursor_x, ty_name), opp_disp, font=opp_fnt, fill=(241, 245, 249, 255))
+
+
+def _draw_fregues_target_icon(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    size: int = 13,
+    color: tuple[int, int, int, int] = (240, 253, 250, 255),
+) -> None:
+    """Desenha um alvo vetorial nítido (mira/bullseye) para o selo FREGUÊS."""
+    r = max(4.5, size / 2.0)
+    ring_r = r * 0.72
+    draw.ellipse((cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r), outline=color, width=1)
+    # 4 hastes cardinais da mira
+    tick_out = r * 1.02
+    tick_in = r * 0.44
+    draw.line([(cx, cy - tick_out), (cx, cy - tick_in)], fill=color, width=1)
+    draw.line([(cx, cy + tick_in), (cx, cy + tick_out)], fill=color, width=1)
+    draw.line([(cx - tick_out, cy), (cx - tick_in, cy)], fill=color, width=1)
+    draw.line([(cx + tick_in, cy), (cx + tick_out, cy)], fill=color, width=1)
+    # Ponto central do alvo
+    dot_r = max(1.3, r * 0.24)
+    draw.ellipse((cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r), fill=color)
+
+
+def _draw_fregues_footer_bar(
+    draw: ImageDraw.ImageDraw,
+    width: int,
+    y_bar: int,
+    bar_h: int,
+    fregues_entries: list[dict[str, Any]],
+    fallback_tracked_alias: str,
+    is_duel: bool = False,
+) -> None:
+    """Desenha a faixa tática turquesa/petróleo inferior de FREGUÊS (oposto ao Nemesis — até 2 linhas compactas)."""
+    if not fregues_entries:
+        return
+
+    visible = fregues_entries[:2]
+    extra_fregueses = max(0, len(fregues_entries) - len(visible))
+    any_new = any(bool(f.get("is_new_trigger")) for f in visible)
+
+    # Paleta turquesa / teal-petróleo (oposta ao carmesim do Nemesis, distinta de Criptonita e Smurf)
+    bg_col = (12, 34, 38, 255) if not is_duel else (16, 36, 34, 255)
+    top_border = (45, 212, 191, 225) if any_new else (20, 184, 166, 200)
+    left_bar = (45, 212, 191, 255) if any_new else (20, 184, 166, 255)
+
+    draw.rectangle((0, y_bar, width, y_bar + bar_h), fill=bg_col)
+    draw.line([(0, y_bar), (width, y_bar)], fill=top_border, width=2)
+    draw.rectangle((0, y_bar, 8, y_bar + bar_h), fill=left_bar)
+
+    row_h = 34 if len(visible) > 1 else bar_h
+    base_y = y_bar + (3 if len(visible) > 1 else 0)
+    badge_fnt = pick_font("NOVO FREGUÊS", size=13, bold=True, condensed=True)
+    uniform_pill_w = max(
+        int(text_width(draw, "NOVO FREGUÊS" if bool(f.get("is_new_trigger")) else "FREGUÊS", badge_fnt) + 34)
+        for f in visible
+    )
+
+    for idx, freg in enumerate(visible):
+        ry = base_y + idx * row_h
+        if idx > 0:
+            draw.line([(16, ry), (width - 16, ry)], fill=(24, 72, 76, 200), width=1)
+
+        is_new = bool(freg.get("is_new_trigger"))
+        wins = int(freg.get("wins", 0) or 0)
+        losses = int(freg.get("losses", 0) or 0)
+        total = int(freg.get("total", wins + losses) or (wins + losses))
+        wr_pct = int(round(float(freg.get("win_rate", 0.0) or 0.0)))
+        opp_pid = int(freg.get("opponent_profile_id", 0) or 0)
+        raw_opp = str(freg.get("opponent_alias") or "").strip()
+        opp_alias = raw_opp if raw_opp else (f"ID #{opp_pid}" if opp_pid > 0 else "Oponente")
+        br_alias = str(freg.get("tracked_alias") or fallback_tracked_alias or "Veterano").strip()
+
+        # Pílula FREGUÊS / NOVO FREGUÊS à esquerda (turquesa-petróleo + borda água-marinha)
+        badge_txt = "NOVO FREGUÊS" if is_new else "FREGUÊS"
+        badge_tw = text_width(draw, badge_txt, badge_fnt)
+        pill_x = 20
+        pill_h = 24
+        pill_y = ry + (row_h - pill_h) // 2 + (1 if len(visible) == 1 else 0)
+        pill_w = uniform_pill_w
+        pill_fill = (13, 148, 136, 255) if is_new else (15, 118, 110, 255)
+        pill_outline = (94, 234, 212, 225) if is_new else (45, 212, 191, 190)
+        draw.rounded_rectangle(
+            (pill_x, pill_y, pill_x + pill_w, pill_y + pill_h),
+            radius=6,
+            fill=pill_fill,
+            outline=pill_outline,
+            width=1,
+        )
+        content_w = 18 + badge_tw
+        content_x = pill_x + (pill_w - content_w) / 2.0
+        _draw_fregues_target_icon(draw, content_x + 6, pill_y + pill_h / 2.0, size=13, color=(240, 253, 250, 255))
+        draw.text((content_x + 18, pill_y + 4), badge_txt, font=badge_fnt, fill=(240, 253, 250, 255))
+
+        # Metadados à direita (WR% + contagem histórica 2023+ + sequência de vitórias ou ano inicial + extras)
+        win_streak = int(freg.get("win_streak", 0) or 0)
+        since_year = int(freg.get("since_year", 0) or 0)
+        meta_parts = [f"{wr_pct}% WR", f"{total} jogos"]
+        if win_streak >= 4:
+            meta_parts.append(f"{win_streak}V seg.")
+        elif since_year >= 2023:
+            meta_parts.append(f"desde {since_year}")
+        if idx == len(visible) - 1 and extra_fregueses > 0:
+            lbl_extra = "freguês" if extra_fregueses == 1 else "fregueses"
+            meta_parts.append(f"+{extra_fregueses} {lbl_extra}")
+        meta_txt = "  •  ".join(meta_parts)
+
+        meta_fnt = pick_font(meta_txt, size=13, bold=True, condensed=True)
+        meta_w = text_width(draw, meta_txt, meta_fnt)
+        meta_x = width - 20 - meta_w
+        ty_meta = ry + (row_h - 16) // 2 + 1
+        draw.text((meta_x, ty_meta), meta_txt, font=meta_fnt, fill=(153, 246, 228, 255))
+
+        # Placar central: <Veterano>  <W>V - <L>D  vs  <Oponente>
+        cursor_x = pill_x + pill_w + 16
+        avail_px = max(140, int(meta_x - cursor_x - 20))
+
+        w_str = f"{wins}V"
+        sep_str = " - "
+        l_str = f"{losses}D"
+        vs_str = "  vs  "
+        score_fnt = pick_font("99V - 99D", size=16, bold=True, condensed=True)
+        vs_fnt = pick_font(vs_str, size=14, bold=False)
+
+        fixed_score_w = (
+            text_width(draw, w_str, score_fnt)
+            + text_width(draw, sep_str, score_fnt)
+            + text_width(draw, l_str, score_fnt)
+            + text_width(draw, vs_str, vs_fnt)
+            + 12
+        )
+        name_budget = max(80, int(avail_px - fixed_score_w))
+        br_max = max(50, int(name_budget * 0.48))
+        opp_max = max(50, int(name_budget - br_max))
+
+        br_disp, br_fnt = truncate_to_px(draw, br_alias, max_px=br_max, size=15, bold=True)
+        opp_disp, opp_fnt = truncate_to_px(draw, opp_alias, max_px=opp_max, size=15, bold=False)
+
+        ty_name = ry + (row_h - 18) // 2
+        ty_score = ry + (row_h - 19) // 2
+
+        draw.text((cursor_x, ty_name), br_disp, font=br_fnt, fill=(253, 230, 138, 255) if is_duel else (125, 211, 252, 255))
+        cursor_x += text_width(draw, br_disp, br_fnt) + 12
+
+        draw.text((cursor_x, ty_score), w_str, font=score_fnt, fill=(74, 222, 128, 255))
+        cursor_x += text_width(draw, w_str, score_fnt)
+
+        draw.text((cursor_x, ty_score), sep_str, font=score_fnt, fill=(148, 163, 184, 255))
+        cursor_x += text_width(draw, sep_str, score_fnt)
+
+        draw.text((cursor_x, ty_score), l_str, font=score_fnt, fill=(248, 113, 113, 255))
+        cursor_x += text_width(draw, l_str, score_fnt)
+
+        draw.text((cursor_x, ty_name + 1), vs_str, font=vs_fnt, fill=(126, 178, 176, 255))
+        cursor_x += text_width(draw, vs_str, vs_fnt)
 
         draw.text((cursor_x, ty_name), opp_disp, font=opp_fnt, fill=(241, 245, 249, 255))
 
@@ -2320,6 +2504,15 @@ def render_single_match_card_png(
         if isinstance(nemesis_raw, dict) and bool(nemesis_raw.get("triggered")):
             nemesis_entries = [nemesis_raw]
 
+    raw_freg_list = grp.get("fregues_list") or primary.get("fregues_list")
+    fregues_entries: list[dict[str, Any]] = []
+    if isinstance(raw_freg_list, list):
+        fregues_entries = [f for f in raw_freg_list if isinstance(f, dict) and bool(f.get("triggered"))]
+    if not fregues_entries:
+        freg_raw = grp.get("fregues") or primary.get("fregues")
+        if isinstance(freg_raw, dict) and bool(freg_raw.get("triggered")):
+            fregues_entries = [freg_raw]
+
     raw_krypt_list = grp.get("kryptonite_list") or primary.get("kryptonite_list")
     kryptonite_entries: list[dict[str, Any]] = []
     if isinstance(raw_krypt_list, list):
@@ -2329,10 +2522,11 @@ def render_single_match_card_png(
         if isinstance(krypt_raw, dict) and bool(krypt_raw.get("triggered")):
             kryptonite_entries = [krypt_raw]
 
-    # Nemesis e Criptonita aplicam-se a todos os modos Automatch (1v1, 2v2, 3v3, 4v4), excluindo Custom/IA
+    # Nemesis, Freguês e Criptonita aplicam-se a todos os modos Automatch (1v1, 2v2, 3v3, 4v4), excluindo Custom/IA
     mode_lbl = format_mode_vs(str(primary.get("mode") or ""))
     if mode_lbl not in ("1 vs 1", "2 vs 2", "3 vs 3", "4 vs 4"):
         nemesis_entries = []
+        fregues_entries = []
         kryptonite_entries = []
     elif not any(isinstance(r, dict) and not bool(r.get("win")) for r in recs):
         # Garantia extra: Criptonita NUNCA aparece em cards de vitória
@@ -2342,6 +2536,11 @@ def render_single_match_card_png(
         int(n.get("opponent_profile_id", 0) or 0)
         for n in nemesis_entries
         if int(n.get("opponent_profile_id", 0) or 0) > 0
+    }
+    fregues_opp_pids = {
+        int(f.get("opponent_profile_id", 0) or 0)
+        for f in fregues_entries
+        if int(f.get("opponent_profile_id", 0) or 0) > 0
     }
 
     raw_smurf_alerts = grp.get("smurf_alerts") or primary.get("smurf_alerts") or []
@@ -2362,9 +2561,10 @@ def render_single_match_card_png(
     row_pitch = 62 if has_any_bg else 52
     columns_bottom_h = duel_banner_h + top_bar_h + col_hdr_h + max_team * row_pitch + 20
     nemesis_bar_h = (74 if len(nemesis_entries) >= 2 else 42) if nemesis_entries else 0
+    fregues_bar_h = (74 if len(fregues_entries) >= 2 else 42) if fregues_entries else 0
     kryptonite_bar_h = (74 if len(kryptonite_entries) >= 2 else 42) if kryptonite_entries else 0
     smurf_bar_h = (104 if len(smurf_entries) >= 2 else 56) if smurf_entries else 0
-    total_h = columns_bottom_h + nemesis_bar_h + kryptonite_bar_h + smurf_bar_h
+    total_h = columns_bottom_h + nemesis_bar_h + fregues_bar_h + kryptonite_bar_h + smurf_bar_h
 
     bg_fill = (28, 25, 20, 255) if is_duel else (26, 28, 34, 255)
     img = Image.new("RGBA", (width, total_h), bg_fill)
@@ -2441,6 +2641,7 @@ def render_single_match_card_png(
         is_duel=is_duel,
         has_any_bg=has_any_bg,
         nemesis_opponent_pids=nemesis_opp_pids,
+        fregues_opponent_pids=fregues_opp_pids,
         smurf_opponent_pids=smurf_opp_pids,
     )
 
@@ -2466,6 +2667,28 @@ def render_single_match_card_png(
             is_duel=is_duel,
         )
 
+    if fregues_entries:
+        resolved_freg: list[dict[str, Any]] = []
+        all_rendered = allies_p + axis_p
+        for f in fregues_entries:
+            fcopy = dict(f)
+            if not str(fcopy.get("tracked_alias") or "").strip():
+                f_tpid = int(fcopy.get("tracked_profile_id", 0) or 0)
+                fcopy["tracked_alias"] = next(
+                    (str(p.get("alias") or "") for p in all_rendered if int(p.get("profile_id", 0)) == f_tpid),
+                    str(primary.get("tracked_alias") or "Veterano"),
+                )
+            resolved_freg.append(fcopy)
+        _draw_fregues_footer_bar(
+            draw=draw,
+            width=width,
+            y_bar=columns_bottom_h + nemesis_bar_h,
+            bar_h=fregues_bar_h,
+            fregues_entries=resolved_freg,
+            fallback_tracked_alias=str(primary.get("tracked_alias") or "Veterano"),
+            is_duel=is_duel,
+        )
+
     if kryptonite_entries:
         resolved_krypt: list[dict[str, Any]] = []
         all_rendered = allies_p + axis_p
@@ -2482,7 +2705,7 @@ def render_single_match_card_png(
             img=img,
             draw=draw,
             width=width,
-            y_bar=columns_bottom_h + nemesis_bar_h,
+            y_bar=columns_bottom_h + nemesis_bar_h + fregues_bar_h,
             bar_h=kryptonite_bar_h,
             kryptonite_entries=resolved_krypt,
             fallback_tracked_alias=str(primary.get("tracked_alias") or "Veterano"),
@@ -2493,7 +2716,7 @@ def render_single_match_card_png(
         _draw_smurf_alert_footer_bar(
             draw=draw,
             width=width,
-            y_bar=columns_bottom_h + nemesis_bar_h + kryptonite_bar_h,
+            y_bar=columns_bottom_h + nemesis_bar_h + fregues_bar_h + kryptonite_bar_h,
             bar_h=smurf_bar_h,
             smurf_alerts=smurf_entries,
             is_duel=is_duel,
