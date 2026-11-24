@@ -737,6 +737,129 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             if res_alert is not None:
                 self.assertNotEqual(res_alert["suspected_main_profile_id"], main_pid)
 
+    def test_nemesis_fregues_and_kryptonite_sqlite_hydration_and_live_scoring(self) -> None:
+        main_pid = 79327
+        main_sid = "76561198014114284"
+        cand_pid = 1_995_001
+        cand_sid = "76561199995001000"
+        nem_pid = 550001
+        freg_pid = 550002
+
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "rk_live.db")
+            # Popula histórico permanente 2023+ no SQLite para main_pid (Nêmesis #550001, Freguês #550002 + Criptonitas de mapa/BG)
+            nem_rows = []
+            # 1V-5D contra Nêmesis #550001 em 3 dias distintos
+            for i in range(6):
+                nem_rows.append((main_pid, nem_pid, 30000 + i, 1_710_000_000 + i * 86400, 19790 + i, 1 if i == 0 else 0, "1v1", "CarrascoBR", "de"))
+            # 6V-1D contra Freguês #550002 em 3 dias distintos
+            for i in range(7):
+                nem_rows.append((main_pid, freg_pid, 31000 + i, 1_711_000_000 + i * 86400, 19800 + i, 0 if i == 0 else 1, "1v1", "FreguesFixo", "us"))
+            db.insert_nemesis_matches_batch(nem_rows)
+
+            krypt_rows = []
+            mid_seq = 40000
+            for map_name, wins_n, losses_n, bg_key in (
+                ("Foggia Airfield", 2, 8, "coastal_ger"),
+                ("El Alamein", 2, 7, "coastal_ger"),
+                ("Pachino Farmlands", 9, 2, "mechanized_ger"),
+                ("Langres", 8, 2, "mechanized_ger"),
+            ):
+                for j in range(wins_n + losses_n):
+                    mid_seq += 1
+                    krypt_rows.append(
+                        (
+                            main_pid,
+                            mid_seq,
+                            1_720_000_000 + mid_seq * 100,
+                            1 if j < wins_n else 0,
+                            "1v1",
+                            map_name,
+                            "[]",
+                            json.dumps([bg_key]),
+                        )
+                    )
+            db.insert_kryptonite_matches_batch(krypt_rows)
+
+            # Testa os novos métodos indexados do SQLite diretamente
+            fetched_nem = db.get_nemesis_matches_for_opponents({nem_pid, freg_pid})
+            self.assertEqual(len(fetched_nem), 13)
+            kprof = db.get_kryptonite_profile_by_tracked_pids({main_pid})
+            self.assertEqual(kprof[main_pid]["map_wl"]["Foggia Airfield"], [2, 8])
+            self.assertEqual(kprof[main_pid]["enemy_bg_wl"]["coastal_ger"], [4, 15])
+
+            # Constrói contexto e hidrata sob demanda a partir do SQLite sem duplicar match_ids
+            ctx = sa.build_smurf_alert_context(
+                db,
+                relic=None,
+                custom_players=[{"profile_id": main_pid, "steam_id": main_sid, "original_alias": "Chacineiro"}],
+                br_community_data={},
+                osint_client=_FakeOSINTClient({}),
+                allow_network=False,
+            )
+            # Pré-carrega 1 confronto já visto (match_id=30000) para provar zero dupla contagem!
+            main_tel = ctx.telemetry_by_pid.setdefault(main_pid, sa.PlayerTelemetry(profile_id=main_pid, games=40, wins=21))
+            main_tel.record_match_outcome_profile(won=True, ct=1_710_000_000, match_id=30000, enemy_pids=[nem_pid])
+            for h in (22, 23, 0, 1):
+                main_tel.hour_counts[h] += 8
+            main_tel.apm_values.extend([90.0] * 6)
+
+            # Candidata smurf com WR inflado (72%), mesmos Nêmesis/Freguês e mesmas Criptonitas/Facilidades
+            cand_tel = sa.PlayerTelemetry(profile_id=cand_pid, games=36, wins=26)
+            for h in (22, 23, 0, 1):
+                cand_tel.hour_counts[h] += 8
+            cand_tel.apm_values.extend([88.5] * 6)
+            cand_tel.opp_wl[nem_pid] = [0, 3]
+            cand_tel.opp_days[nem_pid] = {20100, 20102}
+            cand_tel.opp_wl[freg_pid] = [3, 0]
+            cand_tel.opp_days[freg_pid] = {20101, 20103}
+            cand_tel.map_wl = {
+                "Foggia Airfield": [1, 4],
+                "El Alamein": [1, 3],
+                "Pachino Farmlands": [8, 0],
+                "Langres": [7, 0],
+            }
+            cand_tel.enemy_bg_wl = {
+                "Italian Coastal": [1, 4],
+                "Mechanized": [6, 0],
+            }
+
+            sa._hydrate_rivalry_kryptonite_for_live_probe(db, cand_tel, ctx)
+            self.assertTrue(ctx.kryptonite_hydrated)
+            # Match 30000 não foi contado em dobro: continua exatamente 1V-5D!
+            self.assertEqual(main_tel.opp_wl[nem_pid], [1, 5])
+            self.assertEqual(main_tel.opp_wl[freg_pid], [6, 1])
+            self.assertEqual(main_tel.map_wl["Foggia Airfield"], [2, 8])
+            self.assertEqual(main_tel.enemy_bg_wl["Italian Coastal"], [4, 15])
+
+            scored = sa.score_live_smurf_pair(
+                {"profile_id": cand_pid, "steam_id": cand_sid, "alias": "SmurfLive", "country": "br", "max_elo": 1560, "total_matches": 85},
+                {"profile_id": main_pid, "steam_id": main_sid, "alias": "Chacineiro", "country": "br", "max_elo": 1600, "total_matches": 900},
+                cand_tel,
+                main_tel,
+                pid_aliases=ctx.pid_aliases,
+            )
+            self.assertGreaterEqual(scored["probability_pct"], 65)
+            self.assertEqual(scored["rivalry_kryptonite"]["pts"], 16.0)
+            self.assertEqual(scored["rivalry_kryptonite"]["shared_nemeses"], 1)
+            self.assertEqual(scored["rivalry_kryptonite"]["shared_fregueses"], 1)
+            self.assertTrue(any("Nêmesis/Freguês comum" in r for r in scored["top_reasons"]))
+            self.assertTrue(any("Criptonitas/Matchups" in r for r in scored["top_reasons"]))
+
+            # Anti-FP: conta com rivalidades invertidas e sem âncoras NUNCA dispara alerta
+            inv_tel = sa.PlayerTelemetry(profile_id=1_995_002, games=40, wins=20)
+            inv_tel.opp_wl[nem_pid] = [4, 0]
+            inv_tel.opp_wl[freg_pid] = [0, 4]
+            scored_inv = sa.score_live_smurf_pair(
+                {"profile_id": 1_995_002, "steam_id": "76561199995002000", "alias": "InnocentBR", "country": "br", "max_elo": 1560, "total_matches": 140},
+                {"profile_id": main_pid, "steam_id": main_sid, "alias": "Chacineiro", "country": "br", "max_elo": 1600, "total_matches": 900},
+                inv_tel,
+                main_tel,
+                pid_aliases=ctx.pid_aliases,
+            )
+            self.assertLess(scored_inv["rivalry_kryptonite"]["pts"], 0.0)
+            self.assertLessEqual(scored_inv["probability_pct"], 34)
+
 
 if __name__ == "__main__":
     unittest.main()
