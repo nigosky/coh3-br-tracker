@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 46 Veteranos independentes (0 mescladas) + 34 Outros BR de exibição passiva
-        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 46)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 34)
+        # 1. Roster padrão tem 45 Veteranos independentes (0 mescladas) + 39 Players Monitorados de exibição passiva
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 45)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 39)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -174,6 +174,21 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertIn(1119784, by_pid)
         self.assertEqual(by_pid[1119784]["original_alias"], "Tracker")
         self.assertEqual(by_pid[1119784]["steam_id"], "76561198000067932")
+        self.assertNotIn(1076221, by_pid)
+        self.assertIn(1076221, other_by_pid)
+        self.assertEqual(other_by_pid[1076221]["original_alias"], "Lucielle (Smurf: Colossus)")
+        self.assertEqual(other_by_pid[1076221].get("smurf_of"), "Colossus")
+        self.assertIn(164152, other_by_pid)
+        self.assertEqual(other_by_pid[164152]["original_alias"], "Sgt.Yoda")
+        self.assertFalse(other_by_pid[164152].get("smurf_of"))
+        for mon_pid, mon_alias in (
+            (941524, "Colossus"),
+            (40833, "Tokai Teio"),
+            (991551, "Caveira-."),
+            (667564, "Friedhelm Winter"),
+        ):
+            self.assertIn(mon_pid, other_by_pid)
+            self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)
         for exp_pid, exp_alias, exp_ctry in (
             (212034, "XAPA KENTE", "ca"),
             (7448, "icewarp", "za"),
@@ -200,7 +215,6 @@ class TestTrackerSharedRoster(unittest.TestCase):
             1487738: ("76561198602236177", "Državljan H (Smurf: arc)"),
             1482961: ("76561199886227102", "Vog (Smurf: arc)"),
             1390350: ("76561198089278659", "TearsInTheRain (Smurf: Chacineiro)"),
-            1076221: ("76561198815935562", "Lucielle (Smurf: Colossus)"),
         }
         for spid, (expected_sid, expected_alias) in expected_vet_smurfs.items():
             self.assertIn(spid, by_pid)
@@ -222,7 +236,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             1297853: ("76561198721980631", "Shadow (Smurf: Alekel)"),
             844225: ("76561198009000654", "『V』SKOBADARK"),
             1297804: ("76561198723667226", "Leite Moço (Smurf: 『V』SKOBADARK)"),
-            164152: ("76561198029749621", "seu pai (Smurf: Sgt.Yoda)"),
+            1076221: ("76561198815935562", "Lucielle (Smurf: Colossus)"),
         }
         for gpid, (expected_sid, expected_alias) in expected_pinned_other.items():
             self.assertNotIn(gpid, by_pid)
@@ -230,6 +244,21 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertEqual(other_by_pid[gpid]["steam_id"], expected_sid)
             self.assertEqual(other_by_pid[gpid]["original_alias"], expected_alias)
             self.assertTrue(other_by_pid[gpid].get("pin_alias"))
+
+        # Verifica parser retrocompatível (`monitorados` + `manual_other_br`)
+        parsed_mon = relic_api.parse_shared_manual_other_br_payload(
+            {
+                "schema_version": 1,
+                "veteranos": [],
+                "monitorados": [
+                    {"profile_id": 164152, "steam_id": "76561198029749621", "original_alias": "Sgt.Yoda", "country": "br"},
+                ],
+                "manual_other_br": [
+                    {"profile_id": 33487, "steam_id": "76561197995712470", "original_alias": "Generick", "country": "us"},
+                ],
+            }
+        )
+        self.assertEqual([int(r["profile_id"]) for r in parsed_mon], [164152, 33487])
 
         # 2. Enriquecimento da partida + extração do card + avatar independente:
         # Veteranos (#1333418 e #1390350) mantêm nome fixo e is_br_roster=True;
