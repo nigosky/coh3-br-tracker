@@ -56,7 +56,7 @@ DEFAULT_CONFIG_PATH = BASE_DIR / "config.json"
 CURRENT_SUMMARY_LAYOUT_VERSION = "v6_ptbr_arc_alekel_gabemerge"
 CURRENT_SUMMARY_CONTENT_VERSION = "v7_17_duration_label"
 CURRENT_MAP_NAMES_VERSION = "v1_coh3_patch_3_0_official_maps"
-CURRENT_RIVALRY_RULE_VERSION = "v2_lifetime_multiday_fregues"
+CURRENT_RIVALRY_RULE_VERSION = "v3_lifetime_multiday_fregues_60wr"
 BRT_TZ = timezone(timedelta(hours=-3))
 DEFAULT_DISCORD_CLEANUP_HOURS = 72
 DEFAULT_QUIET_AUDIT_HOURS = 3
@@ -1993,8 +1993,9 @@ def refresh_recent_cards_after_rivalry_rule_change(
         db.set_state("rivalry_card_rules_version", CURRENT_RIVALRY_RULE_VERSION)
         return 0
 
+    done_state_key = f"rivalry_card_patch_done_{CURRENT_RIVALRY_RULE_VERSION}"
     done_mids: set[int] = set()
-    raw_done = (db.get_state("rivalry_card_patch_done_v2") or "").strip()
+    raw_done = (db.get_state(done_state_key) or "").strip()
     if raw_done:
         try:
             parsed_done = json.loads(raw_done)
@@ -2095,10 +2096,10 @@ def refresh_recent_cards_after_rivalry_rule_change(
     if all_ok:
         db.set_state("rivalry_card_rules_version", CURRENT_RIVALRY_RULE_VERSION)
         if raw_done:
-            db.set_state("rivalry_card_patch_done_v2", "[]")
+            db.set_state(done_state_key, "[]")
     elif done_mids:
         db.set_state(
-            "rivalry_card_patch_done_v2",
+            done_state_key,
             json.dumps(sorted(done_mids), separators=(",", ":")),
         )
     if patched_count > 0:

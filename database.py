@@ -784,7 +784,7 @@ class MatchDatabase:
     RIVALRY_ZERO_OPP_MIN_GAMES: int = 4   # 0V-4D (Nêmesis) ou 4V-0D (Freguês)
     RIVALRY_MIN_TOTAL_GAMES: int = 5      # Ex.: 1V-4D / 4V-1D, 2V-5D / 5V-2D, 3V-6D / 6V-3D
     RIVALRY_MIN_DIFF: int = 3             # Diferença mínima de 3 vitórias a favor do lado dominante
-    RIVALRY_MIN_DOMINANT_WR: float = 65.0 # >= 65% de aproveitamento do lado dominante (<= 35% do dominado)
+    RIVALRY_MIN_DOMINANT_WR: float = 60.0 # >= 60% de aproveitamento do lado dominante (<= 40% do dominado)
     RIVALRY_MIN_DISTINCT_DAYS: int = 2    # Exige confrontos em >= 2 dias UTC distintos (bloqueia sessões de 1 único dia)
 
     @classmethod
@@ -800,8 +800,8 @@ class MatchDatabase:
         - Exige confrontos em >= 2 dias UTC distintos (quando `distinct_days` é informado),
           evitando que encontros diários/rematches em um único dia entrem em Nêmesis ou Freguês;
         - Invicto dominante: 0 derrotas e >= 4 vitórias (ex.: 4V-0D / 0V-4D); OU
-        - Domínio sustentado: >= 5 confrontos, saldo >= 3 e >= 65% WR do lado dominante
-          (ex.: 4V-1D, 5V-2D, 6V-3D, 8V-4D, 13V-7D).
+        - Domínio sustentado: >= 5 confrontos, saldo >= 3 e >= 60% WR do lado dominante
+          (ex.: 4V-1D, 5V-2D, 6V-3D, 9V-6D, 15V-10D, 24V-13D).
         """
         if distinct_days is not None and int(distinct_days) < cls.RIVALRY_MIN_DISTINCT_DAYS:
             return False

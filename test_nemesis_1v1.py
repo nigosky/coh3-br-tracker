@@ -78,13 +78,13 @@ def _make_match(
 
 class TestNemesisAndFreguesLifetime(unittest.TestCase):
     def test_symmetric_dominance_thresholds_reject_noise_and_balanced_scores(self) -> None:
-        # Rejeita amostras pequenas ou confrontos equilibrados (mesmo jogando várias vezes no mesmo dia)
-        for w, l in [(0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (2, 1), (1, 3), (3, 1), (2, 4), (4, 2), (3, 5), (5, 3), (10, 15), (15, 10)]:
+        # Rejeita amostras pequenas ou confrontos equilibrados (< 60% WR ou saldo < 3)
+        for w, l in [(0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (2, 1), (1, 3), (3, 1), (2, 4), (4, 2), (3, 5), (5, 3), (7, 10), (10, 7), (10, 14), (14, 10)]:
             self.assertFalse(MatchDatabase.is_nemesis_record(w, l), f"Nemesis não deve disparar em {w}V-{l}D")
             self.assertFalse(MatchDatabase.is_fregues_record(w, l), f"Freguês não deve disparar em {w}V-{l}D")
 
-        # Aceita domínio recorrente real em Nêmesis (Veterano apanhando) e Freguês (adversário apanhando)
-        for dom, und in [(4, 0), (5, 0), (4, 1), (5, 1), (5, 2), (6, 3), (8, 4), (10, 5), (13, 7), (15, 4), (21, 2)]:
+        # Aceita domínio recorrente real em Nêmesis (Veterano apanhando) e Freguês (adversário apanhando, >= 60% WR)
+        for dom, und in [(4, 0), (5, 0), (4, 1), (5, 1), (5, 2), (6, 3), (8, 4), (9, 6), (10, 5), (15, 10), (24, 13), (15, 4), (21, 2)]:
             self.assertTrue(MatchDatabase.is_nemesis_record(und, dom), f"Nemesis deveria disparar em {und}V-{dom}D")
             self.assertFalse(MatchDatabase.is_fregues_record(und, dom), f"Freguês nunca pode coexistir em {und}V-{dom}D")
             self.assertTrue(MatchDatabase.is_fregues_record(dom, und), f"Freguês deveria disparar em {dom}V-{und}D")
