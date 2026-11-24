@@ -537,6 +537,36 @@
         "⭐ Monitorado BR"
       ],
       "is_custom": true
+    },
+    {
+      "profile_id": 917917,
+      "alias": "arc (Smurf: arc)",
+      "original_alias": "arc (Smurf: arc)",
+      "steam_id": "76561198287157768",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 1160699,
+      "alias": "Bubebolos (Smurf: arc)",
+      "original_alias": "Bubebolos (Smurf: arc)",
+      "steam_id": "76561199814547622",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
+    },
+    {
+      "profile_id": 918241,
+      "alias": "Faint (Smurf: arc)",
+      "original_alias": "Faint (Smurf: arc)",
+      "steam_id": "76561199794093952",
+      "placements": [
+        "⭐ Monitorado BR"
+      ],
+      "is_custom": true
     }
   ],
   "auto_follow_top_br": true,
@@ -928,6 +958,53 @@
         "Vog",
         "Vog (arc)",
         "Vog (Smurf: arc)"
+      ]
+    },
+    {
+      "profile_id": 917917,
+      "steam_id": "76561198287157768",
+      "original_alias": "arc (Smurf: arc)",
+      "alias": "arc (Smurf: arc)",
+      "is_core_roster": true,
+      "smurf_of": "arc",
+      "known_aliases": [
+        "arc",
+        "arcxeno",
+        "Saffa",
+        "Dingo",
+        "zuza",
+        "arc (arc)",
+        "arc (Smurf: arc)"
+      ]
+    },
+    {
+      "profile_id": 1160699,
+      "steam_id": "76561199814547622",
+      "original_alias": "Bubebolos (Smurf: arc)",
+      "alias": "Bubebolos (Smurf: arc)",
+      "is_core_roster": true,
+      "smurf_of": "arc",
+      "known_aliases": [
+        "Bubebolos",
+        "Beeble",
+        "Dingo",
+        "Nardes",
+        "Bubebolos (arc)",
+        "Bubebolos (Smurf: arc)"
+      ]
+    },
+    {
+      "profile_id": 918241,
+      "steam_id": "76561199794093952",
+      "original_alias": "Faint (Smurf: arc)",
+      "alias": "Faint (Smurf: arc)",
+      "is_core_roster": true,
+      "smurf_of": "arc",
+      "known_aliases": [
+        "Faint",
+        "Saffa",
+        "Faint (arc)",
+        "Faint (Smurf: arc)"
       ]
     }
   ],
