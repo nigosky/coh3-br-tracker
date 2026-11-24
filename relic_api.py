@@ -60,6 +60,11 @@ SHARED_ROSTER_URL = "https://raw.githubusercontent.com/nigosky/coh3-br-lobby-rad
 SHARED_ROSTER_PATH_RE = re.compile(r"^/nigosky/coh3-br-lobby-radar/main/players_roster\.json$")
 MAX_SHARED_ROSTER_BYTES = 256 * 1024  # 256 KB teto rígido para players_roster.json
 
+# Catálogo público somente-leitura da comunidade BR de CoH3 (nigosky/coh3-br-lobby-radar)
+BR_COMMUNITY_URL = "https://raw.githubusercontent.com/nigosky/coh3-br-lobby-radar/main/br_community.json"
+BR_COMMUNITY_PATH_RE = re.compile(r"^/nigosky/coh3-br-lobby-radar/main/br_community\.json$")
+MAX_BR_COMMUNITY_BYTES = 2 * 1024 * 1024  # 2 MB teto rígido para br_community.json
+
 # Consulta somente-leitura de Battlegroups em páginas canônicas públicas do cohdb.com (respeitando robots.txt)
 COHDB_BASE_URL = "https://cohdb.com"
 ALLOWED_COHDB_HOSTS: frozenset[str] = frozenset({"cohdb.com"})
@@ -762,6 +767,8 @@ class RelicAPIClient(_RateLimitMixin):
         self._next_req_ts = 0.0
         self._rate_lock = threading.Lock()
         self._meta_lock = threading.Lock()
+        self._raw_history_lock = threading.Lock()
+        self._raw_history_cache: dict[int, dict[str, Any]] = {}
         self.races: dict[int, str] = dict(FALLBACK_RACES)
         self.match_types: dict[int, str] = {}
         self._metadata_loaded = False
@@ -1002,6 +1009,8 @@ class RelicAPIClient(_RateLimitMixin):
         active_roster_maps = roster_maps or build_roster_lookup_maps()
         url = f"{BASE_URL}/getRecentMatchHistoryByProfileId?title={TITLE_STEAM}&profile_id={pid_clean}"
         data = self._get_json(url)
+        with self._raw_history_lock:
+            self._raw_history_cache[pid_clean] = data
 
         profiles_by_id: dict[int, dict[str, Any]] = {
             int(pr["profile_id"]): pr for pr in data.get("profiles", []) if isinstance(pr, dict) and "profile_id" in pr
@@ -1216,6 +1225,121 @@ class RelicAPIClient(_RateLimitMixin):
                         latest_by_pid[pid] = lmd
 
         return latest_by_pid
+
+    def get_cached_raw_histories(self) -> dict[int, dict[str, Any]]:
+        """Retorna cópia rasa dos payloads brutos Relic já baixados no ciclo (0 chamadas HTTP extras)."""
+        with self._raw_history_lock:
+            return dict(self._raw_history_cache)
+
+    def fetch_raw_match_history(self, profile_id: int) -> dict[str, Any] | None:
+        """Retorna payload bruto de `getRecentMatchHistoryByProfileId` (usa cache em memória se já consultado)."""
+        pid_clean = int(profile_id or 0)
+        if pid_clean <= 0:
+            return None
+        with self._raw_history_lock:
+            cached = self._raw_history_cache.get(pid_clean)
+        if cached is not None:
+            return cached
+        url = f"{BASE_URL}/getRecentMatchHistoryByProfileId?title={TITLE_STEAM}&profile_id={pid_clean}"
+        try:
+            data = self._get_json(url, retries=2)
+        except Exception as exc:
+            logger.debug(
+                "[SMURF ALERT] Falha ao baixar histórico bruto Relic para #%d: %s",
+                pid_clean,
+                redact_secrets(exc),
+            )
+            return None
+        with self._raw_history_lock:
+            self._raw_history_cache[pid_clean] = data
+        return data
+
+    def fetch_profile_summary_stats(self, profile_ids: list[int]) -> dict[int, dict[str, Any]]:
+        """
+        Consulta `getPersonalStat` em lotes de até 10 contas e devolve resumo de perfil
+        (`profile_id`, `steam_id`, `alias`, `country`, `max_elo`, `total_matches`, `total_wins`,
+        `total_losses`, `last_match_date`, `mode_elo_max`).
+        """
+        clean_pids = sorted({int(p) for p in (profile_ids or []) if int(p or 0) > 0})
+        if not clean_pids:
+            return {}
+
+        lb_to_mode: dict[int, str] = {}
+        for mode_lbl, fac_map in STEAM_LEADERBOARDS.items():
+            for lid in fac_map.values():
+                lb_to_mode[int(lid)] = mode_lbl
+
+        out: dict[int, dict[str, Any]] = {}
+        chunks = [clean_pids[i : i + 10] for i in range(0, len(clean_pids), 10)]
+        for chunk in chunks:
+            target_set = set(chunk)
+            encoded_ids = urllib.parse.quote("[" + ",".join(str(p) for p in chunk) + "]")
+            url = f"{BASE_URL}/getPersonalStat?title={TITLE_STEAM}&profile_ids={encoded_ids}"
+            try:
+                data = self._get_json(url, retries=2)
+            except Exception as exc:
+                logger.debug(
+                    "[SMURF ALERT] Falha ao consultar getPersonalStat (%d conta(s)): %s",
+                    len(chunk),
+                    redact_secrets(exc),
+                )
+                continue
+
+            solo_sg_to_pid: dict[int, int] = {}
+            for sg in data.get("statGroups", []):
+                if not isinstance(sg, dict) or "id" not in sg:
+                    continue
+                members = sg.get("members") or []
+                if len(members) != 1 or not isinstance(members[0], dict):
+                    continue
+                m = members[0]
+                pid = int(m.get("profile_id", 0) or 0)
+                if pid not in target_set:
+                    continue
+                solo_sg_to_pid[int(sg["id"])] = pid
+                raw_name = str(m.get("name") or "").strip()
+                sid = raw_name.replace("/steam/", "").strip() if raw_name.startswith("/steam/") else ""
+                if not STEAM_ID64_VALID_RE.fullmatch(sid):
+                    sid = ""
+                out[pid] = {
+                    "profile_id": pid,
+                    "steam_id": sid,
+                    "alias": strip_unsafe_chars(m.get("alias") or "")[:40] or f"Player {pid}",
+                    "country": str(m.get("country") or "").strip().lower(),
+                    "max_elo": 0,
+                    "total_matches": 0,
+                    "total_wins": 0,
+                    "total_losses": 0,
+                    "last_match_date": 0,
+                    "mode_elo_max": {},
+                }
+
+            for st in data.get("leaderboardStats", []):
+                if not isinstance(st, dict):
+                    continue
+                sg_id = int(st.get("statgroup_id", -1))
+                pid = solo_sg_to_pid.get(sg_id)
+                if not pid or pid not in out:
+                    continue
+                rec = out[pid]
+                lb_id = int(st.get("leaderboard_id", 0) or 0)
+                wins = max(0, int(st.get("wins", 0) or 0))
+                losses = max(0, int(st.get("losses", 0) or 0))
+                rating = max(0, int(st.get("rating", 0) or 0))
+                lmd = max(0, int(st.get("lastmatchdate", 0) or 0))
+                if lb_id in lb_to_mode:
+                    rec["total_wins"] += wins
+                    rec["total_losses"] += losses
+                    rec["total_matches"] += wins + losses
+                    if rating > rec["max_elo"]:
+                        rec["max_elo"] = rating
+                    m_lbl = lb_to_mode[lb_id]
+                    if rating > int(rec["mode_elo_max"].get(m_lbl, 0) or 0):
+                        rec["mode_elo_max"][m_lbl] = rating
+                if lmd > rec["last_match_date"]:
+                    rec["last_match_date"] = lmd
+
+        return out
 
 
 def _build_parsed_match_record(

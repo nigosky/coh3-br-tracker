@@ -171,12 +171,51 @@ def _encode_multipart_formdata(
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
+def _format_smurf_alerts_discord_content(smurf_alerts: list[dict[str, Any]]) -> str:
+    """Formata linha de alerta sanitizada e legível em notificação push SOMENTE quando há alerta de smurf BR."""
+    lines: list[str] = []
+    seen_opps: set[int] = set()
+    for alert in smurf_alerts or []:
+        if not isinstance(alert, dict):
+            continue
+        prob = int(alert.get("probability_pct", 0) or 0)
+        if prob <= 0:
+            continue
+        opp_pid = int(alert.get("opponent_profile_id", 0) or 0)
+        if opp_pid > 0 and opp_pid in seen_opps:
+            continue
+        if opp_pid > 0:
+            seen_opps.add(opp_pid)
+
+        tracked = sanitize_discord_text(alert.get("tracked_alias") or "Veterano", max_len=36)
+        opp = sanitize_discord_text(alert.get("opponent_alias") or (f"ID #{opp_pid}" if opp_pid > 0 else "Oponente"), max_len=36)
+        tier = sanitize_discord_text(alert.get("confidence_tier") or "Alta", max_len=20)
+        main_alias_raw = str(alert.get("suspected_main_alias") or "").strip()
+        if main_alias_raw:
+            main_txt = f"possível smurf de **{sanitize_discord_text(main_alias_raw, max_len=36)}**"
+        else:
+            main_txt = "possível **smurf BR não identificado**"
+
+        raw_reasons = [
+            sanitize_discord_text(r, max_len=32)
+            for r in (alert.get("top_reasons") or [])
+            if str(r or "").strip()
+        ][:3]
+        reasons_suffix = f" | {' • '.join(raw_reasons)}" if raw_reasons else ""
+        lines.append(
+            f"⚠️ **ALERTA SMURF:** Veterano **{tracked}** enfrentou **{opp}** — {main_txt} (**{prob}%** • {tier}){reasons_suffix}"
+        )
+        if len(lines) >= 2:
+            break
+    return "\n".join(lines)[:1800]
+
+
 def build_match_embed_payload(
     match_or_group: dict[str, Any] | list[dict[str, Any]],
     bot_username: str = "CoH3 Brasil Monitor",
     attachment_filename: str | None = None,
 ) -> dict[str, Any]:
-    """Monta payload limpo sem cabeçalho redundante: exibe apenas o Card gráfico PNG da partida."""
+    """Monta payload limpo sem cabeçalho redundante: exibe apenas o Card PNG (ou linha de ALERTA SMURF quando detectada)."""
     _ = attachment_filename
     grp_obj = _normalize_match_group(match_or_group)
     primary = grp_obj["primary"]
@@ -184,11 +223,14 @@ def build_match_embed_payload(
     # Validação defensiva dos IDs mesmo sem texto no cabeçalho
     build_safe_coh3stats_match_url(primary["tracked_profile_id"], primary["match_id"])
 
+    raw_alerts = grp_obj.get("smurf_alerts") or primary.get("smurf_alerts") or []
+    smurf_content = _format_smurf_alerts_discord_content(raw_alerts) if isinstance(raw_alerts, list) else ""
+
     return {
         "username": sanitize_discord_text(bot_username, max_len=80),
         "avatar_url": BOT_AVATAR_URL,
         "allowed_mentions": SAFE_ALLOWED_MENTIONS,
-        "content": "",
+        "content": smurf_content,
         "embeds": [],
     }
 
