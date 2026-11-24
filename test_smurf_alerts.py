@@ -610,6 +610,133 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         self.assertIn("Family Sharing (conta limitada)", res_fs["top_reasons"])
         self.assertIn("Steam criada este ano", res_fs["top_reasons"])
 
+    def test_regional_br_sa_mm_elo_slope_fake_br_guard_and_historical_nemesis_disqualifier(self) -> None:
+        base_t = 1_760_047_200  # 2025-10-09 22:00 UTC = 19:00 BRT (prime time)
+        opp_pid = 1_990_001
+        opp_sid = "76561199990000001"
+        main_pid = 79327
+        main_sid = "76561198014114284"
+
+        # 1. Smurf BR sob bandeira 'de' com alta densidade de encontros BR/SA no Automatch + subida rápida (+16 ELO/jogo)
+        profiles = [{"profile_id": opp_pid, "name": f"/steam/{opp_sid}", "alias": "StealthDE", "country": "de", "leaderboardregion_id": 1}]
+        opp_matches = []
+        for i in range(8):
+            opid = 880000 + i
+            profiles.append(
+                {
+                    "profile_id": opid,
+                    "name": f"/steam/{76561198000000000 + opid}",
+                    "alias": f"SAOpp{i}",
+                    "country": "br" if i < 4 else "ar",
+                    "leaderboardregion_id": sa.SA_LEADERBOARD_REGION_ID,
+                }
+            )
+            opp_matches.append(
+                _make_raw_relic_match(
+                    9000 + i,
+                    base_t + i * 86400,
+                    base_t + i * 86400 + 1200,
+                    opp_pid,
+                    win=1,
+                    old_elo=1320 + i * 16,
+                    new_elo=1336 + i * 16,
+                    opp_pids=[opid],
+                    counters={"gt": 1200, "totalcmds": 1700, "abil": 54, "ekills": 80, "edeaths": 50, "dmgdone": 4800, "pcap": 24, "inactperiod": 48, "sqkill": 5, "sqlost": 2},
+                )
+            )
+        opp_tel = sa.PlayerTelemetry(profile_id=opp_pid)
+        opp_tel.observe_raw_relic_history({"profiles": profiles, "matchHistoryStats": opp_matches}, known_br_pids={880000, 880001})
+        self.assertEqual(opp_tel.regional_observed_games, 8)
+        self.assertGreaterEqual(opp_tel.sa_match_rate(), 0.9)
+        self.assertGreaterEqual(opp_tel.br_opp_match_rate(), 0.9)
+
+        vel = sa._analyze_skill_velocity_and_tanking(opp_tel, {"max_elo": 1448, "total_matches": 32})
+        self.assertGreaterEqual(vel["elo_gain_per_game"], 12.0)
+        self.assertTrue(vel["strong_velocity"])
+
+        # Fura guarda estrangeira em unattributed_br_burner via MM BR/SA + ELO/jogo!
+        unattr = sa.score_unattributed_br_burner(
+            {"profile_id": opp_pid, "steam_id": opp_sid, "alias": "StealthDE", "country": "de", "max_elo": 1448, "total_matches": 32, "total_wins": 25},
+            opp_tel,
+            cand_osint={"ok": True, "is_limited_account": True},
+        )
+        self.assertTrue(unattr["triggered"])
+        self.assertTrue(any("MM BR/SA" in r for r in unattr["top_reasons"]))
+
+        # 2. Anti-bandeira 'br' falsa: 0% encontros BR/SA e fora do BRT não dispara burner BR!
+        fake_tel = sa.PlayerTelemetry(
+            profile_id=1_990_002,
+            games=16,
+            wins=13,
+            regional_observed_games=16,
+            br_match_count=0,
+            sa_match_count=0,
+            br_opp_match_count=0,
+        )
+        for _ in range(16):
+            fake_tel.brt_hour_counts[9] += 1  # 0% prime time BRT
+        unattr_fake = sa.score_unattributed_br_burner(
+            {"profile_id": 1_990_002, "steam_id": "76561199990000002", "alias": "AsianFlagBR", "country": "br", "max_elo": 1520, "total_matches": 55, "total_wins": 42},
+            fake_tel,
+            cand_osint={"ok": True, "is_limited_account": True},
+        )
+        self.assertFalse(unattr_fake["triggered"])
+
+        # 3. Desqualificador absoluto histórico (nemesis_matches desde 2023): se o Veterano JÁ enfrentou o oponente no passado,
+        # ele NUNCA pode ser apontado como dono da smurf!
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "hist_confront.db")
+            inserted = db.insert_nemesis_matches_batch(
+                [(main_pid, opp_pid, 777001, 1_690_000_000, 19560, 1, "1v1", "StealthDE", "de")]
+            )
+            self.assertEqual(inserted, 1)
+            faced_set = db.get_tracked_pids_who_faced_opponent(opp_pid)
+            self.assertIn(main_pid, faced_set)
+
+            # Simula cache/avaliação live com main_pid no pool: deve ser desqualificado pelo confronto de 2023!
+            main_matches = [
+                _make_raw_relic_match(
+                    9500 + i,
+                    base_t + i * 86400 + 7200,
+                    base_t + i * 86400 + 8400,
+                    main_pid,
+                    win=1,
+                    old_elo=1480,
+                    new_elo=1490,
+                    counters={"gt": 1200, "totalcmds": 1705, "abil": 54, "ekills": 80, "edeaths": 50, "dmgdone": 4800, "pcap": 24, "inactperiod": 48, "sqkill": 5, "sqlost": 2},
+                )
+                for i in range(8)
+            ]
+            relic = _FakeRelicClient(
+                {opp_pid: {"profile_id": opp_pid, "steam_id": opp_sid, "alias": "StealthDE", "country": "de", "max_elo": 1448, "total_matches": 32, "total_wins": 25}},
+                {
+                    opp_pid: {"profiles": profiles, "matchHistoryStats": opp_matches},
+                    main_pid: {"profiles": [{"profile_id": main_pid, "name": f"/steam/{main_sid}", "alias": "Chacineiro", "country": "br"}], "matchHistoryStats": main_matches},
+                },
+            )
+            ctx = sa.build_smurf_alert_context(
+                db,
+                relic,
+                custom_players=[
+                    {"profile_id": 900358, "steam_id": "76561198070545853", "original_alias": "Margheriti"},
+                    {"profile_id": main_pid, "steam_id": main_sid, "original_alias": "Chacineiro"},
+                ],
+                br_community_data={},
+                osint_client=_FakeOSINTClient({opp_sid: {"ok": True, "is_limited_account": True}}),
+                allow_network=False,
+            )
+            res_alert = sa._evaluate_opponent_against_br_pool(
+                {"profile_id": opp_pid, "alias": "StealthDE", "steam_id": opp_sid, "country": "de", "old_elo": 1432, "new_elo": 1448},
+                match_participant_pids={900358, opp_pid},
+                tracked_alias="Margheriti",
+                relic=relic,
+                ctx=ctx,
+                db=db,
+            )
+            # NUNCA atribuído a main_pid (Chacineiro) pois já se enfrentaram em 2023!
+            if res_alert is not None:
+                self.assertNotEqual(res_alert["suspected_main_profile_id"], main_pid)
+
 
 if __name__ == "__main__":
     unittest.main()

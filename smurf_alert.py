@@ -117,11 +117,17 @@ KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     1297853: 509690,  # Shadow -> Alekel
     1297804: 844225,  # Leite Moço -> 『V』SKOBADARK
     557890: 559962,   # gabe44arg -> Gabe
+    1076221: 941524,  # Lucielle -> Colossus
     1423426: 1005730, # geladeira velha -> arc
     1487738: 1005730, # Državljan H -> arc
     1482961: 1005730, # Vog -> arc
     164152: 205121,   # seu pai -> Sgt.Yoda
 }
+
+SA_COUNTRIES: frozenset[str] = frozenset(
+    {"br", "ar", "cl", "uy", "py", "co", "pe", "ec", "bo", "ve", "gy", "sr"}
+)
+SA_LEADERBOARD_REGION_ID = 2074438
 
 
 def _normalize_mode_label(mode_or_mt: Any) -> str:
@@ -542,6 +548,12 @@ class PlayerTelemetry:
     long_game_count: int = 0
     long_game_wins: int = 0
     equipped_cosmetic_ids: set[int] = field(default_factory=set)
+    # Matchmaking regional/ping Relic: frequência de confrontos/encontros com outros jogadores BR/SA em Automatch
+    regional_observed_games: int = 0
+    br_match_count: int = 0
+    sa_match_count: int = 0
+    br_opp_match_count: int = 0
+    distinct_br_sa_opps: set[int] = field(default_factory=set)
 
     def median_apm(self, min_samples: int = 3) -> float:
         return float(statistics.median(self.apm_values)) if len(self.apm_values) >= min_samples else 0.0
@@ -559,9 +571,24 @@ class PlayerTelemetry:
             return 0.0
         return sum(self.brt_hour_counts[h] for h in BRT_PRIME_HOURS) / float(tot)
 
-    def observe_raw_relic_history(self, raw_payload: dict[str, Any] | None) -> None:
+    def br_match_rate(self) -> float:
+        return (self.br_match_count / float(self.regional_observed_games)) if self.regional_observed_games > 0 else 0.0
+
+    def sa_match_rate(self) -> float:
+        return (self.sa_match_count / float(self.regional_observed_games)) if self.regional_observed_games > 0 else 0.0
+
+    def br_opp_match_rate(self) -> float:
+        return (self.br_opp_match_count / float(self.regional_observed_games)) if self.regional_observed_games > 0 else 0.0
+
+    def observe_raw_relic_history(
+        self,
+        raw_payload: dict[str, Any] | None,
+        *,
+        known_br_pids: set[int] | frozenset[int] | None = None,
+    ) -> None:
         if not isinstance(raw_payload, dict):
             return
+        br_set = known_br_pids or frozenset()
         profiles_by_id: dict[int, dict[str, Any]] = {}
         for pr in raw_payload.get("profiles") or []:
             if not isinstance(pr, dict):
@@ -601,6 +628,7 @@ class PlayerTelemetry:
             me_rep = None
             by_team: dict[int, list[int]] = defaultdict(list)
             all_pids: list[int] = []
+            pid_teams: list[tuple[int, int]] = []
             for rep in reports:
                 if not isinstance(rep, dict):
                     continue
@@ -608,7 +636,9 @@ class PlayerTelemetry:
                 if rpid <= 0:
                     continue
                 all_pids.append(rpid)
-                tid = int(rep.get("teamid", -1) or -1)
+                raw_tid = rep.get("teamid")
+                tid = int(raw_tid) if raw_tid is not None else -1
+                pid_teams.append((rpid, tid))
                 if tid >= 0:
                     by_team[tid].append(rpid)
                 if rpid == self.profile_id:
@@ -643,7 +673,8 @@ class PlayerTelemetry:
             for opid in all_pids:
                 if opid != self.profile_id:
                     self.co_played_with.add(opid)
-            my_tid = int(me_rep.get("teamid", -1) or -1)
+            raw_my_tid = me_rep.get("teamid")
+            my_tid = int(raw_my_tid) if raw_my_tid is not None else -1
             for apid in by_team.get(my_tid, []):
                 if apid != self.profile_id:
                     self.ally_counts[apid] += 1
@@ -654,6 +685,37 @@ class PlayerTelemetry:
                 self.mode_counts[mode] += 1
                 if race_id >= 0:
                     self.mode_faction_counts[(mode, race_id)] += 1
+                observed_other = False
+                has_br_other = False
+                has_sa_other = False
+                has_br_sa_opp = False
+                for opid, optid in pid_teams:
+                    if opid <= 0 or opid == self.profile_id:
+                        continue
+                    opr = profiles_by_id.get(opid)
+                    octry = str((opr or {}).get("country") or "").strip().lower()
+                    oreg = int((opr or {}).get("leaderboardregion_id", 0) or 0)
+                    oknown_br = opid in br_set
+                    if octry or oreg > 0 or oknown_br:
+                        observed_other = True
+                    is_br = (octry == "br") or oknown_br
+                    is_sa = is_br or (octry in SA_COUNTRIES) or (oreg == SA_LEADERBOARD_REGION_ID)
+                    if is_br:
+                        has_br_other = True
+                    if is_sa:
+                        has_sa_other = True
+                        if my_tid >= 0 and optid >= 0 and optid != my_tid:
+                            has_br_sa_opp = True
+                            if len(self.distinct_br_sa_opps) < 200:
+                                self.distinct_br_sa_opps.add(opid)
+                if observed_other:
+                    self.regional_observed_games += 1
+                    if has_br_other:
+                        self.br_match_count += 1
+                    if has_sa_other:
+                        self.sa_match_count += 1
+                    if has_br_sa_opp:
+                        self.br_opp_match_count += 1
                 # Busca oldrating/newrating em matchhistorymember
                 old_r, new_r = 0, 0
                 for mem in m.get("matchhistorymember") or []:
@@ -854,6 +916,8 @@ def _analyze_skill_velocity_and_tanking(
 ) -> dict[str, Any]:
     res: dict[str, Any] = {
         "net_elo_gain": 0,
+        "elo_gain_per_game": 0.0,
+        "rated_games_counted": 0,
         "max_win_streak": 0,
         "sandbagging": False,
         "multi_mode_transfer": False,
@@ -871,6 +935,7 @@ def _analyze_skill_velocity_and_tanking(
     cand_total = max(0, int(cand_meta.get("total_matches", 0) or 0))
     chrono = sorted(cand_tel.elo_history, key=lambda x: x[0])
     net_elo = 0
+    rated_cnt = 0
     max_streak = 0
     cur_streak = 0
     for _ct, win01, old_r, new_r in chrono:
@@ -884,15 +949,30 @@ def _analyze_skill_velocity_and_tanking(
             delta = new_r - old_r
             if -80 <= delta <= 80:
                 net_elo += delta
+                rated_cnt += 1
 
+    epg = round(net_elo / float(rated_cnt), 2) if rated_cnt > 0 else 0.0
     res["net_elo_gain"] = net_elo
+    res["elo_gain_per_game"] = epg
+    res["rated_games_counted"] = rated_cnt
     res["max_win_streak"] = max_streak
 
     pts = 0.0
     chips: list[str] = []
-    if net_elo >= 140 and len(chrono) <= 50:
+    if rated_cnt >= 5 and epg >= 12.0 and net_elo >= 65:
+        pts += 9.0
+        chips.append(f"+{epg:.0f} ELO/jogo (+{net_elo})")
+    elif rated_cnt >= 5 and epg >= 7.5 and net_elo >= 55:
+        pts += 6.0
+        chips.append(f"+{epg:.0f} ELO/jogo (+{net_elo})")
+    elif net_elo >= 140 and len(chrono) <= 50:
         pts += 7.0 if net_elo >= 220 else 5.0
         chips.append(f"+{net_elo} ELO rápido")
+
+    if 0 < cand_total <= 50 and cand_elo >= 1250:
+        pts += 4.0
+        chips.append(f"ELO {cand_elo} em {cand_total}j")
+
     if max_streak >= 5:
         pts += 5.0 if max_streak >= 7 else 3.0
         chips.append(f"{max_streak}V seguidas")
@@ -922,8 +1002,8 @@ def _analyze_skill_velocity_and_tanking(
         pts += 3.0
         chips.append(f"Burner ({cos_cnt} itens)")
 
-    res["velocity_pts"] = min(14.0, pts)
-    res["strong_velocity"] = bool(pts >= 7.0 or res["sandbagging"])
+    res["velocity_pts"] = min(18.0, pts)
+    res["strong_velocity"] = bool(pts >= 6.0 or res["sandbagging"])
     res["chips"] = chips
     return res
 
@@ -1118,6 +1198,17 @@ def score_live_smurf_pair(
     br_pids = known_br_pids or frozenset()
     cand_br_allies = sum(1 for apid, cnt in (cand_tel.ally_counts.items() if cand_tel else ()) if apid in br_pids and cnt >= 2)
     cand_brt_prime = cand_tel.brt_prime_ratio() if cand_tel else 0.0
+    reg_obs = cand_tel.regional_observed_games if cand_tel else 0
+    sa_m_rate = cand_tel.sa_match_rate() if cand_tel else 0.0
+    br_opp_rate = cand_tel.br_opp_match_rate() if cand_tel else 0.0
+    br_opp_cnt = cand_tel.br_opp_match_count if cand_tel else 0
+    br_match_cnt = cand_tel.br_match_count if cand_tel else 0
+    strong_br_sa_mm_nexus = bool(
+        reg_obs >= 6
+        and sa_m_rate >= 0.20
+        and (br_opp_cnt >= 1 or br_match_cnt >= 3)
+        and cand_brt_prime >= 0.40
+    )
 
     # Guarda estrita anti-falso-positivo para bandeiras estrangeiras explícitas
     is_explicit_foreign = bool(cand_ctry and cand_ctry not in ("br", "??", "unknown"))
@@ -1129,6 +1220,7 @@ def score_live_smurf_pair(
         or (cand_pid in br_pids)
         or (ptbr_hit and cand_brt_prime >= 0.40)
         or (cand_br_allies >= 2 and cand_brt_prime >= 0.45)
+        or strong_br_sa_mm_nexus
     )
     if is_explicit_foreign and not has_br_nexus:
         empty["disqualified_reason"] = "estrangeiro_sem_vinculo_br"
@@ -1172,6 +1264,25 @@ def score_live_smurf_pair(
             behavioral_signals += 1
         for ch in vel["chips"][:2]:
             weighted_reasons.append((float(vel["velocity_pts"]), ch))
+
+    # 1C. Matchmaking regional/ping Relic (smurfs BR enfrentam outros BR/SA por ping/região)
+    if reg_obs >= 6:
+        if is_explicit_foreign and strong_br_sa_mm_nexus:
+            score += 8.0
+            identity_anchor_signals += 1
+            weighted_reasons.append((15.0, f"MM BR/SA {sa_m_rate * 100:.0f}% ({cand_ctry})"))
+        elif (br_opp_cnt >= 2 and br_opp_rate >= 0.08) or (sa_m_rate >= 0.35 and reg_obs >= 8):
+            score += 5.0 if (br_opp_cnt >= 2 and sa_m_rate >= 0.25) else 3.0
+            weighted_reasons.append((10.0, f"MM BR/SA {sa_m_rate * 100:.0f}%"))
+        elif (
+            reg_obs >= 12
+            and cand_tel is not None
+            and sum(cand_tel.brt_hour_counts.values()) >= 10
+            and sa_m_rate < 0.05
+            and cand_brt_prime < 0.25
+            and not shared_allies
+        ):
+            score -= 18.0
 
     # 2. Handoffs temporais rápidos (<=25 min sem sobreposição)
     if handoff_cnt >= 3:
@@ -1434,12 +1545,36 @@ def score_unattributed_br_burner(
     steam_br_leak = bool(c_osint.get("is_br_location"))
     br_allies = sum(1 for apid, cnt in (cand_tel.ally_counts.items() if cand_tel else ()) if apid in br_pids and cnt >= 2)
     brt_prime = cand_tel.brt_prime_ratio() if cand_tel else 0.0
+    reg_obs = cand_tel.regional_observed_games if cand_tel else 0
+    sa_m_rate = cand_tel.sa_match_rate() if cand_tel else 0.0
+    br_opp_cnt = cand_tel.br_opp_match_count if cand_tel else 0
+    br_match_cnt = cand_tel.br_match_count if cand_tel else 0
+    strong_br_sa_mm_nexus = bool(
+        reg_obs >= 6
+        and sa_m_rate >= 0.20
+        and (br_opp_cnt >= 1 or br_match_cnt >= 3)
+        and brt_prime >= 0.40
+    )
+
+    # Anti-bandeira 'br' falsa (ex.: conta asiática/europeia com bandeira 'br', ~0% encontros BR/SA e fora do BRT)
+    if (
+        reg_obs >= 12
+        and cand_tel is not None
+        and sum(cand_tel.brt_hour_counts.values()) >= 10
+        and sa_m_rate < 0.05
+        and brt_prime < 0.25
+        and br_allies == 0
+        and not steam_br_leak
+        and not ptbr_hit
+    ):
+        return empty
 
     has_br_nexus = (
         cand_ctry == "br"
         or cand_pid in br_pids
         or steam_br_leak
         or ptbr_hit
+        or strong_br_sa_mm_nexus
         or (cand_ctry in ("", "??", "unknown") and br_allies >= 1 and brt_prime >= 0.45)
         or (br_allies >= 2 and brt_prime >= 0.45)
     )
@@ -1471,11 +1606,19 @@ def score_unattributed_br_burner(
         weighted_reasons.append((12.0, f"WR {wr * 100:.0f}%"))
 
     vel = _analyze_skill_velocity_and_tanking(cand_tel, cand)
-    if vel["net_elo_gain"] >= 140 or vel["max_win_streak"] >= 5:
-        score += 14.0 if (vel["net_elo_gain"] >= 180 or vel["max_win_streak"] >= 7) else 10.0
+    if (
+        vel["net_elo_gain"] >= 140
+        or vel["max_win_streak"] >= 5
+        or (int(vel.get("rated_games_counted", 0) or 0) >= 5 and float(vel.get("elo_gain_per_game", 0.0) or 0.0) >= 7.5)
+    ):
+        score += 14.0 if (vel["net_elo_gain"] >= 180 or vel["max_win_streak"] >= 7 or float(vel.get("elo_gain_per_game", 0.0) or 0.0) >= 12.0) else 10.0
         anomalies += 1
         for ch in vel["chips"][:2]:
             weighted_reasons.append((15.0, ch))
+    if cand_ctry != "br" and strong_br_sa_mm_nexus:
+        score += 10.0
+        anomalies += 1
+        weighted_reasons.append((16.0, f"MM BR/SA {sa_m_rate * 100:.0f}% ({cand_ctry or '??'})"))
     if vel["sandbagging"]:
         score += 14.0
         anomalies += 1
@@ -1785,7 +1928,7 @@ def build_smurf_alert_context(
         if pid_i <= 0:
             continue
         tel = telemetry_by_pid.setdefault(pid_i, PlayerTelemetry(profile_id=pid_i))
-        tel.observe_raw_relic_history(raw_hist)
+        tel.observe_raw_relic_history(raw_hist, known_br_pids=known_br_pids)
         if pid_i in reference_mains and tel.mode_elo_max:
             best_m_elo = max(tel.mode_elo_max.values())
             if best_m_elo > int(reference_mains[pid_i].get("max_elo", 0) or 0):
@@ -1862,12 +2005,22 @@ def _evaluate_opponent_against_br_pool(
     tracked_alias: str,
     relic: Any,
     ctx: SmurfAlertContext,
+    db: Any = None,
 ) -> dict[str, Any] | None:
     opp_pid = int(opp.get("profile_id", 0) or 0)
     opp_alias = strip_unsafe_chars(opp.get("alias") or f"Player {opp_pid}")[:40]
     opp_sid = str(opp.get("steam_id") or "").replace("/steam/", "").strip()
     opp_ctry = str(opp.get("country") or "").strip().lower()
     opp_match_elo = max(int(opp.get("old_elo") or 0), int(opp.get("new_elo") or 0))
+
+    # Regra absoluta ("Um Smurf nunca enfrenta a conta original"): consulta confrontos históricos desde 2023 em `nemesis_matches`
+    historical_faced_pids: set[int] = set()
+    if db is not None and hasattr(db, "get_tracked_pids_who_faced_opponent") and opp_pid > 0:
+        try:
+            historical_faced_pids = set(db.get_tracked_pids_who_faced_opponent(opp_pid) or ())
+        except Exception as exc:
+            logger.debug("[SMURF ALERT] Falha na consulta histórica nemesis_matches pid=%d: %s", opp_pid, redact_secrets(exc))
+    disqualified_main_pids = set(match_participant_pids) | historical_faced_pids
 
     cached = ctx.probe_cache.get(opp_pid)
     if isinstance(cached, dict):
@@ -1876,8 +2029,10 @@ def _evaluate_opponent_against_br_pool(
         if cached.get("status") == "alert" and isinstance(cached.get("alert"), dict):
             alert_copy = dict(cached["alert"])
             sus_mpid = int(alert_copy.get("suspected_main_profile_id", 0) or 0)
-            if sus_mpid > 0 and sus_mpid in match_participant_pids:
-                return None
+            if sus_mpid > 0:
+                sus_fam = ctx.main_families.get(sus_mpid, {sus_mpid})
+                if sus_fam & disqualified_main_pids:
+                    return None
             alert_copy["opponent_alias"] = opp_alias
             alert_copy["tracked_alias"] = tracked_alias
             return alert_copy
@@ -1907,7 +2062,9 @@ def _evaluate_opponent_against_br_pool(
     # 2. Baixa histórico bruto Relic + OSINT Steam público da conta adversária
     raw_opp_hist = relic.fetch_raw_match_history(opp_pid) if hasattr(relic, "fetch_raw_match_history") else None
     opp_tel = PlayerTelemetry(profile_id=opp_pid, steam_id=eff_sid, alias=eff_alias, country=eff_ctry)
-    opp_tel.observe_raw_relic_history(raw_opp_hist)
+    opp_tel.observe_raw_relic_history(raw_opp_hist, known_br_pids=ctx.known_br_pids)
+    if historical_faced_pids:
+        opp_tel.co_played_with.update(historical_faced_pids)
     opp_osint = ctx.osint_client.fetch_profile_osint(eff_sid) if eff_sid else {}
 
     cand_meta = {
@@ -1925,10 +2082,10 @@ def _evaluate_opponent_against_br_pool(
     # 3. Seleciona até MAX_EXTRA_MAIN_PROBES_PER_OPPONENT mains não-Veteranos mais plausíveis para baixar histórico bruto
     non_vet_candidates: list[tuple[float, int]] = []
     for mpid, main in ctx.reference_mains.items():
-        if mpid in match_participant_pids or mpid in ctx.telemetry_by_pid:
+        if mpid in disqualified_main_pids or mpid in ctx.telemetry_by_pid:
             continue
         fam = ctx.main_families.get(mpid, {mpid})
-        if opp_tel.co_played_with & fam:
+        if (opp_tel.co_played_with & fam) or (disqualified_main_pids & fam):
             continue
         m_elo = int(main.get("max_elo", 0) or 0)
         if m_elo > 0 and max_elo > 0 and abs(m_elo - max_elo) > 350:
@@ -1948,13 +2105,13 @@ def _evaluate_opponent_against_br_pool(
             raw_m = relic.fetch_raw_match_history(mpid)
             if raw_m:
                 mtel = ctx.telemetry_by_pid.setdefault(mpid, PlayerTelemetry(profile_id=mpid))
-                mtel.observe_raw_relic_history(raw_m)
+                mtel.observe_raw_relic_history(raw_m, known_br_pids=ctx.known_br_pids)
 
-    # 4. Pontua contra todas as contas principais BR elegíveis (excluindo participantes da MESMA partida!)
+    # 4. Pontua contra todas as contas principais BR elegíveis (excluindo participantes da MESMA partida e confrontos históricos 2023+!)
     best_match: dict[str, Any] | None = None
     for mpid, main in ctx.reference_mains.items():
         fam = ctx.main_families.get(mpid, {mpid})
-        if fam & match_participant_pids:
+        if fam & disqualified_main_pids:
             continue
         main_tel = ctx.telemetry_by_pid.get(mpid)
         if main_tel is None:
@@ -2111,6 +2268,7 @@ def enrich_group_with_smurf_alerts(
             tracked_alias=talias,
             relic=relic,
             ctx=ctx,
+            db=db,
         )
         if alert is not None:
             alerts.append(alert)
