@@ -569,6 +569,8 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {"profile_id": 22246, "steam_id": "76561197971282128", "original_alias": "Açucar Macabro", "known_aliases": ["Açucar Macabro", "Macabre Sugar", "FazueL", "NooBR"]},
     {"profile_id": 6696, "steam_id": "76561198182964383", "original_alias": "Roda", "known_aliases": ["Roda", "★ Roda", "[※] Roda"]},
     {"profile_id": 502544, "steam_id": "76561198049822246", "original_alias": "Arthoumadbro"},
+    {"profile_id": 673604, "steam_id": "76561197975133878", "original_alias": "MataMOsca"},
+    {"profile_id": 893043, "steam_id": "76561197974495191", "original_alias": "Rodrigo Ragagnin", "known_aliases": ["Rodrigo Ragagnin", "Rodrigo"]},
     {"profile_id": 91827, "steam_id": "76561198031697638", "original_alias": "[★General★] Apollo", "country": "au", "known_aliases": ["General Apolo", "[★General★] Apollo"]},
     {"profile_id": 312670, "steam_id": "76561197978279848", "original_alias": "TNF", "country": "au"},
     {"profile_id": 263517, "steam_id": "76561197994925919", "original_alias": "Angel of Death", "country": "jp"},
