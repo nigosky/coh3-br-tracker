@@ -164,8 +164,8 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 44 Veteranos independentes (0 mescladas) + 16 Outros BR de exibição passiva
-        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 44)
+        # 1. Roster padrão tem 45 Veteranos independentes (0 mescladas) + 16 Outros BR de exibição passiva
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 45)
         self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 16)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
@@ -184,6 +184,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             1333418: ("76561198698969876", "Charles Bronson (Smurf: Chacineiro)"),
             557890: ("76561199538846112", "gabe44arg (Smurf: Gabe)"),
             1423426: ("76561199482388323", "geladeira velha (Smurf: arc)"),
+            1487738: ("76561198602236177", "Državljan H (Smurf: arc)"),
             1390350: ("76561198089278659", "TearsInTheRain (Smurf: Chacineiro)"),
             1076221: ("76561198815935562", "Lucielle (Smurf: Colossus)"),
         }
