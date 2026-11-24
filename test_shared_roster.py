@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 176 perfis de exibição passiva (158 Monitorados + 18 Emigrados em Outros BR)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 179 perfis de exibição passiva (161 Monitorados + 18 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 176)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 179)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -197,6 +197,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (87314, "Pedro Jedi"),
             (1156831, "DAk120"),
             (3888, "Pepe Popo"),
+            (2834, "Xampoo"),
+            (448521, "icemaker"),
+            (720147, "アリス"),
         ):
             self.assertIn(mon_pid, other_by_pid)
             self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)
