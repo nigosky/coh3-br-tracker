@@ -405,21 +405,13 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "pin_alias": True,
         "known_aliases": ["TearsInTheRain", "TearsInTheRain (Chacineiro)", "TearsInTheRain (Smurf: Chacineiro)"],
     },
-    {
-        "profile_id": 1076221,
-        "steam_id": "76561198815935562",
-        "original_alias": "Lucielle (Smurf: Colossus)",
-        "smurf_of": "Colossus",
-        "pin_alias": True,
-        "known_aliases": ["Lucielle", "Lucifer", "Lucielle (Colossus)", "Lucielle (Smurf: Colossus)"],
-    },
     {"profile_id": 1119784, "steam_id": "76561198000067932", "original_alias": "Tracker"},
 ]
 
 FALLBACK_CORE_BR_ROSTER: list[dict[str, Any]] = [dict(row) for row in CORE_BR_ROSTER]
 
-# Outros Brasileiros com rótulo/bandeira manual em players_roster.json (`manual_other_br`):
-# usado apenas para exibir apelido/bandeira corretos quando aparecem em partidas de Veteranos (NÃO monitorados/ranqueados).
+# Players Monitorados (`monitorados`, legado `manual_other_br`) em players_roster.json:
+# usado apenas para exibir apelido/bandeira corretos quando aparecem em partidas de Veteranos (NÃO monitorados/ranqueados no Tracker).
 MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {"profile_id": 33487, "steam_id": "76561197995712470", "original_alias": "Generick", "country": "us"},
     {
@@ -503,11 +495,55 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {
         "profile_id": 164152,
         "steam_id": "76561198029749621",
-        "original_alias": "seu pai (Smurf: Sgt.Yoda)",
-        "smurf_of": "Sgt.Yoda",
-        "pin_alias": True,
-        "known_aliases": ["seu pai", "Sgt.Yoda", "seu pai (Sgt.Yoda)", "seu pai (Smurf: Sgt.Yoda)"],
+        "original_alias": "Sgt.Yoda",
+        "priority_watch": True,
+        "known_aliases": ["Sgt.Yoda", "seu pai", "fiadaputa"],
     },
+    {
+        "profile_id": 941524,
+        "steam_id": "76561198162353268",
+        "original_alias": "Colossus",
+        "known_aliases": ["Colossus", "̶C̶o̶l̶o̶s̶s̶u̶s̶", "̶H̶e̶c̶t̶o̶r̶", "Hector"],
+    },
+    {
+        "profile_id": 1076221,
+        "steam_id": "76561198815935562",
+        "original_alias": "Lucielle (Smurf: Colossus)",
+        "smurf_of": "Colossus",
+        "pin_alias": True,
+        "known_aliases": [
+            "Lucielle",
+            "Lucifer",
+            "Lan",
+            "Leonardo Martins Dantas Gomes",
+            "Lucielle (Colossus)",
+            "Lucielle (Smurf: Colossus)",
+        ],
+    },
+    {
+        "profile_id": 40833,
+        "steam_id": "76561198216174113",
+        "original_alias": "Tokai Teio",
+        "known_aliases": [
+            "Tokai Teio",
+            "Tokai Teio!",
+            "Aston Machan",
+            "GOTE",
+            "GOTEツ",
+            "Cabra",
+            "ouh mai GOTE",
+            "miGOTE",
+            "T.M. Opera O",
+            "Oguri Cap",
+            "Assault Grenadier",
+            "Seiun Sky",
+            "Silence Suzuka",
+            "Nice Nature",
+            "Sakura Bakushin O",
+        ],
+    },
+    {"profile_id": 991551, "steam_id": "76561198067968388", "original_alias": "Caveira-."},
+    {"profile_id": 667564, "steam_id": "76561198258429491", "original_alias": "Friedhelm Winter"},
     {"profile_id": 7448, "steam_id": "76561198002516537", "original_alias": "icewarp", "country": "za"},
     {
         "profile_id": 91827,
@@ -651,10 +687,15 @@ def parse_shared_roster_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def parse_shared_manual_other_br_payload(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extrai a seção `manual_other_br` (apenas exibição passiva de apelido/bandeira em cards, sem monitoramento)."""
+    """Extrai a seção `monitorados` (e legado `manual_other_br`) para exibição passiva de apelido/bandeira em cards."""
     if not isinstance(data, dict) or int(data.get("schema_version", 0) or 0) < 1:
         return []
-    return _parse_roster_section_entries(data.get("manual_other_br"), apply_smurf_display=False)
+    combined: list[Any] = []
+    if isinstance(data.get("monitorados"), list):
+        combined.extend(data["monitorados"])
+    if isinstance(data.get("manual_other_br"), list):
+        combined.extend(data["manual_other_br"])
+    return _parse_roster_section_entries(combined, apply_smurf_display=False)
 
 
 def _merge_local_smurf_fallbacks(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
