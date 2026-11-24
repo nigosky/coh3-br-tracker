@@ -392,6 +392,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "pin_alias": True,
         "known_aliases": ["Lucielle", "Lucifer", "Lucielle (Colossus)", "Lucielle (Smurf: Colossus)"],
     },
+    {"profile_id": 1119784, "steam_id": "76561198000067932", "original_alias": "Tracker"},
 ]
 
 FALLBACK_CORE_BR_ROSTER: list[dict[str, Any]] = [dict(row) for row in CORE_BR_ROSTER]
@@ -466,6 +467,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "pin_alias": True,
         "known_aliases": ["seu pai", "Sgt.Yoda", "seu pai (Sgt.Yoda)", "seu pai (Smurf: Sgt.Yoda)"],
     },
+    {"profile_id": 212034, "steam_id": "76561198207565088", "original_alias": "XAPA KENTE", "country": "ca"},
 ]
 
 FALLBACK_MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [dict(row) for row in MANUAL_OTHER_BR_DISPLAY]

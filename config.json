@@ -861,6 +861,13 @@
         "Lucielle (Colossus)",
         "Lucielle (Smurf: Colossus)"
       ]
+    },
+    {
+      "profile_id": 1119784,
+      "steam_id": "76561198000067932",
+      "original_alias": "Tracker",
+      "alias": "Tracker",
+      "is_core_roster": true
     }
   ],
   "monitor_only_custom_matches": true
