@@ -158,6 +158,57 @@ class TestTrackerSecurity(unittest.TestCase):
                 atomic_write_text(link_path, "overwritten")
             self.assertEqual(real_file.read_text(encoding="utf-8"), "original")
 
+    def test_steam_avatar_web_api_prefetch_and_allowlist(self) -> None:
+        import json
+        from unittest import mock
+
+        import card_renderer
+
+        sid = "76561199667577805"
+        valid_av = "https://avatars.fastly.steamstatic.com/15e4e449867eb0d66c169af87938f4e04b2de5be_medium.jpg"
+        fake_key = "A1B2C3D4E5F60718293A4B5C6D7E8F90"
+
+        class _FakeResp:
+            def __init__(self, payload: dict) -> None:
+                self._raw = json.dumps(payload).encode("utf-8")
+                self.headers = {}
+
+            def read(self, n: int = -1) -> bytes:
+                if n < 0:
+                    data, self._raw = self._raw, b""
+                    return data
+                chunk, self._raw = self._raw[:n], self._raw[n:]
+                return chunk
+
+            def __enter__(self) -> "_FakeResp":
+                return self
+
+            def __exit__(self, *args) -> bool:
+                return False
+
+        class _FakeOpener:
+            def open(self, req, timeout: float = 10.0) -> _FakeResp:
+                return _FakeResp(
+                    {
+                        "response": {
+                            "players": [
+                                {"steamid": sid, "avatarmedium": valid_av},
+                                {"steamid": "76561198000000001", "avatarmedium": "https://evil.example/x.jpg"},
+                            ]
+                        }
+                    }
+                )
+
+        prov = card_renderer.SteamAvatarProvider(allow_network=True, steam_api_key=fake_key)
+        with mock.patch.object(card_renderer, "_NO_REDIRECT_OPENER", _FakeOpener()):
+            count = prov.prefetch_avatar_urls(
+                [{"profile_id": 720147, "steam_id": sid}, {"profile_id": 999999, "steam_id": "76561198000000001"}]
+            )
+        self.assertEqual(count, 1)
+        self.assertEqual(prov._prefetched_avatar_urls.get(sid), valid_av)
+        self.assertNotIn("76561198000000001", prov._prefetched_avatar_urls)
+        self.assertEqual(prov._validate_steam_avatar_url(valid_av + "?bad=1"), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,6 +70,7 @@ jobs:
       - name: Preparar renderizador grafico seguro (apt oficial assinado GPG, zero pip)
         run: |
           set -euo pipefail
+          APT_OPTS=(-o Acquire::ForceIPv4=true -o Acquire::http::Timeout=25 -o Acquire::Retries=2)
           NEED_PKGS=()
           if ! python3 -c "from PIL import Image, ImageDraw, ImageFont" >/dev/null 2>&1; then
             NEED_PKGS+=("python3-pil")
@@ -80,12 +81,20 @@ jobs:
           if [ ! -d "/usr/share/fonts/truetype/roboto" ]; then
             NEED_PKGS+=("fonts-roboto")
           fi
-          if [ ! -f "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc" ] && [ -z "$(find /usr/share/fonts -iname '*NotoSansCJK*' -print -quit 2>/dev/null)" ]; then
-            NEED_PKGS+=("fonts-noto-cjk")
+          NEED_CJK=0
+          if [ ! -f "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc" ] && [ -z "$(find /usr/share/fonts \( -iname '*NotoSansCJK*' -o -iname 'wqy-*.ttc' \) -print -quit 2>/dev/null)" ]; then
+            NEED_CJK=1
+          fi
+          if [ "${#NEED_PKGS[@]}" -gt 0 ] || [ "${NEED_CJK}" -eq 1 ]; then
+            sudo apt-get "${APT_OPTS[@]}" update -qq
           fi
           if [ "${#NEED_PKGS[@]}" -gt 0 ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends "${NEED_PKGS[@]}"
+            sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends "${NEED_PKGS[@]}"
+          fi
+          if [ "${NEED_CJK}" -eq 1 ]; then
+            timeout 120 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends fonts-noto-cjk \
+              || timeout 90 sudo apt-get "${APT_OPTS[@]}" install -y --no-install-recommends fonts-wqy-microhei \
+              || echo "::warning::Fonte CJK opcional indisponivel no mirror Ubuntu; seguindo com fallback DejaVu."
           fi
 
       - name: Validar suite de testes da base compartilhada
@@ -99,6 +108,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          STEAM_WEB_API_KEY: ${{ secrets.STEAM_WEB_API_KEY }}
           EVENT_NAME: ${{ github.event_name }}
           INPUT_ADD_PLAYER: ${{ inputs.add_custom_player }}
           INPUT_REMOVE_PLAYER: ${{ inputs.remove_custom_player }}

@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 179 perfis de exibição passiva (161 Monitorados + 18 Emigrados em Outros BR)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 190 perfis de exibição passiva (175 Monitorados + 15 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 179)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 190)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -181,6 +181,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertIn(164152, other_by_pid)
         self.assertEqual(other_by_pid[164152]["original_alias"], "Sgt.Yoda")
         self.assertFalse(other_by_pid[164152].get("smurf_of"))
+        self.assertEqual(other_by_pid[720147].get("smurf_of"), "icemaker")
+        self.assertTrue(other_by_pid[448521].get("priority_watch"))
+        self.assertTrue(other_by_pid[720147].get("priority_watch"))
         for mon_pid, mon_alias in (
             (941524, "Colossus"),
             (40833, "Tokai Teio"),
@@ -195,11 +198,23 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (649535, "pensss"),
             (765837, "Southland"),
             (87314, "Pedro Jedi"),
+            (6880, "ArguS (VonDun)"),
             (1156831, "DAk120"),
             (3888, "Pepe Popo"),
             (2834, "Xampoo"),
             (448521, "icemaker"),
-            (720147, "アリス"),
+            (720147, "アリス (Smurf: icemaker)"),
+            (673604, "MataMOsca"),
+            (893043, "Rodrigo Ragagnin"),
+            (1315226, "Olegnalehcim"),
+            (1115599, "Paisano"),
+            (942935, "SrLmo"),
+            (26172, "SmiLeYxBR"),
+            (1214336, "Carp"),
+            (1295138, "Salïty"),
+            (22246, "Açucar Macabro"),
+            (6696, "Roda"),
+            (502544, "Arthoumadbro"),
         ):
             self.assertIn(mon_pid, other_by_pid)
             self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)
@@ -207,6 +222,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (212034, "XAPA KENTE", "ca"),
             (7448, "icewarp", "za"),
             (33487, "Generick", "us"),
+            (304013, "Napa", "us"),
             (91827, "[★General★] Apollo", "au"),
             (263517, "Angel of Death", "jp"),
             (29737, "PABLO FLEXCOBAR", "ar"),
