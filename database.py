@@ -154,6 +154,9 @@ class MatchDatabase:
 
                 CREATE INDEX IF NOT EXISTS idx_nemesis_all_pair_day
                     ON nemesis_matches (tracked_profile_id, opponent_profile_id, utc_day);
+
+                CREATE INDEX IF NOT EXISTS idx_nemesis_all_opp
+                    ON nemesis_matches (opponent_profile_id, tracked_profile_id);
                 """
             )
             existing_match_cols = {
@@ -772,6 +775,21 @@ class MatchDatabase:
             "trigger_day_events": int(active_rivals[0] or 0) if active_rivals else 0,
             "distinct_nemesis_pairs": int(distinct_nemesis_pairs[0] or 0) if distinct_nemesis_pairs else 0,
         }
+
+    def get_tracked_pids_who_faced_opponent(self, opponent_profile_id: int) -> set[int]:
+        """
+        Retorna todos os `tracked_profile_id` que já enfrentaram `opponent_profile_id` em qualquer
+        partida Automatch histórica registrada em `nemesis_matches` (desde 2023-06-30).
+        Usado como desqualificador absoluto na detecção de smurfs ("Um Smurf nunca enfrenta a conta original").
+        """
+        opp_pid = int(opponent_profile_id or 0)
+        if opp_pid <= 0:
+            return set()
+        rows = self._connect().execute(
+            "SELECT DISTINCT tracked_profile_id FROM nemesis_matches WHERE opponent_profile_id = ?",
+            (opp_pid,),
+        ).fetchall()
+        return {int(r[0]) for r in rows if int(r[0] or 0) > 0}
 
     def update_matches_discord_id_batch(self, records: list[dict[str, Any]], message_id: str) -> None:
         """Atualiza o discord_message_id de todos os registros agrupados da mesma partida em uma transação."""
