@@ -20,11 +20,13 @@ from discord_notifier import DiscordWebhookClient, group_matches_by_id
 from relic_api import (
     AUTOMATCH_MODES,
     CORE_BR_ROSTER,
+    MANUAL_OTHER_BR_DISPLAY,
     Coh3StatsAPIClient,
     CohDBClient,
     RelicAPIClient,
     VeteransRadarClient,
     build_roster_lookup_maps,
+    enrich_match_with_roster,
     fetch_custom_players_stats,
     format_bound_display_alias,
     is_battlegroup_eligible_mode,
@@ -113,6 +115,7 @@ def ensure_core_roster_in_config(
         c_known = list(core.get("known_aliases") or [])
         c_pin = bool(core.get("pin_alias"))
         c_show_smurf = bool(core.get("show_smurf_alias"))
+        c_smurf_of = str(core.get("smurf_of") or "").strip()
         c_merged_pid = int(core.get("merged_into_profile_id", 0) or 0)
         c_merged_sid = str(core.get("merged_into_steam_id") or "")
         c_country = str(core.get("country") or "").strip().lower()
@@ -132,6 +135,8 @@ def ensure_core_roster_in_config(
                 new_entry["pin_alias"] = True
             if c_show_smurf:
                 new_entry["show_smurf_alias"] = True
+            if c_smurf_of:
+                new_entry["smurf_of"] = c_smurf_of
             if c_known:
                 new_entry["known_aliases"] = c_known
             if c_merged_pid:
@@ -155,6 +160,7 @@ def ensure_core_roster_in_config(
                 c_known,
                 pin_alias=c_pin,
                 show_smurf_alias=c_show_smurf,
+                smurf_of=c_smurf_of,
             )
             if target.get("alias") != expected_alias:
                 target["alias"] = expected_alias
@@ -182,6 +188,13 @@ def ensure_core_roster_in_config(
                     changed = True
             elif "show_smurf_alias" in target:
                 target.pop("show_smurf_alias", None)
+                changed = True
+            if c_smurf_of:
+                if str(target.get("smurf_of") or "").strip() != c_smurf_of:
+                    target["smurf_of"] = c_smurf_of
+                    changed = True
+            elif "smurf_of" in target:
+                target.pop("smurf_of", None)
                 changed = True
             if c_known:
                 if target.get("known_aliases") != c_known:
@@ -372,6 +385,7 @@ def merge_catalog_with_custom_players(
                 r_entry.get("known_aliases") or cp.get("known_aliases"),
                 pin_alias=bool(r_entry.get("pin_alias") or cp.get("pin_alias")),
                 show_smurf_alias=bool(r_entry.get("show_smurf_alias") or cp.get("show_smurf_alias")),
+                smurf_of=str(r_entry.get("smurf_of") or cp.get("smurf_of") or ""),
             )
 
     return list(by_pid.values())
@@ -1769,6 +1783,189 @@ def _patch_match_card_with_battlegroups(
         return False
 
 
+def _build_roster_display_signature(
+    custom_players: list[dict[str, Any]] | None = None,
+) -> dict[str, str]:
+    """Gera assinatura compacta `{profile_id: 'original_alias|smurf_of|country|is_vet'}` para detectar mudanças de roster/smurf."""
+    sig: dict[str, str] = {}
+    for is_vet, src in (
+        (0, MANUAL_OTHER_BR_DISPLAY),
+        (1, custom_players or []),
+        (1, CORE_BR_ROSTER),
+    ):
+        for item in src:
+            if not isinstance(item, dict):
+                continue
+            pid = int(item.get("profile_id", 0) or 0)
+            if pid <= 0:
+                continue
+            orig = str(item.get("original_alias") or item.get("alias") or "").strip()
+            smurf = str(item.get("smurf_of") or "").strip()
+            ctry = str(item.get("country") or "br").strip().lower() or "br"
+            sig[str(pid)] = f"{orig}|{smurf}|{ctry}|{is_vet}"
+    return sig
+
+
+def refresh_recent_cards_after_roster_changes(
+    db: MatchDatabase,
+    discord: DiscordWebhookClient,
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]],
+    custom_players: list[dict[str, Any]] | None = None,
+    *,
+    max_age_sec: int = 259200,
+    max_patches: int = 15,
+) -> int:
+    """
+    Atualiza silenciosamente via PATCH os cards recentes (<=72h) já postados no Discord sempre que
+    um Veterano ou Smurf é adicionado/renomeado no roster compartilhado (ou na 1ª execução após ativação,
+    corrigindo cards pré-existentes com apelidos defasados como `Državljan H` -> `Državljan H (Smurf: arc)`).
+    """
+    if not discord.is_configured:
+        return 0
+
+    current_sig = _build_roster_display_signature(custom_players)
+    if not current_sig:
+        return 0
+
+    prev_raw = (db.get_state("roster_card_display_sig_v1") or "").strip()
+    prev_sig: dict[str, str] = {}
+    is_first_baseline = True
+    if prev_raw:
+        try:
+            parsed = json.loads(prev_raw)
+            if isinstance(parsed, dict) and parsed:
+                prev_sig = {str(k): str(v) for k, v in parsed.items()}
+                is_first_baseline = False
+        except Exception:
+            prev_sig = {}
+
+    changed_pids: set[int] = set()
+    if not is_first_baseline:
+        for k in set(current_sig.keys()) | set(prev_sig.keys()):
+            if k.isdigit() and current_sig.get(k) != prev_sig.get(k):
+                changed_pids.add(int(k))
+        if not changed_pids:
+            return 0
+
+    recent_rows = db.get_recent_posted_matches(max_age_sec=max_age_sec, limit=60)
+    if not recent_rows:
+        db.set_state(
+            "roster_card_display_sig_v1",
+            json.dumps(current_sig, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+        return 0
+
+    _, pid_map = roster_maps
+    patched_count = 0
+    all_ok = True
+    groups = group_matches_by_id(recent_rows)
+
+    for m_grp in groups:
+        if patched_count >= max(1, int(max_patches)):
+            all_ok = False
+            break
+        recs = m_grp.get("records") or []
+        if not recs:
+            continue
+
+        match_pids: set[int] = set()
+        before_aliases: list[tuple[int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
+        hydrated_bgs: dict[str, Any] = {}
+        for rec in recs:
+            tpid = int(rec.get("tracked_profile_id", 0) or 0)
+            if tpid > 0:
+                match_pids.add(tpid)
+            al_snap = [(int(p.get("profile_id", 0) or 0), str(p.get("alias") or "")) for p in (rec.get("allies") or [])]
+            op_snap = [(int(p.get("profile_id", 0) or 0), str(p.get("alias") or "")) for p in (rec.get("opponents") or [])]
+            for ppid, _ in al_snap + op_snap:
+                if ppid > 0:
+                    match_pids.add(ppid)
+            before_aliases.append((tpid, str(rec.get("tracked_alias") or ""), al_snap, op_snap))
+            if isinstance(rec.get("battlegroups"), dict) and rec["battlegroups"] and not hydrated_bgs:
+                hydrated_bgs = dict(rec["battlegroups"])
+
+        if hydrated_bgs:
+            for rec in recs:
+                if not rec.get("battlegroups"):
+                    rec["battlegroups"] = dict(hydrated_bgs)
+
+        # Limpa eventual alerta de "smurf desconhecida" cujo perfil agora já foi promovido para Veteranos
+        alerts_cleaned = False
+        raw_alerts = m_grp.get("smurf_alerts") or (m_grp.get("primary") or {}).get("smurf_alerts") or []
+        if isinstance(raw_alerts, list) and raw_alerts:
+            kept_alerts = [
+                a
+                for a in raw_alerts
+                if isinstance(a, dict)
+                and not bool((pid_map.get(int(a.get("opponent_profile_id", 0) or 0)) or {}).get("is_veterano"))
+            ]
+            if len(kept_alerts) != len(raw_alerts):
+                alerts_cleaned = True
+                m_grp["smurf_alerts"] = kept_alerts
+                for rec in recs:
+                    rec["smurf_alerts"] = kept_alerts
+
+        alias_changed = alerts_cleaned
+        for idx, rec in enumerate(recs):
+            enrich_match_with_roster(rec, roster_maps)
+            prev_tpid, prev_talias, prev_al, prev_op = before_aliases[idx]
+            _ = prev_tpid
+            cur_al = [(int(p.get("profile_id", 0) or 0), str(p.get("alias") or "")) for p in (rec.get("allies") or [])]
+            cur_op = [(int(p.get("profile_id", 0) or 0), str(p.get("alias") or "")) for p in (rec.get("opponents") or [])]
+            if str(rec.get("tracked_alias") or "") != prev_talias or cur_al != prev_al or cur_op != prev_op:
+                alias_changed = True
+
+        needs_patch = alias_changed or (not is_first_baseline and bool(match_pids & changed_pids))
+        if not needs_patch:
+            continue
+
+        existing_msg_id = next(
+            (
+                str(r.get("discord_message_id") or "").strip()
+                for r in recs
+                if str(r.get("discord_message_id") or "").strip().isdigit()
+                and len(str(r.get("discord_message_id") or "").strip()) >= 15
+            ),
+            "",
+        )
+        if not existing_msg_id:
+            continue
+
+        if _patch_match_card_with_battlegroups(
+            db,
+            discord,
+            m_grp,
+            existing_msg_id,
+            roster_maps,
+            log_suffix="com atualização de roster/smurf",
+        ):
+            for rec in recs:
+                db.update_match_participants_metadata(
+                    int(rec["match_id"]),
+                    int(rec["tracked_profile_id"]),
+                    str(rec.get("tracked_alias") or ""),
+                    list(rec.get("allies") or []),
+                    list(rec.get("opponents") or []),
+                )
+            if alerts_cleaned:
+                db.update_match_smurf_alerts(int(m_grp["match_id"]), list(m_grp.get("smurf_alerts") or []))
+            patched_count += 1
+        else:
+            all_ok = False
+
+    if all_ok:
+        db.set_state(
+            "roster_card_display_sig_v1",
+            json.dumps(current_sig, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        )
+    if patched_count > 0:
+        logger.info(
+            "[ROSTER PATCH] %d card(s) recente(s) atualizado(s) silenciosamente no Discord após mudança de roster/smurf.",
+            patched_count,
+        )
+    return patched_count
+
+
 def enrich_group_with_nemesis(
     db: MatchDatabase,
     grp: dict[str, Any],
@@ -2476,9 +2673,25 @@ def run_cycle(
                 retention_hours=cleanup_hours,
                 now_ts=now_ts,
             )
+            roster_patch_window_sec = max(14400, int(cleanup_hours) * 3600) if cleanup_hours > 0 else 259200
+            roster_patched_cards = refresh_recent_cards_after_roster_changes(
+                db=db,
+                discord=discord,
+                roster_maps=roster_maps,
+                custom_players=custom_players,
+                max_age_sec=roster_patch_window_sec,
+                max_patches=15,
+            )
             min_panel_ts = max(display_since_ts, now_ts - window_sec) if cleanup_hours > 0 else display_since_ts
 
-            if cards_confirmed > 0 or bg_patched_cards > 0 or newly_finished or players_changed or tracked_changed:
+            if (
+                cards_confirmed > 0
+                or bg_patched_cards > 0
+                or roster_patched_cards > 0
+                or newly_finished
+                or players_changed
+                or tracked_changed
+            ):
                 db.set_state("summary_needs_refresh", "1")
             elif pruned_count > 0 and cleanup_hours > 0:
                 active_window_rows = db.get_recent_recorded_matches(

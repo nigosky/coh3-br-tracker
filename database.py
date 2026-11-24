@@ -173,6 +173,77 @@ class MatchDatabase:
                 conn.execute("ALTER TABLE tracked_players ADD COLUMN original_alias TEXT DEFAULT ''")
 
             self._ensure_nemesis_all_modes_backfill(conn)
+            self._sync_sibling_match_metadata(conn)
+
+    @staticmethod
+    def _sync_sibling_match_metadata(conn: sqlite3.Connection) -> None:
+        """
+        Sincroniza `battlegroups_json`, `smurf_alerts_json` e Snowflake `discord_message_id` entre
+        linhas irmãs do mesmo `match_id` (evita loop infinito de PATCH quando um novo Veterano é
+        semeado em uma partida que já possuía Battlegroups/Snowflake gravados em outro jogador).
+        """
+        conn.execute(
+            """
+            UPDATE recorded_matches
+            SET battlegroups_json = (
+                SELECT s.battlegroups_json
+                FROM recorded_matches s
+                WHERE s.match_id = recorded_matches.match_id
+                  AND COALESCE(s.battlegroups_json, '') != ''
+                LIMIT 1
+            )
+            WHERE COALESCE(battlegroups_json, '') = ''
+              AND EXISTS (
+                  SELECT 1
+                  FROM recorded_matches s
+                  WHERE s.match_id = recorded_matches.match_id
+                    AND COALESCE(s.battlegroups_json, '') != ''
+              )
+            """
+        )
+        conn.execute(
+            """
+            UPDATE recorded_matches
+            SET smurf_alerts_json = (
+                SELECT s.smurf_alerts_json
+                FROM recorded_matches s
+                WHERE s.match_id = recorded_matches.match_id
+                  AND COALESCE(s.smurf_alerts_json, '') != ''
+                LIMIT 1
+            )
+            WHERE COALESCE(smurf_alerts_json, '') = ''
+              AND EXISTS (
+                  SELECT 1
+                  FROM recorded_matches s
+                  WHERE s.match_id = recorded_matches.match_id
+                    AND COALESCE(s.smurf_alerts_json, '') != ''
+              )
+            """
+        )
+        conn.execute(
+            """
+            UPDATE recorded_matches
+            SET discord_message_id = (
+                SELECT s.discord_message_id
+                FROM recorded_matches s
+                WHERE s.match_id = recorded_matches.match_id
+                  AND s.discord_message_id IS NOT NULL
+                  AND length(s.discord_message_id) >= 15
+                  AND s.discord_message_id NOT GLOB '*[^0-9]*'
+                LIMIT 1
+            )
+            WHERE discord_message_id = ?
+              AND EXISTS (
+                  SELECT 1
+                  FROM recorded_matches s
+                  WHERE s.match_id = recorded_matches.match_id
+                    AND s.discord_message_id IS NOT NULL
+                    AND length(s.discord_message_id) >= 15
+                    AND s.discord_message_id NOT GLOB '*[^0-9]*'
+              )
+            """,
+            (SEEDED_DISCORD_MARKER,),
+        )
 
     @staticmethod
     def _extract_automatch_steam_opponents(
@@ -412,14 +483,40 @@ class MatchDatabase:
     def insert_match(self, match: dict[str, Any], discord_message_id: str | None = None) -> bool:
         """Grava partida atomicamente com INSERT OR IGNORE (sem race condition). Retorna True se foi inédita."""
         now = int(time.time())
+        mid = int(match["match_id"])
         bg_raw = match.get("battlegroups")
         bg_json = (
             json.dumps({str(k): v for k, v in bg_raw.items()}, ensure_ascii=False, separators=(",", ":"))
             if isinstance(bg_raw, dict)
             else ""
         )
+        smurf_raw = match.get("smurf_alerts")
+        smurf_json = (
+            json.dumps([a for a in smurf_raw if isinstance(a, dict)], ensure_ascii=False, separators=(",", ":"))
+            if isinstance(smurf_raw, list) and smurf_raw
+            else ""
+        )
+        eff_msg_id = discord_message_id
         conn = self._connect()
         with conn:
+            if not bg_json or not smurf_json or eff_msg_id == SEEDED_DISCORD_MARKER:
+                sib_rows = conn.execute(
+                    """
+                    SELECT battlegroups_json, smurf_alerts_json, discord_message_id
+                    FROM recorded_matches
+                    WHERE match_id = ?
+                    """,
+                    (mid,),
+                ).fetchall()
+                for srow in sib_rows:
+                    if not bg_json and str(srow["battlegroups_json"] or "").strip():
+                        bg_json = str(srow["battlegroups_json"])
+                    if not smurf_json and str(srow["smurf_alerts_json"] or "").strip():
+                        smurf_json = str(srow["smurf_alerts_json"])
+                    if eff_msg_id == SEEDED_DISCORD_MARKER:
+                        smid = str(srow["discord_message_id"] or "").strip()
+                        if len(smid) >= 15 and smid.isdigit():
+                            eff_msg_id = smid
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO recorded_matches (
@@ -427,11 +524,12 @@ class MatchDatabase:
                     tracked_faction_short, win, resulttype, mode, matchtype_id,
                     map_raw, map_clean, start_time, completion_time, duration_sec,
                     old_elo, new_elo, allies_json, opponents_json, counters_json,
-                    has_replay, coh3stats_url, discord_message_id, recorded_at, battlegroups_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    has_replay, coh3stats_url, discord_message_id, recorded_at,
+                    battlegroups_json, smurf_alerts_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    int(match["match_id"]),
+                    mid,
                     int(match["tracked_profile_id"]),
                     str(match["tracked_alias"]),
                     str(match.get("tracked_steam_id") or ""),
@@ -453,9 +551,10 @@ class MatchDatabase:
                     "{}",
                     1 if match.get("has_replay") else 0,
                     str(match["coh3stats_url"]),
-                    discord_message_id,
+                    eff_msg_id,
                     now,
                     bg_json,
+                    smurf_json,
                 ),
             )
             mode_str = str(match.get("mode") or "")
@@ -759,12 +858,18 @@ class MatchDatabase:
             JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
             WHERE tp.active = 1
               AND rm.mode IN ('1v1', '2v2', 'Team Games (3v3)', 'Team Games (4v4)', 'Custom')
-              AND rm.completion_time >= ?
-              AND COALESCE(rm.battlegroups_json, '') = ''
-              AND rm.discord_message_id IS NOT NULL
-              AND length(rm.discord_message_id) >= 15
-              AND rm.discord_message_id NOT GLOB '*[^0-9]*'{exclude_sql}
+              AND rm.completion_time >= ?{exclude_sql}
             GROUP BY rm.match_id
+            HAVING MAX(CASE WHEN COALESCE(rm.battlegroups_json, '') != '' THEN 1 ELSE 0 END) = 0
+               AND MAX(
+                   CASE
+                       WHEN rm.discord_message_id IS NOT NULL
+                            AND length(rm.discord_message_id) >= 15
+                            AND rm.discord_message_id NOT GLOB '*[^0-9]*'
+                       THEN 1
+                       ELSE 0
+                   END
+               ) = 1
             ORDER BY latest_ct DESC
             LIMIT ?
             """,
@@ -788,6 +893,85 @@ class MatchDatabase:
             mids,
         ).fetchall()
         return [self._row_to_match_dict(r) for r in rows]
+
+    def get_recent_posted_matches(
+        self,
+        max_age_sec: int = 259200,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """
+        Retorna todas as linhas ativas das partidas recentes (<= max_age_sec) já postadas no Discord
+        (com Snowflake válido), para atualização retroativa silenciosa quando um Veterano ou Smurf
+        é adicionado ou renomeado no roster compartilhado.
+        """
+        safe_limit = max(1, min(int(limit), 100))
+        cutoff = int(time.time()) - max(600, int(max_age_sec))
+        conn = self._connect()
+        mid_rows = conn.execute(
+            """
+            SELECT rm.match_id, MAX(rm.completion_time) AS latest_ct
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.completion_time >= ?
+              AND rm.discord_message_id IS NOT NULL
+              AND length(rm.discord_message_id) >= 15
+              AND rm.discord_message_id NOT GLOB '*[^0-9]*'
+            GROUP BY rm.match_id
+            ORDER BY latest_ct DESC
+            LIMIT ?
+            """,
+            (cutoff, safe_limit),
+        ).fetchall()
+        mids = [int(r["match_id"]) for r in mid_rows]
+        if not mids:
+            return []
+        placeholders = ",".join("?" for _ in mids)
+        rows = conn.execute(
+            f"""
+            SELECT rm.*,
+                   COALESCE(NULLIF(rm.tracked_steam_id, ''), tp.steam_id, '') AS resolved_steam_id,
+                   COALESCE(NULLIF(tp.alias, ''), rm.tracked_alias) AS resolved_display_alias
+            FROM recorded_matches rm
+            JOIN tracked_players tp ON tp.profile_id = rm.tracked_profile_id
+            WHERE tp.active = 1
+              AND rm.match_id IN ({placeholders})
+            ORDER BY rm.completion_time DESC, rm.match_id DESC
+            """,
+            mids,
+        ).fetchall()
+        return [self._row_to_match_dict(r) for r in rows]
+
+    def update_match_participants_metadata(
+        self,
+        match_id: int,
+        tracked_profile_id: int,
+        tracked_alias: str,
+        allies: list[dict[str, Any]],
+        opponents: list[dict[str, Any]],
+    ) -> int:
+        """Atualiza `tracked_alias`, `allies_json` e `opponents_json` após atualização retroativa de roster/smurf."""
+        mid = int(match_id or 0)
+        pid = int(tracked_profile_id or 0)
+        if mid <= 0 or pid <= 0:
+            return 0
+        conn = self._connect()
+        with conn:
+            cur = conn.execute(
+                """
+                UPDATE recorded_matches
+                SET tracked_alias = ?, allies_json = ?, opponents_json = ?
+                WHERE match_id = ? AND tracked_profile_id = ?
+                """,
+                (
+                    str(tracked_alias or ""),
+                    json.dumps(allies or [], ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(opponents or [], ensure_ascii=False, separators=(",", ":")),
+                    mid,
+                    pid,
+                ),
+            )
+        return int(cur.rowcount or 0)
 
     @staticmethod
     def _row_to_match_dict(row: sqlite3.Row) -> dict[str, Any]:

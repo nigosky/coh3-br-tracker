@@ -522,6 +522,27 @@ class TestBattlegroupsCustomAndSmurfs(unittest.TestCase):
             loaded = _load_bg_retry_state(db, now_ts=now_ts, max_age_sec=72 * 3600)
             self.assertEqual(loaded, {92705800: now_ts - 600, 92704541: now_ts - 3600})
 
+    def test_sibling_row_inherits_battlegroups_and_never_loops_missing_query(self) -> None:
+        now_ts = int(time.time()) - 1800
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = MatchDatabase(Path(tmpdir) / "sibling_bg.db")
+            db.sync_tracked_players(
+                [
+                    {"profile_id": 1022333, "alias": "gaules", "original_alias": "gaules", "steam_id": "76561198264285149"},
+                    {"profile_id": 1487738, "alias": "Državljan H (Smurf: arc)", "original_alias": "Državljan H (Smurf: arc)", "steam_id": "76561198602236177"},
+                ]
+            )
+            m1 = _sample_match(92726139, 1022333, "gaules", "76561198264285149", mode="Team Games (3v3)", matchtype_id=3, completion_time=now_ts)
+            m1["battlegroups"] = {"1022333": {"key": "panzerjager_kommand_ak", "name": "Panzerjäger Kommand"}}
+            db.insert_match(m1, discord_message_id="1574633088313721042")
+
+            # Novo Veterano inserido depois sem BGs na memória -> herda BGs da linha irmã e não entra em loop infinito!
+            m2 = _sample_match(92726139, 1487738, "Državljan H (Smurf: arc)", "76561198602236177", mode="Team Games (3v3)", matchtype_id=3, completion_time=now_ts)
+            db.insert_match(m2, discord_message_id="1574633088313721042")
+
+            self.assertEqual(db.get_recent_matches_missing_battlegroups(max_age_sec=72 * 3600, limit=10), [])
+            db.close()
+
 
 if __name__ == "__main__":
     unittest.main()

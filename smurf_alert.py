@@ -118,6 +118,8 @@ KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     1297804: 844225,  # Leite Moço -> 『V』SKOBADARK
     557890: 559962,   # gabe44arg -> Gabe
     1423426: 1005730, # geladeira velha -> arc
+    1487738: 1005730, # Državljan H -> arc
+    1482961: 1005730, # Vog -> arc
     164152: 205121,   # seu pai -> Sgt.Yoda
 }
 

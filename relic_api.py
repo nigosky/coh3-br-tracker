@@ -295,13 +295,14 @@ COH3STATS_PLAYER_URL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lista fixa das 43 contas Steam brasileiras monitoradas (43 Veteranos únicos vinculados por SteamID64 imutável)
+# Lista fixa das 46 contas Steam brasileiras monitoradas (46 Veteranos únicos vinculados por SteamID64 imutável)
 CORE_BR_ROSTER: list[dict[str, Any]] = [
     {"profile_id": 79327, "steam_id": "76561197963172584", "original_alias": "Chacineiro"},
     {
         "profile_id": 1333418,
         "steam_id": "76561198698969876",
         "original_alias": "Charles Bronson (Smurf: Chacineiro)",
+        "smurf_of": "Chacineiro",
         "pin_alias": True,
         "known_aliases": [
             "Charles Bronson",
@@ -349,6 +350,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "profile_id": 557890,
         "steam_id": "76561199538846112",
         "original_alias": "gabe44arg (Smurf: Gabe)",
+        "smurf_of": "Gabe",
         "pin_alias": True,
         "known_aliases": ["gabe44arg", "gabe444arg", "gabe44arg (Gabe)", "gabe44arg (Smurf: Gabe)"],
     },
@@ -360,6 +362,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "profile_id": 1423426,
         "steam_id": "76561199482388323",
         "original_alias": "geladeira velha (Smurf: arc)",
+        "smurf_of": "arc",
         "pin_alias": True,
         "known_aliases": ["geladeira velha", "dibas", "uncle hans", "geladeira velha (arc)", "geladeira velha (Smurf: arc)"],
     },
@@ -370,6 +373,14 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "smurf_of": "arc",
         "pin_alias": True,
         "known_aliases": ["Državljan H", "Državljan H (arc)", "Državljan H (Smurf: arc)"],
+    },
+    {
+        "profile_id": 1482961,
+        "steam_id": "76561199886227102",
+        "original_alias": "Vog (Smurf: arc)",
+        "smurf_of": "arc",
+        "pin_alias": True,
+        "known_aliases": ["Vog", "Vog (arc)", "Vog (Smurf: arc)"],
     },
     {"profile_id": 31145, "steam_id": "76561197985268629", "original_alias": "vonMises"},
     {"profile_id": 58737, "steam_id": "76561197993922195", "original_alias": "INFIEL"},
@@ -390,6 +401,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "profile_id": 1390350,
         "steam_id": "76561198089278659",
         "original_alias": "TearsInTheRain (Smurf: Chacineiro)",
+        "smurf_of": "Chacineiro",
         "pin_alias": True,
         "known_aliases": ["TearsInTheRain", "TearsInTheRain (Chacineiro)", "TearsInTheRain (Smurf: Chacineiro)"],
     },
@@ -397,6 +409,7 @@ CORE_BR_ROSTER: list[dict[str, Any]] = [
         "profile_id": 1076221,
         "steam_id": "76561198815935562",
         "original_alias": "Lucielle (Smurf: Colossus)",
+        "smurf_of": "Colossus",
         "pin_alias": True,
         "known_aliases": ["Lucielle", "Lucifer", "Lucielle (Colossus)", "Lucielle (Smurf: Colossus)"],
     },
@@ -430,6 +443,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "profile_id": 1297821,
         "steam_id": "76561198722284920",
         "original_alias": "General Winter (Smurf: General Winter)",
+        "smurf_of": "General Winter",
         "pin_alias": True,
         "known_aliases": ["General Winter", "Dick of the Galaxies", "General Winter (Smurf: General Winter)"],
     },
@@ -437,6 +451,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "profile_id": 1318162,
         "steam_id": "76561198708550887",
         "original_alias": "General Winter (Smurf: General Winter)",
+        "smurf_of": "General Winter",
         "pin_alias": True,
         "known_aliases": ["General Winter", ".", "General Winter (Smurf: General Winter)"],
     },
@@ -451,6 +466,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "profile_id": 1297853,
         "steam_id": "76561198721980631",
         "original_alias": "Shadow (Smurf: Alekel)",
+        "smurf_of": "Alekel",
         "pin_alias": True,
         "known_aliases": ["Shadow", "Zé da manga", "Alekel (Smurf: Shadow)", "Shadow (Smurf: Alekel)"],
     },
@@ -465,6 +481,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "profile_id": 1297804,
         "steam_id": "76561198723667226",
         "original_alias": "Leite Moço (Smurf: 『V』SKOBADARK)",
+        "smurf_of": "『V』SKOBADARK",
         "pin_alias": True,
         "known_aliases": ["Leite Moço", "『V』SKOBADARK (Smurf: Leite Moço)", "Leite Moço (Smurf: 『V』SKOBADARK)"],
     },
@@ -472,6 +489,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "profile_id": 164152,
         "steam_id": "76561198029749621",
         "original_alias": "seu pai (Smurf: Sgt.Yoda)",
+        "smurf_of": "Sgt.Yoda",
         "pin_alias": True,
         "known_aliases": ["seu pai", "Sgt.Yoda", "seu pai (Sgt.Yoda)", "seu pai (Smurf: Sgt.Yoda)"],
     },
@@ -522,13 +540,28 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
 
 FALLBACK_MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [dict(row) for row in MANUAL_OTHER_BR_DISPLAY]
 
-# Contas smurf onde o Tracker força 'NickPrincipal* (NickSmurf)' (vazio: smurfs agora são contas independentes com pin_alias)
+# Contas smurf onde o Tracker força 'NickPrincipal* (NickSmurf)' (vazio: smurfs agora são contas independentes)
 TRACKER_SMURF_DISPLAY_PIDS: frozenset[int] = frozenset()
 
 # Contas secundárias mescladas mantidas no Tracker (vazio: todas independentes no roster compartilhado)
 LOCAL_MERGED_ACCOUNT_FALLBACKS: tuple[dict[str, Any], ...] = ()
 
 _COUNTRY_ISO2_RE = re.compile(r"^[a-z]{2}$")
+_SMURF_OWNER_TAG_RE = re.compile(r"^(.*?)\s*\(\s*smurf\s*:\s*([^)]+?)\s*\)\s*$", re.IGNORECASE)
+
+
+def _extract_smurf_nick_and_owner(alias: str, smurf_of: str = "") -> tuple[str, str]:
+    """Extrai `(nick_base_da_smurf, conta_original)` de uma entrada de smurf."""
+    clean_alias = strip_unsafe_chars(alias).strip()
+    clean_owner = strip_unsafe_chars(smurf_of).strip()[:40]
+    m = _SMURF_OWNER_TAG_RE.match(clean_alias)
+    if m:
+        outer = m.group(1).strip()
+        owner = clean_owner or m.group(2).strip()[:40]
+        return (outer or owner or clean_alias), owner
+    if clean_owner:
+        return (clean_alias or clean_owner), clean_owner
+    return clean_alias, ""
 
 
 def _parse_roster_section_entries(raw_rows: Any, *, apply_smurf_display: bool = True) -> list[dict[str, Any]]:
@@ -552,7 +585,7 @@ def _parse_roster_section_entries(raw_rows: Any, *, apply_smurf_display: bool = 
         seen_pids.add(pid)
         seen_sids.add(sid)
 
-        alias = strip_unsafe_chars(row.get("original_alias") or row.get("alias") or "")[:40] or f"Player {pid}"
+        alias = strip_unsafe_chars(row.get("original_alias") or row.get("alias") or "")[:48] or f"Player {pid}"
         entry: dict[str, Any] = {
             "profile_id": pid,
             "steam_id": sid,
@@ -567,9 +600,12 @@ def _parse_roster_section_entries(raw_rows: Any, *, apply_smurf_display: bool = 
             entry["country"] = raw_ctry
         if row.get("pin_alias"):
             entry["pin_alias"] = True
+        _, parsed_smurf_owner = _extract_smurf_nick_and_owner(alias, str(row.get("smurf_of") or ""))
+        if parsed_smurf_owner:
+            entry["smurf_of"] = parsed_smurf_owner
         if apply_smurf_display and (row.get("show_smurf_alias") or pid in TRACKER_SMURF_DISPLAY_PIDS):
             entry["show_smurf_alias"] = True
-        known = [strip_unsafe_chars(k)[:40] for k in (row.get("known_aliases") or []) if strip_unsafe_chars(k)]
+        known = [strip_unsafe_chars(k)[:48] for k in (row.get("known_aliases") or []) if strip_unsafe_chars(k)]
         if known:
             entry["known_aliases"] = known
         try:
@@ -2373,8 +2409,16 @@ def format_bound_display_alias(
     *,
     pin_alias: bool = False,
     show_smurf_alias: bool = False,
+    smurf_of: str = "",
 ) -> str:
-    """Exibe o nome preferencial vinculado à conta Steam ou 'NickAnterior* (NovoNick)' se inédito/smurf (salvo pin_alias=True)."""
+    """
+    Exibe o nome preferencial vinculado à conta Steam:
+    - Com `pin_alias=True`: mantém `original_alias` fixo.
+    - Conta Smurf (`smurf_of` presente ou formato `<Nick> (Smurf: <Original>)`):
+      mantém `<NickBase> (Smurf: <Original>)` para nicks conhecidos e formata trocas inéditas
+      como `<NovoNick> (Smurf: <Original>)`.
+    - Conta principal / normal: exibe `original_alias` ou `'NickAnterior* (NovoNick)'` se inédito.
+    """
     cur = (current_alias or "").strip()
     orig = (original_alias or "").strip()
     if not orig:
@@ -2386,6 +2430,19 @@ def format_bound_display_alias(
     orig_cf = orig.casefold()
     if cur_cf == orig_cf:
         return orig
+
+    base_smurf_nick, owner = _extract_smurf_nick_and_owner(orig, smurf_of=smurf_of)
+    if owner and not show_smurf_alias:
+        cur_outer, _ = _extract_smurf_nick_and_owner(cur)
+        cur_clean = (cur_outer or cur).strip()
+        known_cf = {str(k).strip().casefold() for k in (known_aliases or []) if str(k).strip()}
+        known_cf.add(base_smurf_nick.casefold())
+        known_cf.add(orig_cf)
+        if not cur_clean or cur_clean.startswith("Player ") or cur_clean.startswith("Jogador "):
+            return orig
+        if cur_cf in known_cf or cur_clean.casefold() in known_cf:
+            return orig
+        return f"{cur_clean} (Smurf: {owner})"
 
     if not show_smurf_alias:
         known_cf = {str(k).strip().casefold() for k in (known_aliases or []) if str(k).strip()}
@@ -2412,6 +2469,7 @@ def _merge_roster_fields(rec: dict[str, Any], prev: dict[str, Any]) -> None:
         "country",
         "pin_alias",
         "show_smurf_alias",
+        "smurf_of",
     ):
         if not rec.get(field) and prev.get(field):
             rec[field] = prev[field]
@@ -2433,13 +2491,16 @@ def build_roster_lookup_maps(
             pid = int(item.get("profile_id", 0) or 0)
             sid_raw = str(item.get("steam_id") or "").replace("/steam/", "").strip()
             sid = sid_raw if STEAM_ID64_VALID_RE.fullmatch(sid_raw) else ""
+            orig_lbl = str(item.get("original_alias") or item.get("alias") or "").strip()
+            _, parsed_owner = _extract_smurf_nick_and_owner(orig_lbl, str(item.get("smurf_of") or ""))
             rec: dict[str, Any] = {
                 "profile_id": pid,
                 "steam_id": sid,
-                "original_alias": str(item.get("original_alias") or item.get("alias") or "").strip(),
+                "original_alias": orig_lbl,
                 "known_aliases": list(item.get("known_aliases") or []),
                 "pin_alias": bool(item.get("pin_alias")),
                 "show_smurf_alias": bool(item.get("show_smurf_alias") or (is_vet and pid in TRACKER_SMURF_DISPLAY_PIDS)),
+                "smurf_of": parsed_owner,
                 "merged_into_profile_id": int(item.get("merged_into_profile_id", 0) or 0),
                 "merged_into_steam_id": str(item.get("merged_into_steam_id") or "").strip(),
                 "country": str(item.get("country") or "").strip().lower(),
@@ -2484,6 +2545,7 @@ def _apply_roster_identity(
         r_entry.get("known_aliases"),
         pin_alias=bool(r_entry.get("pin_alias")),
         show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
+        smurf_of=str(r_entry.get("smurf_of") or ""),
     )
     if r_entry.get("is_veterano", True):
         target["is_br_roster"] = True
@@ -2629,6 +2691,7 @@ def _ingest_personal_stat_payload(
             r_entry.get("known_aliases"),
             pin_alias=bool(r_entry.get("pin_alias")),
             show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
+            smurf_of=str(r_entry.get("smurf_of") or ""),
         )
 
         results_by_pid[pid] = {

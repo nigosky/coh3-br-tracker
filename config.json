@@ -843,6 +843,7 @@
       "steam_id": "76561199482388323",
       "original_alias": "geladeira velha (Smurf: arc)",
       "alias": "geladeira velha (Smurf: arc)",
+      "smurf_of": "arc",
       "is_core_roster": true,
       "known_aliases": [
         "geladeira velha",
@@ -857,6 +858,7 @@
       "steam_id": "76561198698969876",
       "original_alias": "Charles Bronson (Smurf: Chacineiro)",
       "alias": "Charles Bronson (Smurf: Chacineiro)",
+      "smurf_of": "Chacineiro",
       "is_core_roster": true,
       "known_aliases": [
         "Charles Bronson",
@@ -872,6 +874,7 @@
       "steam_id": "76561198089278659",
       "original_alias": "TearsInTheRain (Smurf: Chacineiro)",
       "alias": "TearsInTheRain (Smurf: Chacineiro)",
+      "smurf_of": "Chacineiro",
       "is_core_roster": true,
       "known_aliases": [
         "TearsInTheRain",
@@ -884,6 +887,7 @@
       "steam_id": "76561198815935562",
       "original_alias": "Lucielle (Smurf: Colossus)",
       "alias": "Lucielle (Smurf: Colossus)",
+      "smurf_of": "Colossus",
       "is_core_roster": true,
       "known_aliases": [
         "Lucielle",
@@ -917,6 +921,7 @@
       "steam_id": "76561199886227102",
       "original_alias": "Vog (Smurf: arc)",
       "alias": "Vog (Smurf: arc)",
+      "smurf_of": "arc",
       "is_core_roster": true,
       "known_aliases": [
         "Vog",

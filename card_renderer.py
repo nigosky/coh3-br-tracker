@@ -1220,6 +1220,7 @@ def _resolve_roster_participant(
             r_entry.get("known_aliases"),
             pin_alias=bool(r_entry.get("pin_alias")),
             show_smurf_alias=bool(r_entry.get("show_smurf_alias")),
+            smurf_of=str(r_entry.get("smurf_of") or ""),
         )
         roster_country = str(r_entry.get("country") or "").strip().lower()
         is_vet = bool(r_entry.get("is_veterano", True))

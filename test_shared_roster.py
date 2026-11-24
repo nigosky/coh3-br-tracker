@@ -164,8 +164,8 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 45 Veteranos independentes (0 mescladas) + 34 Outros BR de exibição passiva
-        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 45)
+        # 1. Roster padrão tem 46 Veteranos independentes (0 mescladas) + 34 Outros BR de exibição passiva
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 46)
         self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 34)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
@@ -198,6 +198,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             557890: ("76561199538846112", "gabe44arg (Smurf: Gabe)"),
             1423426: ("76561199482388323", "geladeira velha (Smurf: arc)"),
             1487738: ("76561198602236177", "Državljan H (Smurf: arc)"),
+            1482961: ("76561199886227102", "Vog (Smurf: arc)"),
             1390350: ("76561198089278659", "TearsInTheRain (Smurf: Chacineiro)"),
             1076221: ("76561198815935562", "Lucielle (Smurf: Colossus)"),
         }
@@ -207,6 +208,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertEqual(by_pid[spid]["original_alias"], expected_alias)
             self.assertTrue(by_pid[spid].get("pin_alias"))
             self.assertFalse(by_pid[spid].get("show_smurf_alias"))
+            self.assertTrue(by_pid[spid].get("smurf_of"))
 
         self.assertNotIn(462597, by_pid)
         self.assertIn(462597, other_by_pid)
@@ -401,6 +403,168 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertEqual(active_map[1333418]["baseline_synced"], 1)
             self.assertEqual(active_map[1297821]["baseline_synced"], 0)
             self.assertEqual(active_map[1297821]["alias"], "Smurf 1 (General Winter)")
+            db.close()
+
+    def test_smurf_of_nick_change_without_pin_alias_and_retroactive_card_patch(self) -> None:
+        import time
+        from database import MatchDatabase
+
+        # 1. Ao baixar players_roster.json (smurf_of='arc', pin_alias=False), preserva smurf_of
+        #    e formata troca de nick como '<NovoNick> (Smurf: arc)' (nunca '... (Smurf: arc)* (NovoNick)')!
+        parsed = relic_api.parse_shared_roster_payload(
+            {
+                "schema_version": 1,
+                "veteranos": [
+                    {
+                        "profile_id": 1487738,
+                        "steam_id": "76561198602236177",
+                        "original_alias": "Državljan H (Smurf: arc)",
+                        "smurf_of": "arc",
+                        "country": "br",
+                        "known_aliases": ["Državljan H", "Državljan H (arc)", "Državljan H (Smurf: arc)"],
+                    },
+                    {
+                        "profile_id": 1482961,
+                        "steam_id": "76561199886227102",
+                        "original_alias": "Vog (Smurf: arc)",
+                        "smurf_of": "arc",
+                        "country": "br",
+                        "known_aliases": ["Vog", "Vog (arc)", "Vog (Smurf: arc)"],
+                    },
+                ],
+            }
+        )
+        by_pid = {int(r["profile_id"]): r for r in parsed}
+        self.assertEqual(by_pid[1487738].get("smurf_of"), "arc")
+        self.assertEqual(by_pid[1482961].get("smurf_of"), "arc")
+        self.assertFalse(by_pid[1487738].get("pin_alias"))
+
+        self.assertEqual(
+            relic_api.format_bound_display_alias(
+                "Državljan H",
+                "Državljan H (Smurf: arc)",
+                ["Državljan H"],
+                pin_alias=False,
+                smurf_of="arc",
+            ),
+            "Državljan H (Smurf: arc)",
+        )
+        self.assertEqual(
+            relic_api.format_bound_display_alias(
+                "NovoDisfarceArc",
+                "Vog (Smurf: arc)",
+                ["Vog"],
+                pin_alias=False,
+                smurf_of="arc",
+            ),
+            "NovoDisfarceArc (Smurf: arc)",
+        )
+
+        # 2. Card já postado antes da promoção de Državljan H é atualizado silenciosamente via PATCH
+        #    com preservação de Battlegroups e idempotência na 2ª execução!
+        now_ts = int(time.time()) - 1800
+        patched_calls: list[tuple[str, dict]] = []
+
+        class _FakeDiscord:
+            is_configured = True
+
+            def edit_match_card(self, message_id: str, grp: dict) -> str:
+                patched_calls.append((message_id, grp))
+                return message_id
+
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "retro_roster.db")
+            db.sync_tracked_players(
+                [
+                    {
+                        "profile_id": 1022333,
+                        "alias": "gaules",
+                        "original_alias": "gaules",
+                        "steam_id": "76561198264285149",
+                    },
+                    {
+                        "profile_id": 1487738,
+                        "alias": "Državljan H (Smurf: arc)",
+                        "original_alias": "Državljan H (Smurf: arc)",
+                        "steam_id": "76561198602236177",
+                    },
+                ]
+            )
+            match_before = {
+                "match_id": 92725814,
+                "tracked_profile_id": 1022333,
+                "tracked_alias": "gaules",
+                "tracked_steam_id": "76561198264285149",
+                "tracked_faction": "DAK",
+                "tracked_faction_short": "DAK",
+                "win": True,
+                "resulttype": 1,
+                "mode": "Team Games (3v3)",
+                "matchtype_id": 3,
+                "map_raw": "gazala",
+                "map_clean": "Gazala Landing Ground",
+                "start_time": now_ts - 600,
+                "completion_time": now_ts,
+                "duration_sec": 600,
+                "old_elo": 1407,
+                "new_elo": 1420,
+                "allies": [
+                    {
+                        "profile_id": 1487738,
+                        "alias": "Državljan H",
+                        "steam_id": "76561198602236177",
+                        "country": "br",
+                        "faction": "Wehrmacht",
+                    }
+                ],
+                "opponents": [
+                    {
+                        "profile_id": 90823,
+                        "alias": "Superboy",
+                        "steam_id": "76561198000090823",
+                        "country": "ca",
+                        "faction": "British Forces",
+                    }
+                ],
+                "has_replay": True,
+                "coh3stats_url": "https://coh3stats.com/players/1022333/matches/92725814",
+                "battlegroups": {
+                    "1022333": {"key": "panzerjager_kommand_ak", "name": "Panzerjäger Kommand"},
+                    "1487738": {"key": "terror_ger", "name": "Terror"},
+                },
+            }
+            db.insert_match(match_before, discord_message_id="1574624180224266240")
+            # Linha irmã SEEDED sem BG herda Snowflake e BG automaticamente!
+            match_sibling = dict(match_before)
+            match_sibling["tracked_profile_id"] = 1487738
+            match_sibling["tracked_alias"] = "Državljan H (Smurf: arc)"
+            match_sibling["tracked_steam_id"] = "76561198602236177"
+            match_sibling["battlegroups"] = None
+            db.insert_match(match_sibling, discord_message_id="SEEDED")
+
+            roster_maps = relic_api.build_roster_lookup_maps()
+            patched = monitor.refresh_recent_cards_after_roster_changes(
+                db=db,
+                discord=_FakeDiscord(),  # type: ignore[arg-type]
+                roster_maps=roster_maps,
+                max_age_sec=72 * 3600,
+            )
+            self.assertEqual(patched, 1)
+            self.assertEqual(len(patched_calls), 1)
+            msg_id, patched_grp = patched_calls[0]
+            self.assertEqual(msg_id, "1574624180224266240")
+            gaules_rec = next(r for r in patched_grp["records"] if int(r["tracked_profile_id"]) == 1022333)
+            self.assertEqual(gaules_rec["allies"][0]["alias"], "Državljan H (Smurf: arc)")
+            self.assertEqual(gaules_rec["battlegroups"]["1487738"]["key"], "terror_ger")
+
+            # Segunda chamada sem mudança de roster -> 0 PATCHes (idempotente)
+            patched_again = monitor.refresh_recent_cards_after_roster_changes(
+                db=db,
+                discord=_FakeDiscord(),  # type: ignore[arg-type]
+                roster_maps=roster_maps,
+                max_age_sec=72 * 3600,
+            )
+            self.assertEqual(patched_again, 0)
             db.close()
 
 
