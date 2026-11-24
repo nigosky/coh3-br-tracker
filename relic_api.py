@@ -460,7 +460,15 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "steam_id": "76561198053226112",
         "original_alias": "Alekel",
         "pin_alias": True,
-        "known_aliases": ["Minhoca de ferro!", "Minhoca de ferro", "Alekel"],
+        "known_aliases": [
+            "Minhoca de ferro!",
+            "Minhoca de ferro",
+            "Akael",
+            "Don Comerabo!",
+            "No mercy",
+            "Spectro",
+            "Alekel",
+        ],
     },
     {
         "profile_id": 1297853,
@@ -468,7 +476,14 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
         "original_alias": "Shadow (Smurf: Alekel)",
         "smurf_of": "Alekel",
         "pin_alias": True,
-        "known_aliases": ["Shadow", "Zé da manga", "Alekel (Smurf: Shadow)", "Shadow (Smurf: Alekel)"],
+        "known_aliases": [
+            "Shadow",
+            "Shadowk",
+            "Zé da manga",
+            "Alekelgames",
+            "Alekel (Smurf: Shadow)",
+            "Shadow (Smurf: Alekel)",
+        ],
     },
     {
         "profile_id": 844225,
