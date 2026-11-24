@@ -860,6 +860,159 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             self.assertLess(scored_inv["rivalry_kryptonite"]["pts"], 0.0)
             self.assertLessEqual(scored_inv["probability_pct"], 34)
 
+    def test_rivalry_family_consolidation_multiday_guard_and_wr_excess(self) -> None:
+        main_pid = 79327
+        fam_smurf_pid = 1333418
+        cand_pid = 1_996_001
+
+        # 1. Consolidação da família no SQLite (main + smurf catalogada) sem vazamento da própria candidata
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "rk_family.db")
+            nem_rows = [
+                # Main jogou apenas 1V-1D contra #660001; smurf catalogada jogou 0V-3D => família tem 1V-4D (Nêmesis!)
+                (main_pid, 660001, 51001, 1_710_000_000, 19790, 1, "1v1", "MaxisNemesis", "de"),
+                (main_pid, 660001, 51002, 1_710_086_400, 19791, 0, "1v1", "MaxisNemesis", "de"),
+                (fam_smurf_pid, 660001, 51003, 1_710_172_800, 19792, 0, "1v1", "MaxisNemesis", "de"),
+                (fam_smurf_pid, 660001, 51004, 1_710_259_200, 19793, 0, "1v1", "MaxisNemesis", "de"),
+                (fam_smurf_pid, 660001, 51005, 1_710_345_600, 19794, 0, "1v1", "MaxisNemesis", "de"),
+            ]
+            db.insert_nemesis_matches_batch(nem_rows)
+
+            krypt_rows = []
+            mid = 60000
+            for map_name, w_n, l_n, bg_key in (
+                ("Foggia Airfield", 1, 6, "coastal_ger"),
+                ("El Alamein", 1, 5, "coastal_ger"),
+                ("Pachino Farmlands", 7, 1, "mechanized_ger"),
+                ("Langres", 6, 1, "mechanized_ger"),
+            ):
+                for j in range(w_n + l_n):
+                    mid += 1
+                    krypt_rows.append(
+                        (fam_smurf_pid, mid, 1_720_000_000 + mid * 100, 1 if j < w_n else 0, "1v1", map_name, "[]", json.dumps([bg_key]))
+                    )
+            db.insert_kryptonite_matches_batch(krypt_rows)
+
+            ctx = sa.build_smurf_alert_context(
+                db,
+                relic=None,
+                custom_players=[
+                    {"profile_id": main_pid, "steam_id": "76561198014114284", "original_alias": "Chacineiro"},
+                    {"profile_id": fam_smurf_pid, "steam_id": "76561199133341800", "original_alias": "Charles Bronson (Smurf: Chacineiro)"},
+                ],
+                br_community_data={},
+                osint_client=_FakeOSINTClient({}),
+                allow_network=False,
+            )
+            self.assertIn(fam_smurf_pid, ctx.main_families[main_pid])
+
+            main_tel = ctx.telemetry_by_pid.setdefault(main_pid, sa.PlayerTelemetry(profile_id=main_pid, games=40, wins=20))
+            cand_tel = sa.PlayerTelemetry(profile_id=cand_pid, games=32, wins=22)
+            cand_tel.opp_wl[660001] = [0, 3]
+            cand_tel.opp_days[660001] = {20150, 20152}
+            cand_tel.map_wl = {
+                "Foggia Airfield": [1, 4],
+                "El Alamein": [1, 3],
+                "Pachino Farmlands": [6, 0],
+                "Langres": [5, 0],
+            }
+            cand_tel.enemy_bg_wl = {"Italian Coastal": [1, 4], "Mechanized": [5, 0]}
+
+            sa._hydrate_rivalry_kryptonite_for_live_probe(db, cand_tel, ctx)
+            self.assertIn(fam_smurf_pid, ctx.telemetry_by_pid)
+            fam_tel = ctx.telemetry_by_pid[fam_smurf_pid]
+            self.assertEqual(fam_tel.opp_wl[660001], [0, 3])
+            self.assertEqual(fam_tel.map_wl["Foggia Airfield"], [1, 6])
+
+            # Sem família: main sozinha tem apenas 1V-1D contra #660001 e 0 mapas -> 0 pts
+            rk_solo = sa._compare_rivalry_and_kryptonite_profile(cand_tel, main_tel, pid_aliases=ctx.pid_aliases)
+            self.assertEqual(len(rk_solo["shared_nemeses"]), 0)
+            self.assertEqual(rk_solo["total_pts"], 0.0)
+
+            # Com família consolidada (mesmo se cand_tel for passado por engano em main_family_tels, é ignorado!):
+            rk_fam = sa._compare_rivalry_and_kryptonite_profile(
+                cand_tel,
+                main_tel,
+                main_family_tels=[fam_tel, cand_tel],
+                pid_aliases=ctx.pid_aliases,
+            )
+            self.assertEqual(rk_fam["main_family_sources"], 2)
+            self.assertEqual(len(rk_fam["shared_nemeses"]), 1)
+            self.assertEqual(rk_fam["shared_nemeses"][0]["main_l"], 4)
+            self.assertGreaterEqual(rk_fam["kryptonite_pts"], 4.0)
+            self.assertGreaterEqual(rk_fam["total_pts"], 11.0)
+
+        # 2. Guarda >=2 dias UTC distintos bloqueia rematch de um único dia
+        sd_main = sa.PlayerTelemetry(profile_id=7001, games=40, wins=20)
+        sd_cand = sa.PlayerTelemetry(profile_id=17001, games=30, wins=15)
+        sd_main.opp_wl[88001] = [0, 3]
+        sd_main.opp_days[88001] = {20200}
+        sd_cand.opp_wl[88001] = [0, 2]
+        sd_cand.opp_days[88001] = {20200}
+        rk_same_day = sa._compare_rivalry_and_kryptonite_profile(sd_cand, sd_main)
+        self.assertEqual(rk_same_day["shared_rivalry_count"], 0)
+        self.assertEqual(rk_same_day["rivalry_pts"], 0.0)
+        self.assertEqual(rk_same_day["rivalry_dir_same"], 0)
+
+        sd_cand.opp_days[88001].add(20201)
+        rk_two_days = sa._compare_rivalry_and_kryptonite_profile(sd_cand, sd_main)
+        self.assertEqual(rk_two_days["shared_rivalry_count"], 1)
+        self.assertGreater(rk_two_days["rivalry_pts"], 0.0)
+
+        # 3. Excesso direcional ajustado ao WR base: captura 1-jogo contra Nêmesis/Fregueses sem criar âncora isolada
+        ex_main = sa.PlayerTelemetry(profile_id=7010, games=80, wins=40)
+        ex_cand = sa.PlayerTelemetry(profile_id=17010, games=36, wins=26)  # ~72% WR
+        # 4 Nêmesis da main (cand perde 0V-1D para 3 deles e vence 1) + 3 Fregueses da main (cand vence 1V-0D os 3)
+        for idx, opp in enumerate((801, 802, 803, 804)):
+            ex_main.opp_wl[opp] = [0, 5]
+            ex_main.opp_days[opp] = {20100, 20102}
+            ex_cand.opp_wl[opp] = [1, 0] if idx == 3 else [0, 1]
+            ex_cand.opp_days[opp] = {20120}
+        for opp in (805, 806, 807):
+            ex_main.opp_wl[opp] = [5, 0]
+            ex_main.opp_days[opp] = {20101, 20103}
+            ex_cand.opp_wl[opp] = [1, 0]
+            ex_cand.opp_days[opp] = {20121}
+
+        rk_ex = sa._compare_rivalry_and_kryptonite_profile(ex_cand, ex_main)
+        self.assertEqual(rk_ex["shared_rivalry_count"], 0)
+        self.assertEqual(rk_ex["rivalry_dir_same"], 6)
+        self.assertEqual(rk_ex["rivalry_dir_diff"], 1)
+        self.assertGreaterEqual(rk_ex["rivalry_mean_excess"], 0.18)
+        self.assertEqual(rk_ex["rivalry_excess_pts"], 4.0)
+        self.assertEqual(rk_ex["rivalry_pts"], 4.0)
+        self.assertFalse(rk_ex["adds_identity_anchor"])
+
+        # Anti-FP: jogador aleatório com 80% WR que bate Fregueses E também bate os Nêmesis da main => 0 pts!
+        fp_main = sa.PlayerTelemetry(profile_id=7011, games=80, wins=40)
+        fp_cand = sa.PlayerTelemetry(profile_id=17011, games=45, wins=36)  # 80% WR
+        for opp in range(901, 907):
+            fp_main.opp_wl[opp] = [4, 0]
+            fp_main.opp_days[opp] = {20100, 20102}
+            fp_cand.opp_wl[opp] = [1, 0]
+            fp_cand.opp_days[opp] = {20130}
+        for opp in (907, 908):
+            fp_main.opp_wl[opp] = [0, 4]
+            fp_main.opp_days[opp] = {20101, 20103}
+            fp_cand.opp_wl[opp] = [1, 0]  # Também vence os Nêmesis!
+            fp_cand.opp_days[opp] = {20131}
+        rk_fp_ex = sa._compare_rivalry_and_kryptonite_profile(fp_cand, fp_main)
+        self.assertLess(rk_fp_ex["rivalry_mean_excess"], 0.12)
+        self.assertEqual(rk_fp_ex["rivalry_excess_pts"], 0.0)
+        self.assertEqual(rk_fp_ex["rivalry_pts"], 0.0)
+
+        # Contra-evidência: polaridade sistematicamente invertida em >=6 adversários comuns (1 jogo cada) => -4.0 pts
+        inv_ex_cand = sa.PlayerTelemetry(profile_id=17012, games=40, wins=20)
+        for opp in (801, 802, 803, 804):
+            inv_ex_cand.opp_wl[opp] = [1, 0]
+            inv_ex_cand.opp_days[opp] = {20140}
+        for opp in (805, 806, 807):
+            inv_ex_cand.opp_wl[opp] = [0, 1]
+            inv_ex_cand.opp_days[opp] = {20141}
+        rk_inv_ex = sa._compare_rivalry_and_kryptonite_profile(inv_ex_cand, ex_main)
+        self.assertEqual(rk_inv_ex["rivalry_excess_pts"], -4.0)
+        self.assertEqual(rk_inv_ex["rivalry_pts"], -4.0)
+
 
 if __name__ == "__main__":
     unittest.main()
