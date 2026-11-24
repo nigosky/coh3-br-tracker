@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 81 Players Monitorados de exibição passiva
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 176 perfis de exibição passiva (158 Monitorados + 18 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 81)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 176)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -192,12 +192,18 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (71299, "Bruno.s"),
             (13516, "Pax Xavier youtube"),
             (970468, "Московский метро"),
+            (649535, "pensss"),
+            (765837, "Southland"),
+            (87314, "Pedro Jedi"),
+            (1156831, "DAk120"),
+            (3888, "Pepe Popo"),
         ):
             self.assertIn(mon_pid, other_by_pid)
             self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)
         for exp_pid, exp_alias, exp_ctry in (
             (212034, "XAPA KENTE", "ca"),
             (7448, "icewarp", "za"),
+            (33487, "Generick", "us"),
             (91827, "[★General★] Apollo", "au"),
             (263517, "Angel of Death", "jp"),
             (29737, "PABLO FLEXCOBAR", "ar"),
@@ -254,7 +260,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertEqual(other_by_pid[gpid]["original_alias"], expected_alias)
             self.assertTrue(other_by_pid[gpid].get("pin_alias"))
 
-        # Verifica parser retrocompatível (`monitorados` + `manual_other_br`)
+        # Verifica parser retrocompatível (`monitorados` + `outros_br_emigrados` + `manual_other_br`)
         parsed_mon = relic_api.parse_shared_manual_other_br_payload(
             {
                 "schema_version": 1,
@@ -262,12 +268,16 @@ class TestTrackerSharedRoster(unittest.TestCase):
                 "monitorados": [
                     {"profile_id": 164152, "steam_id": "76561198029749621", "original_alias": "Sgt.Yoda", "country": "br"},
                 ],
+                "outros_br_emigrados": [
+                    {"profile_id": 33487, "steam_id": "76561197995712470", "original_alias": "Generick", "country": "us"},
+                ],
                 "manual_other_br": [
                     {"profile_id": 33487, "steam_id": "76561197995712470", "original_alias": "Generick", "country": "us"},
                 ],
             }
         )
         self.assertEqual([int(r["profile_id"]) for r in parsed_mon], [164152, 33487])
+        self.assertEqual(parsed_mon[1].get("country"), "us")
 
         # 2. Enriquecimento da partida + extração do card + avatar independente:
         # Veteranos (#1333418 e #1390350) mantêm nome fixo e is_br_roster=True;
