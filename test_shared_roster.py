@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 45 Veteranos independentes (0 mescladas) + 16 Outros BR de exibição passiva
+        # 1. Roster padrão tem 45 Veteranos independentes (0 mescladas) + 34 Outros BR de exibição passiva
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 45)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 16)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 34)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -174,9 +174,22 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertIn(1119784, by_pid)
         self.assertEqual(by_pid[1119784]["original_alias"], "Tracker")
         self.assertEqual(by_pid[1119784]["steam_id"], "76561198000067932")
-        self.assertIn(212034, other_by_pid)
-        self.assertEqual(other_by_pid[212034]["original_alias"], "XAPA KENTE")
-        self.assertEqual(other_by_pid[212034].get("country"), "ca")
+        for exp_pid, exp_alias, exp_ctry in (
+            (212034, "XAPA KENTE", "ca"),
+            (7448, "icewarp", "za"),
+            (91827, "[★General★] Apollo", "au"),
+            (263517, "Angel of Death", "jp"),
+            (29737, "PABLO FLEXCOBAR", "ar"),
+            (999940, "Warmech11", "py"),
+            (110593, "Ethan Hunt", "us"),
+            (1304336, "V.I.T.O.X", "us"),
+            (1168460, "Nonô", "ca"),
+            (11033, "Coka", "jp"),
+            (24963, "Eduardo A.", "sa"),
+        ):
+            self.assertIn(exp_pid, other_by_pid)
+            self.assertEqual(other_by_pid[exp_pid]["original_alias"], exp_alias)
+            self.assertEqual(other_by_pid[exp_pid].get("country"), exp_ctry)
         self.assertTrue(all(not r.get("merged_into_profile_id") for r in relic_api.CORE_BR_ROSTER))
         self.assertTrue(all(not r.get("merged_into_steam_id") for r in relic_api.CORE_BR_ROSTER))
 
