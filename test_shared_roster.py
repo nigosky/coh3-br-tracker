@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 176 perfis de exibição passiva (161 Monitorados + 15 Emigrados em Outros BR)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 177 perfis de exibição passiva (162 Monitorados + 15 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 176)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 177)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -183,6 +183,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
         self.assertFalse(other_by_pid[164152].get("smurf_of"))
         self.assertEqual(other_by_pid[720147].get("smurf_of"), "icemaker")
         self.assertEqual(other_by_pid[1292305].get("smurf_of"), "rafaeldjx")
+        self.assertEqual(other_by_pid[1467829].get("smurf_of"), "Xampoo")
         self.assertTrue(other_by_pid[448521].get("priority_watch"))
         self.assertTrue(other_by_pid[720147].get("priority_watch"))
         for mon_pid, mon_alias in (
@@ -243,6 +244,7 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (803384, "DeMarco"),
             (802771, "Odin"),
             (8838, "Saint"),
+            (1467829, "XAMPUZINHO (Smurf: Xampoo)"),
         ):
             self.assertIn(mon_pid, other_by_pid)
             self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)

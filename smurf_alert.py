@@ -146,6 +146,8 @@ KNOWN_SMURF_MAIN_PIDS: dict[int, int] = {
     1160699: 1005730, # Bubebolos/Dingo -> arc
     918241: 1005730,  # Faint/Saffa -> arc
     720147: 448521,   # アリス -> icemaker
+    1292305: 5128,    # rafaeldjx42 -> rafaeldjx
+    1467829: 2834,    # XAMPUZINHO -> Xampoo
 }
 
 SA_COUNTRIES: frozenset[str] = frozenset(
