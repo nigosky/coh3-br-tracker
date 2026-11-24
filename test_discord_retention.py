@@ -162,15 +162,36 @@ class TestDiscord72hRetention(unittest.TestCase):
                 self.assertEqual(weekly["most_active_player"]["games"], 3)
                 self.assertEqual(weekly["most_active_player"]["wins"], 2)
 
-                # Nemesis continua enxergando confrontos mesmo após a limpeza do Discord
-                nem = db.get_nemesis_status(
+                # Nemesis e Freguês continuam enxergando todo o histórico (2023+) mesmo após a limpeza do Discord
+                db.insert_nemesis_matches_batch(
+                    [
+                        (79327, 999001, 51, 1_710_000_000, 1_710_000_000 // 86400, 1, "1v1", "RivalX", "de"),
+                        (79327, 999001, 52, 1_715_000_000, 1_715_000_000 // 86400, 1, "1v1", "RivalX", "de"),
+                        (79327, 999002, 61, 1_710_000_000, 1_710_000_000 // 86400, 0, "1v1", "AlgozY", "de"),
+                        (79327, 999002, 62, 1_715_000_000, 1_715_000_000 // 86400, 0, "1v1", "AlgozY", "de"),
+                        (79327, 999002, 63, 1_720_000_000, 1_720_000_000 // 86400, 0, "1v1", "AlgozY", "de"),
+                        (79327, 999002, 64, 1_725_000_000, 1_725_000_000 // 86400, 0, "1v1", "AlgozY", "de"),
+                    ]
+                )
+                freg = db.get_fregues_status(
                     tracked_profile_ids=[79327],
                     opponent_profile_id=999001,
                     up_to_completion_time=recent_ct,
                     up_to_match_id=103,
                 )
+                self.assertIsNotNone(freg)
+                assert freg is not None
+                self.assertEqual((freg["wins"], freg["losses"], freg["total"]), (4, 1, 5))
+
+                nem = db.get_nemesis_status(
+                    tracked_profile_ids=[79327],
+                    opponent_profile_id=999002,
+                    up_to_completion_time=recent_ct,
+                    up_to_match_id=103,
+                )
                 self.assertIsNotNone(nem)
-                self.assertEqual(nem["total"], 3)
+                assert nem is not None
+                self.assertEqual((nem["wins"], nem["losses"], nem["total"]), (0, 4, 4))
 
                 # Painel Fixado com filtro de 72h exibe apenas a partida dentro da janela
                 panel_72h = db.get_recent_recorded_matches(

@@ -1750,8 +1750,9 @@ def _patch_match_card_with_battlegroups(
     *,
     log_suffix: str = "com Battlegroups",
 ) -> bool:
-    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis, Criptonita e Alertas Smurf preservados."""
+    """Atualiza silenciosamente um Card já postado no Discord com Battlegroups, Nemesis, Freguês, Criptonita e Alertas Smurf preservados."""
     enrich_group_with_nemesis(db, grp, roster_maps=roster_maps)
+    enrich_group_with_fregues(db, grp, roster_maps=roster_maps)
     enrich_group_with_kryptonite(db, grp, roster_maps=roster_maps)
     if not grp.get("smurf_alerts"):
         recs = grp.get("records") or []
@@ -1968,18 +1969,36 @@ def refresh_recent_cards_after_roster_changes(
     return patched_count
 
 
-def enrich_group_with_nemesis(
+def _enrich_group_with_rivalry(
     db: MatchDatabase,
     grp: dict[str, Any],
+    *,
+    kind: str,
     roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """
-    Calcula em tempo real a condição de Nemesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4):
-    trigger >= 2 confrontos Automatch no mesmo dia UTC contra o mesmo oponente Steam; após o trigger,
-    contabiliza todas as partidas Automatch contra aquele oponente. Retorna lista ordenada de rivalidades ativas.
+    Calcula em tempo real a condição simétrica de Nêmesis ('nemesis') ou Freguês ('fregues')
+    em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4) ao longo de todo o histórico CoH3 (2023+).
     """
+    if kind not in ("nemesis", "fregues"):
+        raise ValueError(f"Tipo de rivalidade inválido: {kind}")
+
     recs = grp.get("records") or [grp.get("primary") or grp]
     primary = recs[0]
+    single_key = kind
+    list_key = f"{kind}_list"
+
+    # Limpa eventuais valores anteriores antes de reavaliar (ex.: PATCH retroativo de card)
+    grp.pop(single_key, None)
+    grp.pop(list_key, None)
+    for r in recs:
+        if isinstance(r, dict):
+            r.pop(single_key, None)
+            r.pop(list_key, None)
+    if isinstance(grp.get("primary"), dict):
+        grp["primary"].pop(single_key, None)
+        grp["primary"].pop(list_key, None)
+
     if str(primary.get("mode") or "").strip() not in AUTOMATCH_MODES:
         return []
 
@@ -2003,6 +2022,16 @@ def enrich_group_with_nemesis(
         disp = str(entry.get("original_alias") or "").strip()
         return canon, group, disp
 
+    def _rank_key(item: dict[str, Any]) -> tuple[int, int, int, float]:
+        w = int(item.get("wins", 0) or 0)
+        l = int(item.get("losses", 0) or 0)
+        is_new = 1 if item.get("is_new_trigger") else 0
+        wr = float(item.get("win_rate", 0.0) or 0.0)
+        if kind == "nemesis":
+            return (l - w, l, is_new, -wr)
+        return (w - l, w, is_new, wr)
+
+    status_fn = db.get_nemesis_status if kind == "nemesis" else db.get_fregues_status
     best_by_opponent: dict[int, dict[str, Any]] = {}
     seen_pairs: set[tuple[int, int]] = set()
 
@@ -2024,7 +2053,7 @@ def enrich_group_with_nemesis(
                 continue
             seen_pairs.add((canon_pid, opp_pid))
 
-            nem = db.get_nemesis_status(
+            entry = status_fn(
                 tracked_profile_ids=pid_group,
                 opponent_profile_id=opp_pid,
                 up_to_completion_time=comp_ts,
@@ -2032,38 +2061,52 @@ def enrich_group_with_nemesis(
                 current_opponent_alias=str(opp.get("alias") or ""),
                 current_opponent_steam_id=str(opp.get("steam_id") or ""),
             )
-            if not nem:
+            if not entry:
                 continue
-            nem["tracked_alias"] = tracked_disp
+            entry["tracked_alias"] = tracked_disp
             prev = best_by_opponent.get(opp_pid)
-            if prev is None or (
-                int(nem["total"]),
-                1 if nem["is_new_trigger"] else 0,
-                int(nem["same_day_games"]),
-            ) > (
-                int(prev["total"]),
-                1 if prev["is_new_trigger"] else 0,
-                int(prev["same_day_games"]),
-            ):
-                best_by_opponent[opp_pid] = nem
+            if prev is None or _rank_key(entry) > _rank_key(prev):
+                best_by_opponent[opp_pid] = entry
 
     if not best_by_opponent:
         return []
 
-    nemesis_list = sorted(
-        best_by_opponent.values(),
-        key=lambda x: (-int(x["total"]), -(1 if x["is_new_trigger"] else 0), -int(x["same_day_games"])),
-    )
-    top_nem = nemesis_list[0]
-    grp["nemesis"] = top_nem
-    grp["nemesis_list"] = nemesis_list
+    rivalry_list = sorted(best_by_opponent.values(), key=_rank_key, reverse=True)
+    top_entry = rivalry_list[0]
+    grp[single_key] = top_entry
+    grp[list_key] = rivalry_list
     for r in recs:
-        r["nemesis"] = top_nem
-        r["nemesis_list"] = nemesis_list
+        if isinstance(r, dict):
+            r[single_key] = top_entry
+            r[list_key] = rivalry_list
     if isinstance(grp.get("primary"), dict):
-        grp["primary"]["nemesis"] = top_nem
-        grp["primary"]["nemesis_list"] = nemesis_list
-    return nemesis_list
+        grp["primary"][single_key] = top_entry
+        grp["primary"][list_key] = rivalry_list
+    return rivalry_list
+
+
+def enrich_group_with_nemesis(
+    db: MatchDatabase,
+    grp: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Calcula em tempo real a condição de Nêmesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4)
+    ao longo de todo o histórico CoH3 (2023+): adversários de quem os Veteranos apanham regularmente.
+    """
+    return _enrich_group_with_rivalry(db, grp, kind="nemesis", roster_maps=roster_maps)
+
+
+def enrich_group_with_fregues(
+    db: MatchDatabase,
+    grp: dict[str, Any],
+    roster_maps: tuple[dict[str, dict[str, Any]], dict[int, dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Calcula em tempo real a condição de Freguês em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4)
+    ao longo de todo o histórico CoH3 (2023+): adversários que apanham regularmente dos Veteranos.
+    """
+    return _enrich_group_with_rivalry(db, grp, kind="fregues", roster_maps=roster_maps)
 
 
 def enrich_group_with_kryptonite(
@@ -2624,6 +2667,20 @@ def run_cycle(
                         int(top_nem.get("losses", 0)),
                         "NOVO TRIGGER" if top_nem.get("is_new_trigger") else "ATIVO",
                         extra_nem,
+                        grp["match_id"],
+                    )
+                freg_list = enrich_group_with_fregues(db, grp, roster_maps=roster_maps)
+                if freg_list:
+                    top_freg = freg_list[0]
+                    extra_freg = f" (+{len(freg_list) - 1} freguês(es))" if len(freg_list) > 1 else ""
+                    logger.info(
+                        "[FREGUES] %s vs %s -> %dV-%dD (%s)%s [#%d]",
+                        top_freg.get("tracked_alias"),
+                        top_freg.get("opponent_alias"),
+                        int(top_freg.get("wins", 0)),
+                        int(top_freg.get("losses", 0)),
+                        "NOVO TRIGGER" if top_freg.get("is_new_trigger") else "ATIVO",
+                        extra_freg,
                         grp["match_id"],
                     )
                 krypt_list = enrich_group_with_kryptonite(db, grp, roster_maps=roster_maps)

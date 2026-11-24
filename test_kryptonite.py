@@ -158,13 +158,14 @@ class TestKryptoniteFeature(unittest.TestCase):
         self.assertEqual(k3[0]["label"], "Reakly")
         self.assertTrue(nems3[0].get("is_kryptonite"))
 
-        # 3b) Mapa neutro + sem BG + apenas rival NÃO-Nêmesis (0V-6D em dias separados) -> Prioridade 3 como kind='opponent'
+        # 3b) Mapa neutro + sem BG + rival 0V-6D em dias separados (SEM 2 jogos no mesmo dia) ->
+        # agora TAMBÉM é Nêmesis vitalício 2023+ (kind='nemesis', is_nemesis=True)!
         cur3b = _make_match(2004, tpid, win=False, map_clean="Twin Beaches", completion_time=base_ts + 10 * 86400, opponents=[opp_plain], allies=[ally], battlegroups={})
         grp3b = {"match_id": 2004, "primary": cur3b, "records": [cur3b]}
         k3b = monitor.enrich_group_with_kryptonite(db, grp3b)
         self.assertEqual(len(k3b), 1)
-        self.assertEqual(k3b[0]["kind"], "opponent")
-        self.assertFalse(k3b[0]["is_nemesis"])
+        self.assertEqual(k3b[0]["kind"], "nemesis")
+        self.assertTrue(k3b[0]["is_nemesis"])
         self.assertEqual(k3b[0]["label"], "QuietFoe")
 
         # 4) Mapa neutro + sem BG + oponente novo -> cai para Prioridade 4 (PARCEIRO, 0V-6D!)
@@ -360,6 +361,39 @@ class TestKryptoniteFeature(unittest.TestCase):
             provider,
         )
         self.assertEqual(Image.open(io.BytesIO(stacked_png)).size[1], base_h + 42 + 42 + 56)
+
+        # Empilhamento completo de 4 faixas: Nemesis (42) + Freguês (42) + Criptonita (42) + Alerta Smurf (56)
+        freg = {
+            "triggered": True,
+            "kind": "fregues",
+            "is_new_trigger": True,
+            "wins": 11,
+            "losses": 1,
+            "total": 12,
+            "win_rate": 91.7,
+            "since_year": 2023,
+            "win_streak": 6,
+            "opponent_profile_id": 9002,
+            "opponent_alias": "FreguesOne",
+            "tracked_profile_id": 110078,
+            "tracked_alias": "Bineto",
+        }
+        stacked_4_png = card_renderer.render_single_match_card_png(
+            {
+                "match_id": 5001,
+                "primary": m,
+                "records": [m],
+                "nemesis": nem,
+                "nemesis_list": [nem],
+                "fregues": freg,
+                "fregues_list": [freg],
+                "kryptonite": k_nem,
+                "kryptonite_list": [k_nem],
+                "smurf_alerts": [smurf],
+            },
+            provider,
+        )
+        self.assertEqual(Image.open(io.BytesIO(stacked_4_png)).size[1], base_h + 42 + 42 + 42 + 56)
 
         # Garantia visual: em card de VITÓRIA, mesmo com dict kryptonite injetado, NÃO renderiza faixa CRIPTONITA!
         m_win = dict(m, win=True, resulttype=1)

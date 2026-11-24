@@ -574,9 +574,9 @@ def cmd_backfill_nemesis(args: argparse.Namespace) -> int:
         f"\n[CONCLUÍDO] Dias OK: {res['days_ok']}/{res['days_requested']} (404: {res['days_not_published']}, erros: {res['days_failed']}) | "
         f"Partidas Open Data varridas: {res['matches_scanned']:,} | Novos confrontos Nemesis: +{res['nemesis_rows_inserted']:,} | "
         f"Novas partidas Criptonita: +{res.get('kryptonite_rows_inserted', 0):,}\n"
-        f"[COBERTURA NEMESIS] Total linhas: {cov['total_rows']:,} | Partidas únicas: {cov['unique_matches']:,} | "
-        f"Período: {min_d} .. {max_d} | Pares Nemesis distintos: {cov['distinct_nemesis_pairs']:,} | "
-        f"Eventos >=2x/dia: {cov['trigger_day_events']:,}\n"
+        f"[COBERTURA NEMESIS/FREGUÊS] Total linhas: {cov['total_rows']:,} | Partidas únicas: {cov['unique_matches']:,} | "
+        f"Período: {min_d} .. {max_d} | Pares Nemesis (2023+): {cov['distinct_nemesis_pairs']:,} | "
+        f"Pares Freguês (2023+): {cov.get('distinct_fregues_pairs', 0):,}\n"
         f"[COBERTURA CRIPTONITA] Total linhas: {kcov['total_rows']:,} | Partidas únicas: {kcov['unique_matches']:,} | "
         f"Período: {k_min_d} .. {k_max_d} | Partidas com BGs permanentes: {kcov.get('rows_with_bg', 0):,}",
         flush=True,

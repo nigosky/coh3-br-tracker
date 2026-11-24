@@ -7,6 +7,7 @@ import math
 import sqlite3
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -779,8 +780,48 @@ class MatchDatabase:
                     )
         return cur.rowcount > 0
 
-    def get_nemesis_status(
+    # Limiares simétricos de domínio recorrente no histórico completo CoH3 (2023+) — Nêmesis e Freguês
+    RIVALRY_ZERO_OPP_MIN_GAMES: int = 4   # 0V-4D (Nêmesis) ou 4V-0D (Freguês)
+    RIVALRY_MIN_TOTAL_GAMES: int = 5      # Ex.: 1V-4D / 4V-1D, 2V-5D / 5V-2D, 3V-6D / 6V-3D
+    RIVALRY_MIN_DIFF: int = 3             # Diferença mínima de 3 vitórias a favor do lado dominante
+    RIVALRY_MIN_DOMINANT_WR: float = 65.0 # >= 65% de aproveitamento do lado dominante (<= 35% do dominado)
+
+    @classmethod
+    def is_rivalry_dominant(cls, dominant_wins: int, underdog_wins: int) -> bool:
+        """
+        Critério simétrico de domínio recorrente ao longo de TODO o histórico CoH3 (2023+):
+        - Invicto dominante: 0 derrotas e >= 4 vitórias (ex.: 4V-0D / 0V-4D); OU
+        - Domínio sustentado: >= 5 confrontos, saldo >= 3 e >= 65% WR do lado dominante
+          (ex.: 4V-1D, 5V-2D, 6V-3D, 8V-4D, 13V-7D).
+        Vale ao longo de toda a história do jogo (2023+), sem exigir 2+ jogos no mesmo dia.
+        """
+        dom = max(0, int(dominant_wins))
+        und = max(0, int(underdog_wins))
+        tot = dom + und
+        if tot <= 0 or dom <= und:
+            return False
+        if und == 0 and dom >= cls.RIVALRY_ZERO_OPP_MIN_GAMES:
+            return True
+        return (
+            tot >= cls.RIVALRY_MIN_TOTAL_GAMES
+            and (dom - und) >= cls.RIVALRY_MIN_DIFF
+            and (dom * 100.0 / tot) >= cls.RIVALRY_MIN_DOMINANT_WR
+        )
+
+    @classmethod
+    def is_nemesis_record(cls, wins: int, losses: int) -> bool:
+        """True quando o Veterano apanha regularmente deste adversário no histórico CoH3 (2023+)."""
+        return cls.is_rivalry_dominant(losses, wins)
+
+    @classmethod
+    def is_fregues_record(cls, wins: int, losses: int) -> bool:
+        """True quando o adversário apanha regularmente do Veterano no histórico CoH3 (2023+)."""
+        return cls.is_rivalry_dominant(wins, losses)
+
+    def _get_head_to_head_rivalry_status(
         self,
+        *,
+        kind: str,
         tracked_profile_ids: list[int],
         opponent_profile_id: int,
         up_to_completion_time: int,
@@ -789,12 +830,17 @@ class MatchDatabase:
         current_opponent_steam_id: str = "",
     ) -> dict[str, Any] | None:
         """
-        Avalia a condição de Nemesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4) em tempo real:
-        - Apenas partidas Automatch entre jogadores Steam.
-        - Trigger: enfrentar o mesmo oponente >= 2 vezes no mesmo dia (UTC).
-        - Após o trigger, todas as partidas Automatch contra esse oponente entram na contagem acumulada.
-        - Salva o alias do oponente da última partida.
+        Avalia em tempo real a condição simétrica de Nêmesis ('nemesis') ou Freguês ('fregues')
+        em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4) ao longo de TODO o histórico CoH3 (2023+):
+        - Apenas partidas Automatch entre jogadores Steam (tabela permanente `nemesis_matches`).
+        - Não depende de enfrentar o oponente 2+ vezes em um único dia UTC.
+        - `kind='nemesis'`: o Veterano apanha regularmente do adversário (`is_nemesis_record`).
+        - `kind='fregues'`: o adversário apanha regularmente do Veterano (`is_fregues_record`).
+        - `is_new_trigger=True` somente na partida exata em que o par cruza o limiar pela 1ª vez.
         """
+        if kind not in ("nemesis", "fregues"):
+            raise ValueError(f"Tipo de rivalidade inválido: {kind}")
+
         clean_tracked = [int(p) for p in dict.fromkeys(tracked_profile_ids or []) if int(p) > 0]
         opp_pid = int(opponent_profile_id or 0)
         up_ct = int(up_to_completion_time or 0)
@@ -821,7 +867,7 @@ class MatchDatabase:
             (*clean_tracked, opp_pid, up_ct, up_ct, up_mid),
         ).fetchall()
 
-        if len(rows) < 2:
+        if len(rows) < self.RIVALRY_ZERO_OPP_MIN_GAMES:
             return None
 
         # Deduplica por match_id preservando ordem cronológica (cobre contas secundárias mescladas)
@@ -834,31 +880,61 @@ class MatchDatabase:
             seen_mids.add(mid)
             unique_games.append(dict(r))
 
-        if len(unique_games) < 2:
+        total = len(unique_games)
+        if total < self.RIVALRY_ZERO_OPP_MIN_GAMES:
             return None
-
-        day_counts: dict[int, int] = {}
-        for g in unique_games:
-            d = int(g["utc_day"])
-            day_counts[d] = day_counts.get(d, 0) + 1
-
-        trigger_days = [d for d, cnt in day_counts.items() if cnt >= 2]
-        if not trigger_days:
-            return None
-
-        first_trigger_day = min(trigger_days)
-        cur_utc_day = up_ct // 86400
-        same_day_games = int(day_counts.get(cur_utc_day, 0))
-        is_new_trigger = bool(first_trigger_day == cur_utc_day and same_day_games == 2)
 
         wins = sum(1 for g in unique_games if int(g["win"] or 0) != 0)
-        total = len(unique_games)
         losses = total - wins
+        predicate = self.is_nemesis_record if kind == "nemesis" else self.is_fregues_record
+        if not predicate(wins, losses):
+            return None
+
+        # Identifica a 1ª partida cronológica em que o par atingiu o critério (NOVO NEMESIS / NOVO FREGUÊS)
+        first_trigger_idx: int | None = None
+        run_w = 0
+        run_l = 0
+        for idx, g in enumerate(unique_games):
+            if int(g["win"] or 0) != 0:
+                run_w += 1
+            else:
+                run_l += 1
+            if predicate(run_w, run_l):
+                first_trigger_idx = idx
+                break
+
+        if first_trigger_idx is None:
+            return None
+
+        first_trigger_game = unique_games[first_trigger_idx]
+        first_trigger_day = int(first_trigger_game["utc_day"])
+        is_new_trigger = bool(
+            first_trigger_idx == total - 1 and int(first_trigger_game["match_id"]) == up_mid
+        )
+
+        cur_utc_day = up_ct // 86400
+        same_day_games = sum(1 for g in unique_games if int(g["utc_day"]) == cur_utc_day)
+
+        win_streak = 0
+        loss_streak = 0
+        for g in reversed(unique_games):
+            if int(g["win"] or 0) != 0:
+                if loss_streak > 0:
+                    break
+                win_streak += 1
+            else:
+                if win_streak > 0:
+                    break
+                loss_streak += 1
+
+        first_ct = int(unique_games[0].get("completion_time") or 0)
+        since_year = datetime.fromtimestamp(first_ct, tz=timezone.utc).year if first_ct > 0 else 0
         latest_alias = (current_opponent_alias or "").strip() or str(unique_games[-1].get("opponent_alias") or "").strip()
         modes_seen = sorted({str(g.get("mode") or "") for g in unique_games if g.get("mode")})
 
         return {
             "triggered": True,
+            "kind": kind,
             "is_new_trigger": is_new_trigger,
             "tracked_profile_id": clean_tracked[0],
             "opponent_profile_id": opp_pid,
@@ -870,8 +946,58 @@ class MatchDatabase:
             "win_rate": round((wins * 100.0) / total, 1) if total > 0 else 0.0,
             "same_day_games": same_day_games,
             "trigger_utc_day": first_trigger_day,
+            "first_match_time": first_ct,
+            "since_year": since_year,
+            "win_streak": win_streak,
+            "loss_streak": loss_streak,
             "modes": modes_seen,
         }
+
+    def get_nemesis_status(
+        self,
+        tracked_profile_ids: list[int],
+        opponent_profile_id: int,
+        up_to_completion_time: int,
+        up_to_match_id: int,
+        current_opponent_alias: str = "",
+        current_opponent_steam_id: str = "",
+    ) -> dict[str, Any] | None:
+        """
+        Avalia a condição de Nêmesis em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4) ao longo de
+        todo o histórico CoH3 (2023+): adversário de quem o Veterano apanha regularmente.
+        """
+        return self._get_head_to_head_rivalry_status(
+            kind="nemesis",
+            tracked_profile_ids=tracked_profile_ids,
+            opponent_profile_id=opponent_profile_id,
+            up_to_completion_time=up_to_completion_time,
+            up_to_match_id=up_to_match_id,
+            current_opponent_alias=current_opponent_alias,
+            current_opponent_steam_id=current_opponent_steam_id,
+        )
+
+    def get_fregues_status(
+        self,
+        tracked_profile_ids: list[int],
+        opponent_profile_id: int,
+        up_to_completion_time: int,
+        up_to_match_id: int,
+        current_opponent_alias: str = "",
+        current_opponent_steam_id: str = "",
+    ) -> dict[str, Any] | None:
+        """
+        Avalia a condição de Freguês (oposto exato do Nêmesis) em TODOS os modos Automatch (1v1, 2v2, 3v3, 4v4)
+        ao longo de todo o histórico CoH3 (2023+): adversário que apanha regularmente do Veterano.
+        """
+        return self._get_head_to_head_rivalry_status(
+            kind="fregues",
+            tracked_profile_ids=tracked_profile_ids,
+            opponent_profile_id=opponent_profile_id,
+            up_to_completion_time=up_to_completion_time,
+            up_to_match_id=up_to_match_id,
+            current_opponent_alias=current_opponent_alias,
+            current_opponent_steam_id=current_opponent_steam_id,
+        )
 
     def insert_nemesis_matches_batch(
         self,
@@ -1196,10 +1322,10 @@ class MatchDatabase:
                 opp_day_counts[op][cur_utc_day] = opp_day_counts[op].get(cur_utc_day, 0) + 1
             else:
                 out_map[mid] = (ct, 0)
-            is_nem = any(cnt >= 2 for cnt in opp_day_counts[op].values())
+            ow = sum(1 for _c, wv in out_map.values() if wv == 1)
+            ol = len(out_map) - ow
+            is_nem = self.is_nemesis_record(ow, ol)
             if is_nem:
-                ow = sum(1 for _c, wv in out_map.values() if wv == 1)
-                ol = len(out_map) - ow
                 is_flag_nem = self.is_flagrant_kryptonite(ow, ol, kind="nemesis", career_wr_pct=career_wr_pct)
                 info = {
                     "opponent_profile_id": op,
@@ -1552,7 +1678,7 @@ class MatchDatabase:
         }
 
     def get_nemesis_coverage_summary(self) -> dict[str, Any]:
-        """Retorna estatísticas resumidas de cobertura histórica da tabela `nemesis_matches`."""
+        """Retorna estatísticas resumidas de cobertura histórica (2023+) da tabela `nemesis_matches` (Nêmesis e Freguês)."""
         conn = self._connect()
         row = conn.execute(
             """
@@ -1574,18 +1700,30 @@ class MatchDatabase:
             )
             """
         ).fetchone()
-        distinct_nemesis_pairs = conn.execute(
+        z_min = self.RIVALRY_ZERO_OPP_MIN_GAMES
+        t_min = self.RIVALRY_MIN_TOTAL_GAMES
+        d_min = self.RIVALRY_MIN_DIFF
+        wr_min = self.RIVALRY_MIN_DOMINANT_WR
+        rivalry_pairs = conn.execute(
             """
-            SELECT COUNT(*) FROM (
-                SELECT DISTINCT tracked_profile_id, opponent_profile_id
-                FROM (
-                    SELECT tracked_profile_id, opponent_profile_id
-                    FROM nemesis_matches
-                    GROUP BY tracked_profile_id, opponent_profile_id, utc_day
-                    HAVING COUNT(*) >= 2
-                )
+            SELECT
+                COALESCE(SUM(CASE
+                    WHEN (w = 0 AND l >= ?) OR (tot >= ? AND (l - w) >= ? AND (l * 100.0 / tot) >= ?)
+                    THEN 1 ELSE 0 END), 0) AS nem_pairs,
+                COALESCE(SUM(CASE
+                    WHEN (l = 0 AND w >= ?) OR (tot >= ? AND (w - l) >= ? AND (w * 100.0 / tot) >= ?)
+                    THEN 1 ELSE 0 END), 0) AS freg_pairs
+            FROM (
+                SELECT tracked_profile_id,
+                       opponent_profile_id,
+                       SUM(CASE WHEN win != 0 THEN 1 ELSE 0 END) AS w,
+                       SUM(CASE WHEN win = 0 THEN 1 ELSE 0 END) AS l,
+                       COUNT(*) AS tot
+                FROM nemesis_matches
+                GROUP BY tracked_profile_id, opponent_profile_id
             )
-            """
+            """,
+            (z_min, t_min, d_min, wr_min, z_min, t_min, d_min, wr_min),
         ).fetchone()
         return {
             "total_rows": int(row["total_rows"] or 0) if row else 0,
@@ -1594,7 +1732,8 @@ class MatchDatabase:
             "min_completion_time": int(row["min_ct"] or 0) if row else 0,
             "max_completion_time": int(row["max_ct"] or 0) if row else 0,
             "trigger_day_events": int(active_rivals[0] or 0) if active_rivals else 0,
-            "distinct_nemesis_pairs": int(distinct_nemesis_pairs[0] or 0) if distinct_nemesis_pairs else 0,
+            "distinct_nemesis_pairs": int(rivalry_pairs["nem_pairs"] or 0) if rivalry_pairs else 0,
+            "distinct_fregues_pairs": int(rivalry_pairs["freg_pairs"] or 0) if rivalry_pairs else 0,
         }
 
     def get_tracked_pids_who_faced_opponent(self, opponent_profile_id: int) -> set[int]:
