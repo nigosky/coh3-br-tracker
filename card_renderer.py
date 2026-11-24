@@ -23,6 +23,7 @@ from relic_api import (
     ALLOWED_RELIC_HOSTS,
     BASE_URL as RELIC_BASE_URL,
     CORE_BR_ROSTER,
+    MANUAL_OTHER_BR_DISPLAY,
     MAP_MK_SUFFIX_RE,
     OFFICIAL_COH3_BATTLEGROUPS,
     OFFICIAL_COH3_MAP_NAMES,
@@ -926,6 +927,68 @@ def get_country_flag(code: str, w: int = 20, h: int = 14) -> Image.Image:
     return final
 
 
+def _is_curated_br_expat(profile_id: int, country_code: str) -> bool:
+    """Retorna True somente se o jogador for um brasileiro emigrado confirmado no roster (nunca adversário estrangeiro)."""
+    c = (country_code or "").strip().lower()
+    if not c or c in ("br", "un"):
+        return False
+    try:
+        pid_int = int(profile_id or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid_int <= 0:
+        return False
+    for row in (*CORE_BR_ROSTER, *MANUAL_OTHER_BR_DISPLAY):
+        if int(row.get("profile_id", 0) or 0) == pid_int:
+            rc = str(row.get("country") or "").strip().lower()
+            return bool(rc and rc != "br")
+    return False
+
+
+def _draw_flag_with_expat_badge(
+    img: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    country_code: str,
+    x: int,
+    y: int,
+    *,
+    profile_id: int = 0,
+    is_expat: bool | None = None,
+    flag_w: int = 24,
+    flag_h: int = 17,
+    compact: bool = False,
+) -> int:
+    """Desenha a bandeira do país e, para brasileiros emigrados confirmados, a pílula verde-e-ouro `BR EXT`."""
+    c = (country_code or "un").strip().lower()
+    flag_im = get_country_flag(c, w=flag_w, h=flag_h)
+    img.paste(flag_im, (x, y), flag_im)
+    show_expat = is_expat if is_expat is not None else _is_curated_br_expat(profile_id, c)
+    if not show_expat or not c or c in ("br", "un"):
+        return flag_w
+
+    label = "BR EXT"
+    font_sz = 9 if compact else 10
+    pill_w = 36 if compact else 42
+    pill_h = max(flag_h, 13 if compact else 16)
+    gap = 4
+    px0 = x + flag_w + gap
+    py0 = y + (flag_h - pill_h) // 2
+    draw.rounded_rectangle(
+        (px0, py0, px0 + pill_w, py0 + pill_h),
+        radius=3,
+        fill=(16, 62, 38, 255),
+        outline=(234, 179, 8, 235),
+        width=1,
+    )
+    fnt = pick_font(label, size=font_sz, bold=True, condensed=True)
+    bbox = draw.textbbox((0, 0), label, font=fnt)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    tx = px0 + (pill_w - tw) / 2 - bbox[0]
+    ty = py0 + (pill_h - th) / 2 - bbox[1]
+    draw.text((tx, ty), label, font=fnt, fill=(253, 224, 71, 255))
+    return flag_w + gap + pill_w
+
+
 _MAP_THUMB_CACHE: dict[tuple[str, int], Image.Image] = {}
 
 _MAP_THUMB_ALIASES: dict[str, str] = {
@@ -1487,13 +1550,22 @@ def _draw_two_team_columns(
 
             flag_x = col_start_x + (136 if show_delta else 110)
             country = str(pl.get("country") or "un").lower()
-            flag_im = get_country_flag(country, w=24, h=17)
-            img.paste(flag_im, (flag_x, py + (21 if has_any_bg else 13)), flag_im)
+            pl_pid = int(pl.get("profile_id", 0) or 0)
+            flag_used_w = _draw_flag_with_expat_badge(
+                img,
+                draw,
+                country,
+                flag_x,
+                py + (21 if has_any_bg else 13),
+                profile_id=pl_pid,
+                flag_w=24,
+                flag_h=17,
+                compact=False,
+            )
 
-            name_x = flag_x + 30
+            name_x = flag_x + flag_used_w + 6
             is_tracked = bool(pl.get("is_tracked"))
             is_veterano = is_tracked or bool(pl.get("is_br_roster"))
-            pl_pid = int(pl.get("profile_id", 0) or 0)
             is_nemesis_opp = pl_pid > 0 and pl_pid in nem_pids
             is_smurf_opp = (not is_veterano) and pl_pid > 0 and pl_pid in smurf_pids
 
@@ -2195,10 +2267,20 @@ def render_matches_table_png(
                     draw.text((col_x + 98 + bg_shift - dw, py + 6), d_txt, font=d_fnt, fill=d_col)
 
                 country = str(pl.get("country") or "un").lower()
-                flag_im = get_country_flag(country, w=20, h=14)
-                img.paste(flag_im, (col_x + 104 + bg_shift, py + 8), flag_im)
+                pl_pid_row = int(pl.get("profile_id", 0) or 0)
+                flag_used_w = _draw_flag_with_expat_badge(
+                    img,
+                    draw,
+                    country,
+                    col_x + 104 + bg_shift,
+                    py + 8,
+                    profile_id=pl_pid_row,
+                    flag_w=20,
+                    flag_h=14,
+                    compact=True,
+                )
 
-                name_x = col_x + 130 + bg_shift
+                name_x = col_x + 104 + bg_shift + flag_used_w + 6
                 is_tracked = bool(pl.get("is_tracked"))
                 is_veterano = is_tracked or bool(pl.get("is_br_roster"))
 
@@ -2492,12 +2574,23 @@ def render_weekly_summary_card_png(
             img.paste(av_im, (68, y + 5), av_im)
             r_entry = (pid_map.get(pl_pid) if pl_pid > 0 else None) or steam_map.get(pl_sid) or {}
             pl_country = str(r_entry.get("country") or pl.get("country") or "br").strip().lower()
-            pl_flag = get_country_flag(pl_country, w=20, h=14)
-            img.paste(pl_flag, (104, y + 13), pl_flag)
-
-            disp_alias, a_fnt = truncate_to_px(draw, str(pl.get("alias") or ""), max_px=258, size=16, bold=True)
-            draw.text((130, y + 10), disp_alias, font=a_fnt, fill=(253, 230, 138, 255))
-            bx = int(130 + text_width(draw, disp_alias, a_fnt) + 6)
+            flag_used_w = _draw_flag_with_expat_badge(
+                img,
+                draw,
+                pl_country,
+                104,
+                y + 13,
+                profile_id=pl_pid,
+                is_expat=bool(pl_country and pl_country != "br"),
+                flag_w=20,
+                flag_h=14,
+                compact=True,
+            )
+            alias_x = 104 + flag_used_w + 6
+            extra_w = max(0, alias_x - 130)
+            disp_alias, a_fnt = truncate_to_px(draw, str(pl.get("alias") or ""), max_px=max(140, 258 - extra_w), size=16, bold=True)
+            draw.text((alias_x, y + 10), disp_alias, font=a_fnt, fill=(253, 230, 138, 255))
+            bx = int(alias_x + text_width(draw, disp_alias, a_fnt) + 6)
             img.paste(row_vet, (bx, y + 10), row_vet)
 
             games_s = str(int(pl.get("games", 0)))
