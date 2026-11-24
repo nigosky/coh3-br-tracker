@@ -598,6 +598,7 @@ MANUAL_OTHER_BR_DISPLAY: list[dict[str, Any]] = [
     {"profile_id": 803384, "steam_id": "76561197960926415", "original_alias": "DeMarco"},
     {"profile_id": 802771, "steam_id": "76561198072811551", "original_alias": "Odin"},
     {"profile_id": 8838, "steam_id": "76561198092565055", "original_alias": "Saint", "known_aliases": ["Saint", "╬ IIIR ╬ PanzerGrenadier ╬"]},
+    {"profile_id": 1467829, "steam_id": "76561198650067332", "original_alias": "XAMPUZINHO (Smurf: Xampoo)", "smurf_of": "Xampoo", "known_aliases": ["XAMPUZINHO", "XAMPUZINHO (Smurf: Xampoo)"]},
     {"profile_id": 91827, "steam_id": "76561198031697638", "original_alias": "[★General★] Apollo", "country": "au", "known_aliases": ["General Apolo", "[★General★] Apollo"]},
     {"profile_id": 312670, "steam_id": "76561197978279848", "original_alias": "TNF", "country": "au"},
     {"profile_id": 263517, "steam_id": "76561197994925919", "original_alias": "Angel of Death", "country": "jp"},
