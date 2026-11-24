@@ -164,8 +164,8 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 45 Veteranos independentes (0 mescladas) + 39 Players Monitorados de exibição passiva
-        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 45)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 39 Players Monitorados de exibição passiva
+        self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
         self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 39)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
@@ -214,6 +214,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
             1423426: ("76561199482388323", "geladeira velha (Smurf: arc)"),
             1487738: ("76561198602236177", "Državljan H (Smurf: arc)"),
             1482961: ("76561199886227102", "Vog (Smurf: arc)"),
+            917917: ("76561198287157768", "arc (Smurf: arc)"),
+            1160699: ("76561199814547622", "Bubebolos (Smurf: arc)"),
+            918241: ("76561199794093952", "Faint (Smurf: arc)"),
             1390350: ("76561198089278659", "TearsInTheRain (Smurf: Chacineiro)"),
         }
         for spid, (expected_sid, expected_alias) in expected_vet_smurfs.items():

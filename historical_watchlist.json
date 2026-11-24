@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "private_only": true,
+  "description": "Watchlist privada (CoH1/CoH2 -> CoH3) para monitoramento forense de contas com historico de troll/griefing, banimentos e contas secundarias CoH2 prontas para ativacao no CoH3. Nunca publicar em canais publicos do Discord.",
+  "entries": [
+    {
+      "label": "Alcoólatra",
+      "category": "historical_coh1_coh2_troll",
+      "steam_id": "76561197995394193",
+      "coh1_profile_id": 1304568,
+      "coh2_profile_id": 242,
+      "coh3_profile_id": null,
+      "location_hint": "Santa Cruz Do Sul, RS, Brazil",
+      "known_aliases": ["Alcoolatra", "Alcoólatra", "Alcoolatra (HUE BR)"],
+      "notes": "Veterano CoH1/CoH2 ativo no CoH2 ate 2026-02-28 (1.337 jogos). Sem perfil CoH3 nesta Steam ate o momento; alertar imediatamente caso crie/ative perfil no CoH3. Compartilha cidade, janela de criacao Steam (dez/2007, 8 dias de diferenca) e 11 amigos OG em comum com Siririca."
+    },
+    {
+      "label": "Siririca",
+      "category": "historical_coh1_coh2_troll",
+      "steam_id": "76561197995130555",
+      "coh1_profile_id": 21205,
+      "coh2_profile_id": 2325,
+      "coh3_profile_id": null,
+      "location_hint": "Santa Cruz Do Sul, RS, Brazil",
+      "known_aliases": ["Siririca", "Siri"],
+      "notes": "Veterano CoH1/CoH2 de Santa Cruz do Sul, RS (Steam criada em 23/12/2007, nome Steam atual 'Siri'). Sem perfil CoH3 nesta Steam ate o momento; alertar imediatamente caso crie/ative perfil no CoH3."
+    },
+    {
+      "label": "Xampoo",
+      "category": "historical_coh1_coh2_troll",
+      "steam_id": "76561198091708083",
+      "coh1_profile_id": 14783,
+      "coh2_profile_id": 541,
+      "coh3_profile_id": 2834,
+      "location_hint": "Brazil",
+      "known_aliases": ["Xampoo", "Xampoo - ☭", "Brazuca", "IRONSHIT", "ANALÂNDIA (SP)", "TIMÃO E POMBA"],
+      "notes": "ATIVO no CoH3 (#2834): 7.235 jogos (2482W-4753L), ELO minimo -2588 no 4v4 Wehrmacht e 156 drops acumulados. Monitorar trocas de nick, confrontos com Veteranos, picos de drops e possiveis contas secundarias."
+    },
+    {
+      "label": "glowing (Alt CoH2 dormente -> CoH3)",
+      "category": "dormant_coh2_alt_watch",
+      "steam_id": "76561197983811816",
+      "coh1_profile_id": null,
+      "coh2_profile_id": 6818217,
+      "coh3_profile_id": 1148379,
+      "location_hint": "Brazil",
+      "known_aliases": ["glowing"],
+      "notes": "Suspeita moderada-alta (65-72%) de conta secundaria no CoH2 ligada ao squad de Lion Heart; possui perfil CoH3 #1148379 criado mas com 0 partidas. Alertar se ativar no CoH3."
+    }
+  ]
+}
