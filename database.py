@@ -1902,6 +1902,56 @@ class MatchDatabase:
 
         return out
 
+    def get_play_hour_profiles_by_tracked_pids(
+        self,
+        tracked_profile_ids: list[int] | set[int] | frozenset[int],
+    ) -> dict[int, dict[str, Any]]:
+        """
+        Retorna a distribuição histórica (2023+) de horários de jogo (`utc_hours` e `brt_hours`, 0..23)
+        deduplicada por `(tracked_profile_id, match_id)` combinando `kryptonite_matches` e `recorded_matches`,
+        usada para validar os possíveis horários em que a conta main joga antes da detecção de smurf.
+        """
+        clean_pids = sorted({int(p) for p in (tracked_profile_ids or ()) if int(p or 0) > 0})[:300]
+        if not clean_pids:
+            return {}
+        ph = ",".join("?" for _ in clean_pids)
+        conn = self._connect()
+        rows = conn.execute(
+            f"""
+            SELECT tracked_profile_id,
+                   CAST(((completion_time % 86400) + 86400) % 86400 / 3600 AS INTEGER) AS utc_hour,
+                   COUNT(*) AS cnt
+            FROM (
+                SELECT tracked_profile_id, match_id, MIN(completion_time) AS completion_time
+                FROM (
+                    SELECT tracked_profile_id, match_id, completion_time
+                    FROM kryptonite_matches
+                    WHERE completion_time > 0 AND tracked_profile_id IN ({ph})
+                    UNION ALL
+                    SELECT tracked_profile_id, match_id, completion_time
+                    FROM recorded_matches
+                    WHERE completion_time > 0 AND tracked_profile_id IN ({ph})
+                )
+                GROUP BY tracked_profile_id, match_id
+            )
+            GROUP BY tracked_profile_id, utc_hour
+            """,
+            clean_pids + clean_pids,
+        ).fetchall()
+        out: dict[int, dict[str, Any]] = {}
+        for r in rows:
+            tpid = int(r["tracked_profile_id"] or 0)
+            uh = int(r["utc_hour"] or 0) % 24
+            cnt = max(0, int(r["cnt"] or 0))
+            if tpid <= 0 or cnt <= 0:
+                continue
+            slot = out.setdefault(tpid, {"utc_hours": {}, "brt_hours": {}, "total_matches": 0})
+            slot["utc_hours"][uh] = int(slot["utc_hours"].get(uh, 0)) + cnt
+            bh = (uh - 3) % 24
+            slot["brt_hours"][bh] = int(slot["brt_hours"].get(bh, 0)) + cnt
+            slot["total_matches"] = int(slot["total_matches"]) + cnt
+        return out
+
     def update_matches_discord_id_batch(self, records: list[dict[str, Any]], message_id: str) -> None:
         """Atualiza o discord_message_id de todos os registros agrupados da mesma partida em uma transação."""
         if not records or not message_id:

@@ -48,9 +48,24 @@ STEAM_DEFAULT_AVATAR_HASH = "fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb"
 
 BRT_TZ = timezone(timedelta(hours=-3))
 BRT_PRIME_HOURS: frozenset[int] = frozenset({18, 19, 20, 21, 22, 23, 0, 1, 2})
+# Madrugada/início da manhã no Brasil (03h–09h BRT = 06h–12h UTC = 14h–20h CST pico Ásia/China/Coreia/Japão)
+ASIA_SLEEP_BRT_HOURS: frozenset[int] = frozenset({3, 4, 5, 6, 7, 8, 9})
+EAST_ASIA_COUNTRIES: frozenset[str] = frozenset(
+    {"cn", "kr", "jp", "tw", "hk", "sg", "th", "vn", "ph", "my", "id", "mo"}
+)
+# Loadouts padrão iniciais (3 Battlegroups base sem DLC) — qualquer dois jogadores sem DLC têm 100% de sobreposição
+DEFAULT_BASE_BG_LOADOUT_BY_RACE: dict[int, frozenset[int]] = {
+    129494: frozenset({453171, 453172, 453175}),  # Wehr: Breakthrough, Luftwaffe, Mechanized
+    137123: frozenset({453179, 453181, 453182}),  # USF: Airborne, Armored, Special Operations
+    198437: frozenset({453294, 453390, 453430}),  # DAK: Italian Combined Arms, Armored Support, Italian Infantry
+    203852: frozenset({453176, 453177, 453178}),  # UKF: Indian Artillery, British Armored, Air & Sea
+}
+_NON_LATIN_SCRIPT_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\u0400-\u04ff\u0600-\u06ff\u0e00-\u0e7f]"
+)
 
 # Janelas de cache e orçamento de rede para não impactar a latência do ciclo de 5 min
-SMURF_PROBE_CACHE_KEY = "smurf_probe_cache_v1"
+SMURF_PROBE_CACHE_KEY = "smurf_probe_cache_v2"
 SMURF_PROBE_TTL_SEC = 6 * 3600       # 6h para contas normais/suspeitas
 VETERAN_CACHE_TTL_SEC = 7 * 86400    # 7 dias para contas veteranas consolidadas (>900 jogos)
 MAX_LIVE_OPPONENT_PROBES_PER_CYCLE = 4
@@ -251,7 +266,13 @@ def _detect_ptbr_linguistic_signal(alias: str) -> tuple[bool, str]:
 
 def _is_throwaway_or_barcode_nick(alias: str) -> bool:
     clean = strip_unsafe_chars(alias).strip()
-    if not clean or len(clean) <= 2:
+    if not clean:
+        return True
+    # Nicks em CJK/Hangul/Kana/Cirílico/Árabe/Tailandês (ex.: '木木', 'Виктор', 'アリス') são nomes normais,
+    # jamais nicks descartáveis/barcode ASCII por terem poucos ou zero caracteres [A-Za-z0-9].
+    if len(_NON_LATIN_SCRIPT_RE.findall(clean)) >= 2:
+        return False
+    if len(clean) <= 2:
         return True
     alnum = re.sub(r"[^A-Za-z0-9]+", "", clean)
     if not alnum or len(alnum) <= 2 or alnum.isdigit():
@@ -578,6 +599,9 @@ class PlayerTelemetry:
     mode_elo_max: dict[str, int] = field(default_factory=dict)
     hour_counts: Counter[int] = field(default_factory=Counter)
     brt_hour_counts: Counter[int] = field(default_factory=Counter)
+    # Perfil completo de horários de vigília/jogo (todos os modos Relic incl. Co-op/Custom + histórico SQLite 2023+)
+    all_hour_counts: Counter[int] = field(default_factory=Counter)
+    all_brt_hour_counts: Counter[int] = field(default_factory=Counter)
     weekday_counts: Counter[int] = field(default_factory=Counter)
     active_brt_days: set[str] = field(default_factory=set)
     ally_counts: Counter[int] = field(default_factory=Counter)
@@ -606,6 +630,10 @@ class PlayerTelemetry:
     sa_match_count: int = 0
     br_opp_match_count: int = 0
     distinct_br_sa_opps: set[int] = field(default_factory=set)
+    # Distribuição regional por slot de co-jogadores (todos os modos Relic, evita inflação 3v3/4v4 em jogadores estrangeiros)
+    coplayer_country_counts: Counter[str] = field(default_factory=Counter)
+    br_sa_coplayer_slots: int = 0
+    total_coplayer_slots: int = 0
     # Perfil de Nêmesis, Freguês & Criptonitas / Facilidades (Automatch 1v1..4v4 + histórico SQLite 2023+)
     opp_wl: dict[int, list[int]] = field(default_factory=dict)  # opp_pid -> [wins, losses]
     opp_days: dict[int, set[int]] = field(default_factory=dict)  # opp_pid -> {utc_day, ...}
@@ -616,6 +644,7 @@ class PlayerTelemetry:
     matchup_wl: dict[tuple[str, str], list[int]] = field(default_factory=dict)
     enemy_bg_wl: dict[str, list[int]] = field(default_factory=dict)
     _seen_opp_mids: set[int] = field(default_factory=set)
+    _seen_schedule_mids: set[int] = field(default_factory=set)
 
     def winrate(self) -> float:
         return (self.wins / float(self.games)) if self.games > 0 else 0.0
@@ -693,11 +722,52 @@ class PlayerTelemetry:
     def median_abil_per_min(self, min_samples: int = 3) -> float:
         return float(statistics.median(self.abil_per_min)) if len(self.abil_per_min) >= min_samples else 0.0
 
+    def effective_utc_hours(self) -> Counter[int]:
+        if sum(self.all_hour_counts.values()) > 0:
+            return self.all_hour_counts
+        if sum(self.hour_counts.values()) > 0:
+            return self.hour_counts
+        if sum(self.brt_hour_counts.values()) > 0:
+            return Counter({(int(h) + 3) % 24: int(c) for h, c in self.brt_hour_counts.items() if int(c) > 0})
+        return Counter()
+
+    def effective_brt_hours(self) -> Counter[int]:
+        if sum(self.all_brt_hour_counts.values()) > 0:
+            return self.all_brt_hour_counts
+        if sum(self.brt_hour_counts.values()) > 0:
+            return self.brt_hour_counts
+        if sum(self.hour_counts.values()) > 0:
+            return Counter({(int(h) - 3) % 24: int(c) for h, c in self.hour_counts.items() if int(c) > 0})
+        return Counter()
+
     def brt_prime_ratio(self) -> float:
-        tot = sum(self.brt_hour_counts.values())
+        bh = self.effective_brt_hours()
+        tot = sum(bh.values())
         if tot <= 0:
             return 0.0
-        return sum(self.brt_hour_counts[h] for h in BRT_PRIME_HOURS) / float(tot)
+        return sum(bh[h] for h in BRT_PRIME_HOURS) / float(tot)
+
+    def asia_sleep_ratio(self) -> float:
+        bh = self.effective_brt_hours()
+        tot = sum(bh.values())
+        if tot <= 0:
+            return 0.0
+        return sum(bh[h] for h in ASIA_SLEEP_BRT_HOURS) / float(tot)
+
+    def br_sa_coplayer_ratio(self) -> float:
+        return (self.br_sa_coplayer_slots / float(self.total_coplayer_slots)) if self.total_coplayer_slots > 0 else 0.0
+
+    def east_asia_coplayer_ratio(self) -> float:
+        if self.total_coplayer_slots <= 0:
+            return 0.0
+        ea = sum(int(self.coplayer_country_counts.get(c, 0)) for c in EAST_ASIA_COUNTRIES)
+        return ea / float(self.total_coplayer_slots)
+
+    def same_country_coplayer_ratio(self, country: str) -> float:
+        ct = str(country or "").strip().lower()
+        if not ct or self.total_coplayer_slots <= 0:
+            return 0.0
+        return int(self.coplayer_country_counts.get(ct, 0)) / float(self.total_coplayer_slots)
 
     def br_match_rate(self) -> float:
         return (self.br_match_count / float(self.regional_observed_games)) if self.regional_observed_games > 0 else 0.0
@@ -748,13 +818,47 @@ class PlayerTelemetry:
             if not isinstance(m, dict):
                 continue
             mid = int(m.get("id", 0) or 0)
+            reports = m.get("matchhistoryreportresults") or []
+
+            # Registra horário de vigília e países dos co-jogadores em TODOS os modos (incl. Co-op vs IA e Custom)
+            # antes do filtro de Automatch, para capturar o fuso horário e região reais do jogador humano.
+            if mid <= 0 or mid not in self._seen_schedule_mids:
+                ct_any = int(m.get("completiontime", 0) or 0)
+                st_any = int(m.get("startgametime", 0) or 0)
+                eff_ct_any = ct_any if ct_any > 0 else (st_any + 1200 if st_any > 0 else 0)
+                has_self_rep = isinstance(reports, list) and any(
+                    isinstance(r, dict) and int(r.get("profile_id", 0) or 0) == self.profile_id for r in reports
+                )
+                if has_self_rep and eff_ct_any > 0:
+                    if mid > 0:
+                        self._seen_schedule_mids.add(mid)
+                    dt_u_any = datetime.fromtimestamp(eff_ct_any, tz=timezone.utc)
+                    dt_b_any = dt_u_any.astimezone(BRT_TZ)
+                    self.all_hour_counts[dt_u_any.hour] += 1
+                    self.all_brt_hour_counts[dt_b_any.hour] += 1
+                    for rep in reports:
+                        if not isinstance(rep, dict):
+                            continue
+                        opid = int(rep.get("profile_id", 0) or 0)
+                        if opid <= 0 or opid == self.profile_id:
+                            continue
+                        opr = profiles_by_id.get(opid)
+                        octry = str((opr or {}).get("country") or "").strip().lower()
+                        oreg = int((opr or {}).get("leaderboardregion_id", 0) or 0)
+                        oknown_br = opid in br_set
+                        if octry or oreg > 0 or oknown_br:
+                            self.total_coplayer_slots += 1
+                            if octry:
+                                self.coplayer_country_counts[octry] += 1
+                            if octry == "br" or oknown_br or octry in SA_COUNTRIES or oreg == SA_LEADERBOARD_REGION_ID:
+                                self.br_sa_coplayer_slots += 1
+
             if mid > 0 and mid in self.seen_match_ids:
                 continue
             mt_id = int(m.get("matchtype_id", -1) or -1)
             mode = _MT_TO_MODE.get(mt_id, "")
             if not mode:
                 continue
-            reports = m.get("matchhistoryreportresults") or []
             if not isinstance(reports, list) or len(reports) < 2:
                 continue
 
@@ -952,6 +1056,11 @@ class PlayerTelemetry:
         dt_brt = dt_utc.astimezone(BRT_TZ)
         self.hour_counts[dt_utc.hour] += 1
         self.brt_hour_counts[dt_brt.hour] += 1
+        if mid <= 0 or mid not in self._seen_schedule_mids:
+            if mid > 0:
+                self._seen_schedule_mids.add(mid)
+            self.all_hour_counts[dt_utc.hour] += 1
+            self.all_brt_hour_counts[dt_brt.hour] += 1
         self.weekday_counts[dt_brt.weekday()] += 1
         self.active_brt_days.add(dt_brt.strftime("%Y-%m-%d"))
 
@@ -1278,19 +1387,191 @@ def _compare_apm(cand_tel: PlayerTelemetry | None, main_tel: PlayerTelemetry | N
     return res
 
 
+def _is_pure_default_base_bg_counter(race_id: int, counts: Counter[int]) -> bool:
+    """True quando >=90% dos slots equipados da facção são apenas os 3 Battlegroups base iniciais (sem DLC/customização)."""
+    base_set = DEFAULT_BASE_BG_LOADOUT_BY_RACE.get(int(race_id))
+    tot = sum(counts.values())
+    if not base_set or tot <= 0:
+        return False
+    base_cnt = sum(int(v) for k, v in counts.items() if int(k) in base_set)
+    return (base_cnt / float(tot)) >= 0.90
+
+
 def _compare_bg_loadout(cand_tel: PlayerTelemetry | None, main_tel: PlayerTelemetry | None) -> float:
     if not cand_tel or not main_tel:
         return 0.0
     common_races = set(cand_tel.bg_loadout_by_race.keys()) & set(main_tel.bg_loadout_by_race.keys())
     w_sim, w_tot = 0.0, 0.0
+    has_non_default_race = False
     for rid in common_races:
         cc = cand_tel.bg_loadout_by_race[rid]
         mc = main_tel.bg_loadout_by_race[rid]
         if sum(cc.values()) >= 9 and sum(mc.values()) >= 9:
-            w = float(min(sum(cc.values()), sum(mc.values())))
+            both_default = _is_pure_default_base_bg_counter(rid, cc) and _is_pure_default_base_bg_counter(rid, mc)
+            if not both_default:
+                has_non_default_race = True
+            w = float(min(sum(cc.values()), sum(mc.values()))) * (0.35 if both_default else 1.0)
             w_sim += _cosine_similarity(cc, mc) * w
             w_tot += w
-    return round(w_sim / w_tot, 3) if w_tot > 0.0 else 0.0
+    if w_tot <= 0.0:
+        return 0.0
+    sim = round(w_sim / w_tot, 3)
+    # Se TODAS as facções comparadas têm apenas os 3 BGs padrão do jogo base (sem DLC), limita o teto
+    # para não gerar falso sinal forte "BGs 100%" entre dois jogadores aleatórios sem DLC.
+    if not has_non_default_race:
+        return min(sim, 0.65)
+    return sim
+
+
+def _calendar_span_gap_days(days_a: set[str], days_b: set[str]) -> int:
+    """Retorna 0 se as janelas de datas BRT ('YYYY-MM-DD') se sobrepõem, ou a distância em dias entre janelas disjuntas."""
+    if not days_a or not days_b:
+        return 9999
+    try:
+        parsed_a = sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in days_a)
+        parsed_b = sorted(datetime.strptime(d, "%Y-%m-%d").date() for d in days_b)
+    except ValueError:
+        return 9999
+    latest_start = max(parsed_a[0], parsed_b[0])
+    earliest_end = min(parsed_a[-1], parsed_b[-1])
+    if latest_start <= earliest_end:
+        return 0
+    return max(0, (latest_start - earliest_end).days)
+
+
+def _circular_smooth_24h(hour_counts: Counter[int]) -> list[float]:
+    tot = float(sum(int(v) for v in hour_counts.values() if int(v) > 0))
+    if tot <= 0.0:
+        return [0.0] * 24
+    raw = [max(0, int(hour_counts.get(h, 0))) / tot for h in range(24)]
+    return [0.20 * raw[(h - 1) % 24] + 0.60 * raw[h] + 0.20 * raw[(h + 1) % 24] for h in range(24)]
+
+
+def _compare_play_schedules(
+    cand_tel: PlayerTelemetry | None,
+    main_tel: PlayerTelemetry | None,
+    *,
+    main_family_tels: list[PlayerTelemetry] | tuple[PlayerTelemetry, ...] | None = None,
+) -> dict[str, Any]:
+    """
+    Compara o perfil real de horários da candidata contra TODOS os possíveis horários em que a conta main
+    (e sua família catalogada) costuma jogar (histórico SQLite 2023+ + todos os modos Relic).
+    Detecta incompatibilidade de fuso horário (ex.: jogador chinês ativo na madrugada/manhã BRT
+    quando o brasileiro main nunca joga).
+    """
+    res: dict[str, Any] = {
+        "valid": False,
+        "cand_n": 0,
+        "main_n": 0,
+        "schedule_cos": 0.0,
+        "out_of_schedule_share": 0.0,
+        "cand_asia_sleep_share": 0.0,
+        "main_asia_sleep_share": 0.0,
+        "asia_sleep_gap": 0.0,
+        "possible_brt_hours": [],
+    }
+    if not cand_tel or not main_tel:
+        return res
+
+    cand_brt = cand_tel.effective_brt_hours()
+    main_brt: Counter[int] = Counter(main_tel.effective_brt_hours())
+    for ftel in main_family_tels or ():
+        if ftel is not None:
+            main_brt.update(ftel.effective_brt_hours())
+
+    cand_n = sum(int(v) for v in cand_brt.values() if int(v) > 0)
+    main_n = sum(int(v) for v in main_brt.values() if int(v) > 0)
+    res["cand_n"] = cand_n
+    res["main_n"] = main_n
+    if cand_n <= 0 or main_n <= 0:
+        return res
+
+    c_smooth = _circular_smooth_24h(cand_brt)
+    m_smooth = _circular_smooth_24h(main_brt)
+    dot = sum(a * b for a, b in zip(c_smooth, m_smooth))
+    na = math.sqrt(sum(a * a for a in c_smooth))
+    nb = math.sqrt(sum(b * b for b in m_smooth))
+    sched_cos = (dot / (na * nb)) if (na > 0.0 and nb > 0.0) else 0.0
+
+    # Horários possíveis da conta main (BRT 0..23):
+    # - Em amostras curtas (<120 jogos), toda hora observada (>=1 jogo) entra como ativa.
+    # - Em históricos longos (>=120 jogos, ex.: SQLite 2023+), exige >=0.5% para descartar
+    #   episódios isolados de 1-3 partidas em anos; expande em ±1h e fecha lacunas isoladas de 1h
+    #   dentro do turno acordado (ex.: 13h entre 12h e 15h em TearsInTheRain -> Chacineiro),
+    #   preservando intactas as janelas reais de sono/fuso oposto (6-8h consecutivas sem jogo).
+    raw_active: set[int] = set()
+    for h in range(24):
+        cnt = int(main_brt.get(h, 0))
+        if cnt <= 0:
+            continue
+        if main_n < 120 or (cnt / float(main_n)) >= 0.005:
+            raw_active.add(h)
+    possible_hours: set[int] = set()
+    for h in raw_active:
+        possible_hours.add((h - 1) % 24)
+        possible_hours.add(h)
+        possible_hours.add((h + 1) % 24)
+    for h in range(24):
+        if ((h - 1) % 24) in possible_hours and ((h + 1) % 24) in possible_hours:
+            possible_hours.add(h)
+    out_cnt = sum(int(cand_brt.get(h, 0)) for h in range(24) if h not in possible_hours)
+    out_share = out_cnt / float(cand_n)
+    c_asia = sum(int(cand_brt.get(h, 0)) for h in ASIA_SLEEP_BRT_HOURS) / float(cand_n)
+    m_asia = sum(int(main_brt.get(h, 0)) for h in ASIA_SLEEP_BRT_HOURS) / float(main_n)
+
+    res["valid"] = cand_n >= 6 and main_n >= 6
+    res["schedule_cos"] = round(sched_cos, 3)
+    res["out_of_schedule_share"] = round(out_share, 3)
+    res["cand_asia_sleep_share"] = round(c_asia, 3)
+    res["main_asia_sleep_share"] = round(m_asia, 3)
+    res["asia_sleep_gap"] = round(c_asia - m_asia, 3)
+    res["possible_brt_hours"] = sorted(possible_hours)
+    return res
+
+
+def _has_native_foreign_regional_footprint(cand_tel: PlayerTelemetry | None, cand_ctry: str) -> bool:
+    """
+    True quando uma conta com bandeira estrangeira explícita tem pegada regional nativa inequívoca
+    (ex.: conta 'cn' jogando majoritariamente com co-jogadores 'cn'/Ásia Oriental).
+    """
+    ct = str(cand_ctry or "").strip().lower()
+    if not cand_tel or not ct or ct in ("br", "??", "unknown"):
+        return False
+    if cand_tel.total_coplayer_slots < 12:
+        return False
+    if cand_tel.same_country_coplayer_ratio(ct) >= 0.25:
+        return True
+    if ct in EAST_ASIA_COUNTRIES and cand_tel.east_asia_coplayer_ratio() >= 0.35:
+        return True
+    return False
+
+
+def _has_strong_br_sa_mm_nexus(cand_tel: PlayerTelemetry | None, cand_ctry: str) -> bool:
+    """
+    Nexo regional/ping BR/SA rigoroso para perfurar guarda de bandeira estrangeira:
+    evita falsos positivos de 3v3/4v4 (onde 1 BR em 5–7 vagas infla a taxa por partida) exigindo
+    densidade consistente em partidas + slots de co-jogadores + horário BRT + ausência de pegada nativa estrangeira.
+    """
+    if not cand_tel:
+        return False
+    reg_obs = cand_tel.regional_observed_games
+    sa_m_rate = cand_tel.sa_match_rate()
+    br_opp_cnt = cand_tel.br_opp_match_count
+    br_match_cnt = cand_tel.br_match_count
+    brt_prime = cand_tel.brt_prime_ratio()
+    asia_sleep = cand_tel.asia_sleep_ratio()
+    if _has_native_foreign_regional_footprint(cand_tel, cand_ctry):
+        return False
+    min_games_ok = reg_obs >= 8 or (reg_obs >= 6 and sa_m_rate >= 0.50)
+    slot_rate_ok = cand_tel.total_coplayer_slots < 12 or cand_tel.br_sa_coplayer_ratio() >= 0.08
+    return bool(
+        min_games_ok
+        and sa_m_rate >= 0.30
+        and (br_opp_cnt >= 2 or br_match_cnt >= 4)
+        and brt_prime >= 0.50
+        and asia_sleep < 0.25
+        and slot_rate_ok
+    )
 
 
 def _is_rivalry_nemesis_wl(wins: int, losses: int) -> bool:
@@ -1819,26 +2100,30 @@ def score_live_smurf_pair(
     br_pids = known_br_pids or frozenset()
     cand_br_allies = sum(1 for apid, cnt in (cand_tel.ally_counts.items() if cand_tel else ()) if apid in br_pids and cnt >= 2)
     cand_brt_prime = cand_tel.brt_prime_ratio() if cand_tel else 0.0
+    cand_asia_sleep = cand_tel.asia_sleep_ratio() if cand_tel else 0.0
     reg_obs = cand_tel.regional_observed_games if cand_tel else 0
     sa_m_rate = cand_tel.sa_match_rate() if cand_tel else 0.0
     br_opp_rate = cand_tel.br_opp_match_rate() if cand_tel else 0.0
     br_opp_cnt = cand_tel.br_opp_match_count if cand_tel else 0
     br_match_cnt = cand_tel.br_match_count if cand_tel else 0
-    strong_br_sa_mm_nexus = bool(
-        reg_obs >= 6
-        and sa_m_rate >= 0.20
-        and (br_opp_cnt >= 1 or br_match_cnt >= 3)
-        and cand_brt_prime >= 0.40
-    )
+    native_foreign_fp = _has_native_foreign_regional_footprint(cand_tel, cand_ctry)
+    strong_br_sa_mm_nexus = _has_strong_br_sa_mm_nexus(cand_tel, cand_ctry)
 
     # Guarda estrita anti-falso-positivo para bandeiras estrangeiras explícitas
     is_explicit_foreign = bool(cand_ctry and cand_ctry not in ("br", "??", "unknown"))
-    has_br_nexus = (
-        bool(shared_allies)
+    has_direct_social_or_identity = bool(
+        shared_allies
         or alias_pts > 0
         or same_custom_avatar
         or steam_br_leak
         or (cand_pid in br_pids)
+    )
+    if is_explicit_foreign and native_foreign_fp and not has_direct_social_or_identity and not ptbr_hit:
+        empty["disqualified_reason"] = "estrangeiro_perfil_regional_nativo"
+        return empty
+
+    has_br_nexus = (
+        has_direct_social_or_identity
         or (ptbr_hit and cand_brt_prime >= 0.40)
         or (cand_br_allies >= 2 and cand_brt_prime >= 0.45)
         or strong_br_sa_mm_nexus
@@ -1846,6 +2131,28 @@ def score_live_smurf_pair(
     if is_explicit_foreign and not has_br_nexus:
         empty["disqualified_reason"] = "estrangeiro_sem_vinculo_br"
         return empty
+
+    # Pré-checagem de horários possíveis da conta main (histórico SQLite 2023+ consolidado + todos os modos Relic)
+    sched_info = _compare_play_schedules(cand_tel, main_tel, main_family_tels=family_tels)
+    has_hard_identity_proof = bool(
+        shared_allies
+        or alias_pts > 0
+        or same_custom_avatar
+        or handoff_cnt >= 1
+        or steam_br_leak
+    )
+    if sched_info["valid"] and int(sched_info["cand_n"]) >= 10 and not has_hard_identity_proof:
+        out_dead = float(sched_info["out_of_schedule_share"])
+        s_cos = float(sched_info["schedule_cos"])
+        c_asia = float(sched_info["cand_asia_sleep_share"])
+        asia_gap = float(sched_info["asia_sleep_gap"])
+        if (
+            (int(sched_info["main_n"]) >= 25 and out_dead >= 0.40 and s_cos < 0.50)
+            or (int(sched_info["main_n"]) >= 12 and asia_gap >= 0.35 and c_asia >= 0.40 and s_cos < 0.45)
+            or (int(sched_info["main_n"]) >= 25 and asia_gap >= 0.30 and c_asia >= 0.35 and s_cos < 0.50)
+        ):
+            empty["disqualified_reason"] = "horario_incompativel_com_main"
+            return empty
 
     vel = _analyze_skill_velocity_and_tanking(cand_tel, cand)
     apm = _compare_apm(cand_tel, main_tel)
@@ -1857,7 +2164,11 @@ def score_live_smurf_pair(
     if cand_tel and main_tel and len(cand_tel.active_brt_days) >= 5 and len(main_tel.active_brt_days) >= 5:
         ov_days = len(cand_tel.active_brt_days & main_tel.active_brt_days)
         excl_day_ratio = 1.0 - (ov_days / float(len(cand_tel.active_brt_days)))
-        dormancy_swap = excl_day_ratio >= 0.75
+        span_gap = _calendar_span_gap_days(cand_tel.active_brt_days, main_tel.active_brt_days)
+        # Alternância real exige janelas de calendário sobrepostas ou transição recente (<=21d),
+        # nunca uma main inativa há meses comparada a qualquer jogador ativo hoje!
+        if excl_day_ratio >= 0.75 and (span_gap <= 21 or has_hard_identity_proof):
+            dormancy_swap = True
 
     score = 0.0
     behavioral_signals = 0
@@ -1892,13 +2203,13 @@ def score_live_smurf_pair(
             score += 8.0
             identity_anchor_signals += 1
             weighted_reasons.append((15.0, f"MM BR/SA {sa_m_rate * 100:.0f}% ({cand_ctry})"))
-        elif (br_opp_cnt >= 2 and br_opp_rate >= 0.08) or (sa_m_rate >= 0.35 and reg_obs >= 8):
+        elif (not native_foreign_fp) and ((br_opp_cnt >= 2 and br_opp_rate >= 0.08) or (sa_m_rate >= 0.35 and reg_obs >= 8)):
             score += 5.0 if (br_opp_cnt >= 2 and sa_m_rate >= 0.25) else 3.0
             weighted_reasons.append((10.0, f"MM BR/SA {sa_m_rate * 100:.0f}%"))
         elif (
             reg_obs >= 12
             and cand_tel is not None
-            and sum(cand_tel.brt_hour_counts.values()) >= 10
+            and sum(cand_tel.effective_brt_hours().values()) >= 10
             and sa_m_rate < 0.05
             and cand_brt_prime < 0.25
             and not shared_allies
@@ -1929,11 +2240,13 @@ def score_live_smurf_pair(
 
     # 4. Modo + facção
     mf_sim = 0.0
-    hour_sim = (
+    raw_hour_sim = (
         _cosine_similarity(cand_tel.hour_counts, main_tel.hour_counts)
         if (cand_tel and main_tel and cand_tel.games >= 6 and main_tel.games >= 6)
         else 0.0
     )
+    sched_cos = float(sched_info["schedule_cos"]) if sched_info["valid"] else raw_hour_sim
+    hour_sim = max(raw_hour_sim, sched_cos)
     if cand_tel and main_tel and cand_tel.games >= 6 and main_tel.games >= 6:
         mf_sim = _cosine_similarity(cand_tel.mode_faction_counts, main_tel.mode_faction_counts)
         if mf_sim >= 0.85:
@@ -1967,28 +2280,39 @@ def score_live_smurf_pair(
         behavioral_signals += 1
         identity_anchor_signals += 1
 
-    # 6. Horários + alternância de dias exclusivos (dormancy swap) + ciclo BRT
+    # 6. Horários (perfil histórico da main vs candidata) + alternância de dias exclusivos (dormancy swap) + ciclo BRT
     apm_very_close = bool(apm["valid"] and float(apm["delta_apm"]) <= 4.0)
-    if cand_tel and main_tel and cand_tel.games >= 6 and main_tel.games >= 6:
-        if hour_sim >= 0.78:
+    sched_out_dead = float(sched_info["out_of_schedule_share"]) if sched_info["valid"] else 0.0
+    if sched_info["valid"]:
+        if hour_sim >= 0.78 and sched_out_dead <= 0.20:
             score += 14.0
             behavioral_signals += 1
             identity_anchor_signals += 1
             weighted_reasons.append((13.0, f"Horário {hour_sim * 100:.0f}%"))
-        elif hour_sim >= 0.68:
+        elif hour_sim >= 0.68 and sched_out_dead <= 0.25:
             score += 8.0
             behavioral_signals += 1
             identity_anchor_signals += 1
-        elif cand_tel.games >= 10 and main_tel.games >= 10 and hour_sim < 0.30:
-            if not (apm_very_close and vel["strong_velocity"] and same_bracket):
-                score -= 14.0
+        elif int(sched_info["cand_n"]) >= 10 and int(sched_info["main_n"]) >= 10 and (
+            sched_cos < 0.35 or (sched_out_dead >= 0.35 and sched_cos < 0.50)
+        ):
+            if not (apm_very_close and vel["strong_velocity"] and same_bracket and float(sched_info["asia_sleep_gap"]) < 0.25):
+                score -= 18.0 if sched_out_dead >= 0.35 else 14.0
 
     if dormancy_swap and (apm_very_close or bool(shared_allies) or (dna["valid"] and float(dna["dna_sim"]) >= 0.72)):
         score += 7.0
         identity_anchor_signals += 1
         weighted_reasons.append((11.0, f"Dias alternados {excl_day_ratio * 100:.0f}%"))
 
-    if is_explicit_foreign and cand_brt_prime >= 0.55 and cand_tel is not None and cand_tel.games >= 6:
+    if (
+        is_explicit_foreign
+        and not native_foreign_fp
+        and cand_brt_prime >= 0.55
+        and cand_asia_sleep < 0.25
+        and sched_out_dead < 0.30
+        and cand_tel is not None
+        and cand_tel.games >= 6
+    ):
         score += 6.0
         weighted_reasons.append((9.0, f"Prime-time BRT {cand_brt_prime * 100:.0f}%"))
 
@@ -2134,7 +2458,19 @@ def score_live_smurf_pair(
     elif elo_diff <= 150 and cand_elo >= 1350:
         score += 4.0
 
-    if cand_elo > 0 and cand_elo < 1200 and cand_total >= 100:
+    cand_wins_total = max(0, int(cand.get("total_wins", 0) or 0))
+    cand_overall_wr = (cand_wins_total / float(cand_total)) if (cand_total >= 20 and cand_wins_total > 0) else (cand_tel.winrate() if (cand_tel and cand_tel.games >= 15) else 0.0)
+    if cand_elo > 0 and cand_elo < 1200 and (
+        cand_total >= 100
+        or (
+            cand_total >= 40
+            and cand_overall_wr < 0.56
+            and not vel["strong_velocity"]
+            and not shared_allies
+            and not same_custom_avatar
+            and not c_osint.get("is_limited_account")
+        )
+    ):
         score -= 15.0
 
     if (
@@ -2176,6 +2512,15 @@ def score_live_smurf_pair(
         "behavioral_signals": behavioral_signals,
         "identity_anchor_signals": identity_anchor_signals,
         "top_reasons": top_reasons,
+        "play_schedule": {
+            "valid": bool(sched_info["valid"]),
+            "cand_n": int(sched_info["cand_n"]),
+            "main_n": int(sched_info["main_n"]),
+            "schedule_cos": float(sched_info["schedule_cos"]),
+            "out_of_schedule_share": float(sched_info["out_of_schedule_share"]),
+            "cand_asia_sleep_share": float(sched_info["cand_asia_sleep_share"]),
+            "main_asia_sleep_share": float(sched_info["main_asia_sleep_share"]),
+        },
         "rivalry_kryptonite": {
             "pts": rk_pts,
             "shared_nemeses": len(rk_info["shared_nemeses"]),
@@ -2226,20 +2571,13 @@ def score_unattributed_br_burner(
     brt_prime = cand_tel.brt_prime_ratio() if cand_tel else 0.0
     reg_obs = cand_tel.regional_observed_games if cand_tel else 0
     sa_m_rate = cand_tel.sa_match_rate() if cand_tel else 0.0
-    br_opp_cnt = cand_tel.br_opp_match_count if cand_tel else 0
-    br_match_cnt = cand_tel.br_match_count if cand_tel else 0
-    strong_br_sa_mm_nexus = bool(
-        reg_obs >= 6
-        and sa_m_rate >= 0.20
-        and (br_opp_cnt >= 1 or br_match_cnt >= 3)
-        and brt_prime >= 0.40
-    )
+    strong_br_sa_mm_nexus = _has_strong_br_sa_mm_nexus(cand_tel, cand_ctry)
 
     # Anti-bandeira 'br' falsa (ex.: conta asiática/europeia com bandeira 'br', ~0% encontros BR/SA e fora do BRT)
     if (
         reg_obs >= 12
         and cand_tel is not None
-        and sum(cand_tel.brt_hour_counts.values()) >= 10
+        and sum(cand_tel.effective_brt_hours().values()) >= 10
         and sa_m_rate < 0.05
         and brt_prime < 0.25
         and br_allies == 0
@@ -2435,6 +2773,7 @@ class SmurfAlertContext:
     now_ts: int = 0
     pid_aliases: dict[int, str] = field(default_factory=dict)
     kryptonite_hydrated: bool = False
+    schedule_hydrated: bool = False
 
 
 def _is_cataloged_smurf_row(row: dict[str, Any]) -> bool:
@@ -2497,20 +2836,58 @@ def _hydrate_rivalry_kryptonite_for_live_probe(
     Hidrata sob demanda (0ms em ciclos sem probe) o histórico permanente 2023+ de SQLite:
     1) `kryptonite_matches` (mapas + BGs inimigos) uma única vez por ciclo para os Veteranos e
        suas famílias de smurfs catalogadas;
-    2) `nemesis_matches` via índice `idx_nemesis_all_opp` (~2ms) apenas para os adversários
+    2) Perfil histórico completo de horários de jogo (`utc_hours`/`brt_hours`, 2023+) uma única
+       vez por ciclo para validar os possíveis horários em que cada conta main joga;
+    3) `nemesis_matches` via índice `idx_nemesis_all_opp` (~2ms) apenas para os adversários
        efetivamente enfrentados por `opp_tel`, sem dupla contagem de `match_id`.
     """
     if db is None:
         return
 
     family_pids = {int(p) for fam in ctx.main_families.values() for p in fam if int(p) > 0}
+    target_pids_for_hist = sorted(
+        set(ctx.confirmed_veteran_pids) | set(ctx.telemetry_by_pid.keys()) | family_pids
+    )
+
+    if not ctx.schedule_hydrated and hasattr(db, "get_play_hour_profiles_by_tracked_pids"):
+        ctx.schedule_hydrated = True
+        try:
+            sched_by_pid = db.get_play_hour_profiles_by_tracked_pids(target_pids_for_hist) or {}
+            for tpid, sprof in sched_by_pid.items():
+                tpid_i = int(tpid or 0)
+                if tpid_i <= 0 or not isinstance(sprof, dict):
+                    continue
+                life_n = int(sprof.get("total_matches", 0) or 0)
+                if life_n <= 0:
+                    continue
+                mtel = ctx.telemetry_by_pid.setdefault(tpid_i, PlayerTelemetry(profile_id=tpid_i))
+                u_map = sprof.get("utc_hours") or {}
+                b_map = sprof.get("brt_hours") or {}
+                if isinstance(u_map, dict) and u_map:
+                    cur_u = mtel.effective_utc_hours()
+                    mtel.all_hour_counts = Counter(
+                        {
+                            h: max(int(cur_u.get(h, 0)), int(u_map.get(h, 0) or 0))
+                            for h in range(24)
+                            if max(int(cur_u.get(h, 0)), int(u_map.get(h, 0) or 0)) > 0
+                        }
+                    )
+                if isinstance(b_map, dict) and b_map:
+                    cur_b = mtel.effective_brt_hours()
+                    mtel.all_brt_hour_counts = Counter(
+                        {
+                            h: max(int(cur_b.get(h, 0)), int(b_map.get(h, 0) or 0))
+                            for h in range(24)
+                            if max(int(cur_b.get(h, 0)), int(b_map.get(h, 0) or 0)) > 0
+                        }
+                    )
+        except Exception as exc:
+            logger.debug("[SMURF ALERT] Falha ao hidratar horários históricos SQLite: %s", redact_secrets(exc))
 
     if not ctx.kryptonite_hydrated and hasattr(db, "get_kryptonite_profile_by_tracked_pids"):
         ctx.kryptonite_hydrated = True
         try:
-            target_pids = sorted(
-                set(ctx.confirmed_veteran_pids) | set(ctx.telemetry_by_pid.keys()) | family_pids
-            )
+            target_pids = target_pids_for_hist
             krypt_by_pid = db.get_kryptonite_profile_by_tracked_pids(target_pids) or {}
             for tpid, prof in krypt_by_pid.items():
                 tpid_i = int(tpid or 0)

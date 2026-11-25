@@ -1013,6 +1013,196 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         self.assertEqual(rk_inv_ex["rivalry_excess_pts"], -4.0)
         self.assertEqual(rk_inv_ex["rivalry_pts"], -4.0)
 
+    def test_play_schedule_precheck_cjk_nick_native_foreign_footprint_and_default_bg_guards(self) -> None:
+        # 1. Nicks CJK/Cirílico/Kana NÃO são nicks descartáveis/barcode ASCII
+        self.assertFalse(sa._is_throwaway_or_barcode_nick("木木"))
+        self.assertFalse(sa._is_throwaway_or_barcode_nick("Виктор"))
+        self.assertFalse(sa._is_throwaway_or_barcode_nick("アリス"))
+        self.assertTrue(sa._is_throwaway_or_barcode_nick("ab"))
+        self.assertTrue(sa._is_throwaway_or_barcode_nick("123456"))
+        self.assertTrue(sa._is_throwaway_or_barcode_nick("IIlIIl"))
+
+        # 2. Hidratação SQLite de horários históricos (2023+) e pré-checagem contra a conta main (ex.: Conflict.BR vs jogador chinês)
+        with tempfile.TemporaryDirectory() as td:
+            db = MatchDatabase(Path(td) / "sched_test.db")
+            main_pid = 431802
+            main_sid = "76561198000099422"
+            # Insere 40 partidas históricas da main entre 19h–23h BRT (22h–02h UTC) — 0% na madrugada/manhã BRT (03h–10h BRT)
+            base_night_utc = 1_785_621_600  # 2026-08-01 22:00 UTC = 19:00 BRT
+            k_rows = [
+                (
+                    main_pid,
+                    80000 + i,
+                    base_night_utc + (i // 5) * 86400 + (i % 5) * 3600,
+                    1 if i % 2 == 0 else 0,
+                    "Team Games (3v3)",
+                    "Gazala Landing Ground",
+                    "[]",
+                    "[]",
+                )
+                for i in range(40)
+            ]
+            db.insert_kryptonite_matches_batch(k_rows)
+            hprofs = db.get_play_hour_profiles_by_tracked_pids({main_pid})
+            self.assertEqual(hprofs[main_pid]["total_matches"], 40)
+            self.assertEqual(sum(hprofs[main_pid]["brt_hours"].get(h, 0) for h in sa.ASIA_SLEEP_BRT_HOURS), 0)
+
+            ctx = sa.build_smurf_alert_context(
+                db,
+                relic=None,
+                custom_players=[{"profile_id": main_pid, "steam_id": main_sid, "original_alias": "Conflict.BR"}],
+                br_community_data={},
+                osint_client=_FakeOSINTClient({}),
+                allow_network=False,
+            )
+            # Triagem rápida pula conta chinesa antiga de ELO baixo ('木木') sem desperdiçar probe HTTP
+            self.assertFalse(
+                sa._should_probe_opponent(
+                    {
+                        "profile_id": 128112,
+                        "alias": "木木",
+                        "steam_id": "76561198106150273",
+                        "country": "cn",
+                        "old_elo": 1022,
+                        "new_elo": 982,
+                    },
+                    ctx,
+                )
+            )
+
+            # Constrói telemetria estilo '木木': 25 jogos em Co-op/Automatch, 60% em 04h–09h BRT (pico China) e co-jogadores majoritariamente CN/KR
+            mumu_pid = 128112
+            mumu_tel = sa.PlayerTelemetry(profile_id=mumu_pid, steam_id="76561198106150273", alias="木木", country="cn")
+            mumu_profiles = [
+                {"profile_id": mumu_pid, "name": "/steam/76561198106150273", "alias": "木木", "country": "cn"},
+                {"profile_id": 900001, "name": "/steam/76561198000900001", "alias": "CN1", "country": "cn"},
+                {"profile_id": 900002, "name": "/steam/76561198000900002", "alias": "CN2", "country": "cn"},
+                {"profile_id": 900003, "name": "/steam/76561198000900003", "alias": "KR1", "country": "kr"},
+                {"profile_id": 900004, "name": "/steam/76561198000900004", "alias": "BR1", "country": "br", "leaderboardregion_id": sa.SA_LEADERBOARD_REGION_ID},
+            ]
+            # 12 Automatch 3v3 (3 com 1 BR = 25% por partida!) + 15 Co-op vs IA (matchtype_id=16) na tarde da China (04h–09h BRT = 07h–12h UTC)
+            base_nov_asia = 1_795_503_600  # 2026-11-24 07:00 UTC = 04:00 BRT
+            mumu_matches = []
+            dna_same = {"gt": 1200, "totalcmds": 1160, "abil": 40, "ekills": 60, "edeaths": 50, "dmgdone": 3600, "pcap": 18, "inactperiod": 48, "sqkill": 3, "sqlost": 2}
+            for i in range(12):
+                ct = base_nov_asia + (i % 5) * 3600 + (i // 2) * 86400
+                opps = [900001, 900002, 900004] if i < 3 else [900001, 900002, 900003]
+                m = _make_raw_relic_match(
+                    91000 + i,
+                    ct - 1200,
+                    ct,
+                    mumu_pid,
+                    matchtype_id=22,
+                    race_id=137123,
+                    win=1 if i % 2 == 0 else 0,
+                    old_elo=1030,
+                    new_elo=1020,
+                    ally_pids=[900001, 900002],
+                    opp_pids=opps,
+                    counters=dna_same,
+                )
+                # Loadout base-game padrão USF (Airborne/Armored/Special Ops)
+                m["matchhistoryitems"] = [
+                    {"profile_id": mumu_pid, "itemdefinition_id": 453179, "metadata": '{"eslot":"0"}'},
+                    {"profile_id": mumu_pid, "itemdefinition_id": 453181, "metadata": '{"eslot":"1"}'},
+                    {"profile_id": mumu_pid, "itemdefinition_id": 453182, "metadata": '{"eslot":"2"}'},
+                ]
+                mumu_matches.append(m)
+            for i in range(15):
+                ct = base_nov_asia + (i % 6) * 3600 + (i // 3) * 86400
+                mumu_matches.append(
+                    _make_raw_relic_match(
+                        92000 + i,
+                        ct - 1000,
+                        ct,
+                        mumu_pid,
+                        matchtype_id=16,  # Co-op vs IA: ainda conta para horário real de vigília e países dos co-jogadores!
+                        race_id=137123,
+                        win=1,
+                        ally_pids=[900001, 900002],
+                        opp_pids=[900003],
+                    )
+                )
+            mumu_tel.observe_raw_relic_history({"profiles": mumu_profiles, "matchHistoryStats": mumu_matches})
+            self.assertEqual(mumu_tel.games, 12)
+            self.assertEqual(sum(mumu_tel.effective_brt_hours().values()), 27)
+            self.assertTrue(sa._has_native_foreign_regional_footprint(mumu_tel, "cn"))
+            self.assertFalse(sa._has_strong_br_sa_mm_nexus(mumu_tel, "cn"))
+
+            # Main com mesma biometria e mesmo loadout base-game padrão USF, mas inativa desde ago/2026
+            main_tel = ctx.telemetry_by_pid.setdefault(main_pid, sa.PlayerTelemetry(profile_id=main_pid, games=12, wins=6))
+            main_tel.apm_values.extend([59.0] * 8)
+            main_tel.abil_per_min.extend([2.0] * 8)
+            for _ in range(8):
+                main_tel.kd_ratios.append(1.2)
+                main_tel.dpm_values.append(180.0)
+                main_tel.capture_rates.append(0.9)
+                main_tel.inactivity_ratios.append(0.04)
+                main_tel.squad_trade_ratios.append(1.3)
+                main_tel.bg_loadout_by_race[137123][453179] += 1
+                main_tel.bg_loadout_by_race[137123][453181] += 1
+                main_tel.bg_loadout_by_race[137123][453182] += 1
+            for d in ("2026-08-01", "2026-08-02", "2026-08-03", "2026-08-04", "2026-08-05"):
+                main_tel.active_brt_days.add(d)
+
+            sa._hydrate_rivalry_kryptonite_for_live_probe(db, mumu_tel, ctx)
+            self.assertTrue(ctx.schedule_hydrated)
+            # Loadout padrão base-game (sem DLC) é limitado a <=0.65 (nunca dispara "BGs 100%")
+            self.assertLessEqual(sa._compare_bg_loadout(mumu_tel, main_tel), 0.65)
+            # Janelas de calendário disjuntas (ago vs nov = ~110 dias) não contam como dormancy_swap
+            self.assertGreater(sa._calendar_span_gap_days(mumu_tel.active_brt_days, main_tel.active_brt_days), 21)
+
+            # Com bandeira 'cn' -> desqualificado por pegada regional nativa estrangeira
+            res_cn = sa.score_live_smurf_pair(
+                {"profile_id": mumu_pid, "steam_id": "76561198106150273", "alias": "木木", "country": "cn", "max_elo": 1159, "total_matches": 73, "total_wins": 35},
+                {"profile_id": main_pid, "steam_id": main_sid, "alias": "Conflict.BR", "country": "br", "max_elo": 1140, "total_matches": 870},
+                mumu_tel,
+                main_tel,
+            )
+            self.assertEqual(res_cn["probability_pct"], 0)
+            self.assertEqual(res_cn["disqualified_reason"], "estrangeiro_perfil_regional_nativo")
+
+            # Mesmo se fingisse bandeira 'br' (VPN) -> desqualificado pela pré-checagem de horários da main!
+            res_vpn = sa.score_live_smurf_pair(
+                {"profile_id": mumu_pid, "steam_id": "76561198106150273", "alias": "FakeBRAsia", "country": "br", "max_elo": 1159, "total_matches": 73, "total_wins": 35},
+                {"profile_id": main_pid, "steam_id": main_sid, "alias": "Conflict.BR", "country": "br", "max_elo": 1140, "total_matches": 870},
+                mumu_tel,
+                main_tel,
+            )
+            self.assertEqual(res_vpn["probability_pct"], 0)
+            self.assertEqual(res_vpn["disqualified_reason"], "horario_incompativel_com_main")
+
+        # 3. Loadout com BG DLC customizado (ex.: Rangers 458973 + Heavy Weapons 459364) continua pontuando alto!
+        t_dlc_a = sa.PlayerTelemetry(profile_id=11)
+        t_dlc_b = sa.PlayerTelemetry(profile_id=22)
+        for idef in (453182, 458973, 459364):
+            t_dlc_a.bg_loadout_by_race[137123][idef] = 5
+            t_dlc_b.bg_loadout_by_race[137123][idef] = 5
+        self.assertGreaterEqual(sa._compare_bg_loadout(t_dlc_a, t_dlc_b), 0.99)
+
+        # 4. Brasileiro coruja (ex.: icemaker que também joga de madrugada) NÃO é falsamente desqualificado pela pré-checagem!
+        owl_main = sa.PlayerTelemetry(profile_id=448521, games=60)
+        owl_cand = sa.PlayerTelemetry(profile_id=720147, games=20)
+        for h in (0, 1, 2, 3, 4, 5, 22, 23):
+            owl_main.all_brt_hour_counts[h] += 8
+            owl_cand.all_brt_hour_counts[h] += 3
+        sched_owl = sa._compare_play_schedules(owl_cand, owl_main)
+        self.assertEqual(sched_owl["out_of_schedule_share"], 0.0)
+        self.assertGreaterEqual(sched_owl["schedule_cos"], 0.95)
+
+        # 5. Smurf brasileira diurna (ex.: TearsInTheRain 10h-19h vs Chacineiro 11h-12h + 15h-23h):
+        # lacuna interna curta (13h-14h) e fronteira de 10h NÃO podem desqualificar o turno diurno brasileiro!
+        day_main = sa.PlayerTelemetry(profile_id=79327, games=59)
+        for h, cnt in ((11, 2), (12, 2), (15, 5), (16, 9), (17, 8), (18, 10), (19, 9), (20, 7), (21, 3), (22, 3), (23, 1)):
+            day_main.all_brt_hour_counts[h] += cnt
+        day_cand = sa.PlayerTelemetry(profile_id=1390350, games=20)
+        for h, cnt in ((10, 3), (11, 3), (12, 1), (13, 6), (14, 4), (15, 1), (16, 1), (19, 1)):
+            day_cand.all_brt_hour_counts[h] += cnt
+        sched_day = sa._compare_play_schedules(day_cand, day_main)
+        self.assertEqual(sched_day["out_of_schedule_share"], 0.0)
+        self.assertEqual(sched_day["cand_asia_sleep_share"], 0.0)
+
+
 
 if __name__ == "__main__":
     unittest.main()
