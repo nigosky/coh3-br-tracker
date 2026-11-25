@@ -2045,7 +2045,7 @@ class VeteransRadarClient:
 
         return active_pids, active_sids, last_sync_ts
 
-    def fetch_active_veteranos(self, max_age_sec: int = 7200) -> dict[str, Any]:
+    def fetch_active_veteranos(self, max_age_sec: int = 25200) -> dict[str, Any]:
         """
         Busca o estado atual do Radar dos Veteranos (somente-leitura, não-bloqueante).
         Retorna dict com: ok, stale, last_sync_ts, age_sec, active_pids, active_steam_ids, error.
