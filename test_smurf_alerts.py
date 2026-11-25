@@ -1202,6 +1202,309 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         self.assertEqual(sched_day["out_of_schedule_share"], 0.0)
         self.assertEqual(sched_day["cand_asia_sleep_share"], 0.0)
 
+    def test_legacy_coh_statgroups_and_steam_osint_parsers(self):
+        c2_payload = {
+            "statGroups": [
+                {
+                    "id": 1001,
+                    "type": 1,
+                    "members": [
+                        {"profile_id": 5001, "name": "/steam/76561198312734088", "alias": "Pooya22", "country": "br"}
+                    ],
+                },
+                {
+                    "id": 2002,
+                    "type": 2,
+                    "members": [
+                        {"profile_id": 5001, "name": "/steam/76561198312734088", "alias": "Pooya22", "country": "br"},
+                        {"profile_id": 5002, "name": "/steam/76561198000000001", "alias": "CNMate1", "country": "cn"},
+                        {"profile_id": 5003, "name": "/steam/76561198000000002", "alias": "CNMate2", "country": "cn"},
+                    ],
+                },
+            ],
+            "leaderboardStats": [
+                {"statgroup_id": 1001, "wins": 120, "losses": 80},
+                {"statgroup_id": 2002, "wins": 30, "losses": 20},
+            ],
+        }
+        parsed_c2 = sa.LegacyCoHProfileClient.parse_coh2_personal_stat(c2_payload, {"76561198312734088"})
+        rec = parsed_c2["76561198312734088"]
+        self.assertEqual(rec["coh2_country"], "br")
+        self.assertEqual(rec["coh2_alias"], "Pooya22")
+        self.assertEqual(rec["coh2_matches"], 200)
+        self.assertEqual(rec["coh2_arranged_teammate_sids"], {"76561198000000001", "76561198000000002"})
+        self.assertEqual(rec["coh2_arranged_team_countries"], {"cn": 2})
+
+        c1_payload = {
+            "statGroups": [
+                {
+                    "id": 9001,
+                    "type": 1,
+                    "members": [
+                        {"profile_id": 7001, "name": "/steam/76561198312734088", "alias": "OldPooya", "country": "cn"}
+                    ],
+                }
+            ],
+            "leaderboardStats": [{"statgroup_id": 9001, "wins": 40, "losses": 15}],
+        }
+        parsed_c1 = sa.LegacyCoHProfileClient.parse_coh1_personal_stat(c1_payload, {"76561198312734088"})
+        self.assertEqual(parsed_c1["76561198312734088"]["coh1_country"], "cn")
+        self.assertEqual(parsed_c1["76561198312734088"]["coh1_alias"], "OldPooya")
+        self.assertEqual(parsed_c1["76561198312734088"]["coh1_matches"], 55)
+
+        xml_foreign = (
+            "<profile>"
+            "<privacyState>public</privacyState>"
+            "<realname><![CDATA[Hans Mueller]]></realname>"
+            "<location><![CDATA[Berlin, Germany]]></location>"
+            "<summary><![CDATA[你好世界 CoH3 player]]></summary>"
+            "</profile>"
+        )
+        osint_for = sa.SteamProfileOSINTClient.parse_profile_xml(xml_foreign)
+        self.assertEqual(osint_for["realname"], "Hans Mueller")
+        self.assertTrue(osint_for["is_foreign_location"])
+        self.assertTrue(osint_for["summary_foreign_script"])
+        self.assertFalse(osint_for["steam_br_groups"])
+
+    def test_live_smurf_new_forensic_boosters_and_vetos(self):
+        main_pid, cand_pid = 79327, 1390999
+        main_sid, cand_sid = "76561198000000100", "76561198999999901"
+        main_meta = {
+            "profile_id": main_pid,
+            "steam_id": main_sid,
+            "alias": "MainBRPro",
+            "country": "br",
+            "max_elo": 1520,
+            "total_matches": 1400,
+        }
+        cand_meta = {
+            "profile_id": cand_pid,
+            "steam_id": cand_sid,
+            "alias": "TotallyDifferentNick",
+            "country": "de",
+            "max_elo": 1510,
+            "total_matches": 90,
+            "total_wins": 60,
+        }
+        main_tel = sa.PlayerTelemetry(profile_id=main_pid, games=20, wins=12)
+        cand_tel = sa.PlayerTelemetry(profile_id=cand_pid, games=20, wins=14)
+        for h in (19, 20, 21, 22):
+            main_tel.all_brt_hour_counts[h] += 5
+            main_tel.brt_hour_counts[h] += 5
+            main_tel.hour_counts[(h + 3) % 24] += 5
+            cand_tel.all_brt_hour_counts[h] += 5
+            cand_tel.brt_hour_counts[h] += 5
+            cand_tel.hour_counts[(h + 3) % 24] += 5
+        main_tel.mode_faction_counts["1v1:usf"] = 20
+        cand_tel.mode_faction_counts["1v1:usf"] = 20
+        main_tel.mode_counts["1v1"] = 20
+        cand_tel.mode_counts["1v1"] = 20
+        main_tel.mode_elo_max["1v1"] = 1520
+        cand_tel.mode_elo_max["1v1"] = 1510
+        main_tel.apm_values.extend([62.0] * 10)
+        cand_tel.apm_values.extend([63.5] * 10)
+        main_tel.abil_per_min.extend([2.1] * 10)
+        cand_tel.abil_per_min.extend([2.2] * 10)
+
+        # 1. Desqualificador absoluto: jogaram juntos no mesmo time CoH2 (`statGroups`)
+        r_coplay = sa.score_live_smurf_pair(
+            cand_meta,
+            main_meta,
+            cand_tel,
+            main_tel,
+            cand_legacy={"coh2_alias": "Pooya22", "coh2_arranged_teammate_sids": {main_sid}},
+            main_legacy={"coh2_alias": "Pooya22", "coh2_arranged_teammate_sids": {cand_sid}},
+        )
+        self.assertEqual(r_coplay["disqualified_reason"], "jogaram_mesmo_time_coh2")
+
+        # 2. Nick legado CoH2 idêntico (`Pooya22` pattern) fura bandeira estrangeira e pontua alto
+        r_leg = sa.score_live_smurf_pair(
+            cand_meta,
+            main_meta,
+            cand_tel,
+            main_tel,
+            cand_legacy={"coh2_alias": "Pooya22", "coh2_matches": 80, "coh2_country": "br"},
+            main_legacy={"coh2_alias": "Pooya22", "coh2_matches": 900, "coh2_country": "br"},
+        )
+        self.assertEqual(r_leg["disqualified_reason"], "")
+        self.assertGreaterEqual(r_leg["probability_pct"], 80)
+
+        # 3. Mesmo <realname> no Steam XML fura bandeira estrangeira
+        r_rn = sa.score_live_smurf_pair(
+            cand_meta,
+            main_meta,
+            cand_tel,
+            main_tel,
+            cand_osint={"ok": True, "realname": "Carlos Eduardo Silva"},
+            main_osint={"ok": True, "realname": "Carlos Eduardo Silva"},
+        )
+        self.assertEqual(r_rn["disqualified_reason"], "")
+        self.assertGreaterEqual(r_rn["probability_pct"], 80)
+
+        # 4. Parceiros CoH2 compartilhados impulsionam alt jovem, mas veteranos (>=3000m CoH2) são barrados!
+        mates = {"76561198000000501", "76561198000000502"}
+        r_mates = sa.score_live_smurf_pair(
+            cand_meta,
+            main_meta,
+            cand_tel,
+            main_tel,
+            cand_legacy={"coh2_matches": 100, "coh2_country": "br", "coh2_arranged_teammate_sids": set(mates)},
+            main_legacy={"coh2_matches": 1200, "coh2_country": "br", "coh2_arranged_teammate_sids": set(mates)},
+        )
+        self.assertEqual(r_mates["disqualified_reason"], "")
+        self.assertGreaterEqual(r_mates["probability_pct"], 75)
+
+        r_vet = sa.score_live_smurf_pair(
+            dict(cand_meta, profile_id=23250, country="br"),
+            main_meta,
+            cand_tel,
+            main_tel,
+            cand_legacy={"coh2_matches": 4000, "coh2_country": "br", "coh2_arranged_teammate_sids": set(mates)},
+            main_legacy={"coh2_matches": 3100, "coh2_country": "br", "coh2_arranged_teammate_sids": set(mates)},
+        )
+        self.assertEqual(r_vet["disqualified_reason"], "conta_veterana_coh2")
+
+        # 5. Todos os 6 vetos anti-estrangeiro furtivo sob bandeira `br`
+        stealth_cand = dict(cand_meta, country="br")
+        self.assertEqual(
+            sa.score_live_smurf_pair(stealth_cand, main_meta, cand_tel, main_tel, confirmed_foreign_pids={cand_pid})["disqualified_reason"],
+            "estrangeiro_confirmado_vpn",
+        )
+        bosi_tel = sa.PlayerTelemetry(profile_id=cand_pid, games=20, wins=12)
+        bosi_tel.total_coplayer_slots = 40
+        bosi_tel.coplayer_country_counts["de"] = 34
+        bosi_tel.coplayer_country_counts["fr"] = 6
+        self.assertEqual(
+            sa.score_live_smurf_pair(stealth_cand, main_meta, bosi_tel, main_tel)["disqualified_reason"],
+            "estrangeiro_perfil_regional_nativo",
+        )
+        self.assertEqual(
+            sa.score_live_smurf_pair(
+                stealth_cand,
+                main_meta,
+                cand_tel,
+                main_tel,
+                cand_legacy={"coh2_country": "br", "coh2_matches": 500, "coh2_arranged_team_countries": {"cn": 18, "hk": 2}},
+            )["disqualified_reason"],
+            "estrangeiro_times_coh2",
+        )
+        self.assertEqual(
+            sa.score_live_smurf_pair(
+                stealth_cand,
+                main_meta,
+                cand_tel,
+                main_tel,
+                cand_legacy={"coh1_country": "cn", "coh2_country": "", "coh2_matches": 0},
+            )["disqualified_reason"],
+            "estrangeiro_origem_coh1_coh2",
+        )
+        self.assertEqual(
+            sa.score_live_smurf_pair(
+                stealth_cand,
+                main_meta,
+                cand_tel,
+                main_tel,
+                cand_friends_coh_countries={"cn": 5, "hk": 1},
+            )["disqualified_reason"],
+            "estrangeiro_amigos_coh_steam",
+        )
+        self.assertEqual(
+            sa.score_live_smurf_pair(
+                stealth_cand,
+                main_meta,
+                cand_tel,
+                main_tel,
+                cand_osint={
+                    "ok": True,
+                    "location": "Shanghai, China",
+                    "is_foreign_location": True,
+                    "is_br_location": False,
+                    "summary_foreign_script": True,
+                    "steam_br_groups": False,
+                },
+            )["disqualified_reason"],
+            "estrangeiro_steam_location",
+        )
+
+    def test_unattributed_burner_and_context_block_confirmed_and_stealth_foreigners(self):
+        burner_cand = {
+            "profile_id": 1499001,
+            "steam_id": "76561199500000001",
+            "alias": "NovaContaBR",
+            "country": "br",
+            "max_elo": 1520,
+            "total_matches": 45,
+            "total_wins": 34,
+        }
+        br_tel = sa.PlayerTelemetry(profile_id=1499001, games=15, wins=12)
+        for h in (20, 21, 22):
+            br_tel.all_brt_hour_counts[h] += 5
+            br_tel.brt_hour_counts[h] += 5
+        br_tel.regional_observed_games = 15
+        br_tel.sa_match_count = 10
+        br_tel.br_match_count = 9
+        br_osint = {"ok": True, "is_limited_account": True, "is_default_avatar": True, "member_since_current_year": True}
+
+        # Burner BR legítima dispara normalmente
+        ok_res = sa.score_unattributed_br_burner(burner_cand, br_tel, cand_osint=br_osint)
+        self.assertTrue(ok_res["triggered"])
+
+        # Bloqueia estrangeiro confirmado, veterano CoH2 (>=1500m), times CoH2 0 BR, origem CoH1/CoH2 e furtivo `br`
+        self.assertFalse(
+            sa.score_unattributed_br_burner(burner_cand, br_tel, cand_osint=br_osint, confirmed_foreign_pids={1499001})["triggered"]
+        )
+        self.assertFalse(
+            sa.score_unattributed_br_burner(burner_cand, br_tel, cand_osint=br_osint, cand_legacy={"coh2_matches": 1800})["triggered"]
+        )
+        self.assertFalse(
+            sa.score_unattributed_br_burner(
+                burner_cand, br_tel, cand_osint=br_osint, cand_legacy={"coh2_arranged_team_countries": {"cl": 18, "ar": 2}}
+            )["triggered"]
+        )
+        self.assertFalse(
+            sa.score_unattributed_br_burner(
+                burner_cand, br_tel, cand_osint=br_osint, cand_legacy={"coh1_country": "cn", "coh2_country": ""}
+            )["triggered"]
+        )
+        bosi_tel = sa.PlayerTelemetry(profile_id=1499001, games=15, wins=12)
+        bosi_tel.total_coplayer_slots = 40
+        bosi_tel.coplayer_country_counts["de"] = 35
+        bosi_tel.coplayer_country_counts["pl"] = 5
+        self.assertFalse(
+            sa.score_unattributed_br_burner(dict(burner_cand, alias="NeutralNick"), bosi_tel, cand_osint=br_osint)["triggered"]
+        )
+
+        # Contexto com `suspected_foreign_data` exclui VPNs de reference_mains e pula sondagem de confirmados
+        ctx = sa.build_smurf_alert_context(
+            None,
+            None,
+            [
+                {"profile_id": 1001, "steam_id": "76561198000001001", "alias": "RealMainBR", "group": "veteranos"},
+            ],
+            br_community_data={
+                "players": {
+                    "1001": {"profile_id": 1001, "steam_id": "76561198000001001", "alias": "RealMainBR", "max_elo": 1550, "total_matches": 900},
+                    "2002": {"profile_id": 2002, "steam_id": "76561198000002002", "alias": "ConfirmedVPN", "max_elo": 1600, "total_matches": 400},
+                    "3003": {"profile_id": 3003, "steam_id": "76561198000003003", "alias": "ModerateVPN", "max_elo": 1580, "total_matches": 350},
+                }
+            },
+            suspected_foreign_data={
+                "players": {
+                    "2002": {"profile_id": 2002, "steam_id": "76561198000002002", "status": "confirmed_foreign_vpn", "remove_from_br_list": True, "exclude_from_rankings": True},
+                    "3003": {"profile_id": 3003, "steam_id": "76561198000003003", "status": "suspected_foreign_vpn", "remove_from_br_list": False, "exclude_from_rankings": True},
+                }
+            },
+            allow_network=False,
+        )
+        self.assertIn(2002, ctx.confirmed_foreign_pids)
+        self.assertIn("76561198000002002", ctx.confirmed_foreign_sids)
+        self.assertIn(3003, ctx.excluded_foreign_ranking_pids)
+        self.assertNotIn(2002, ctx.reference_mains)
+        self.assertNotIn(3003, ctx.reference_mains)
+        self.assertIn(1001, ctx.reference_mains)
+        self.assertFalse(
+            sa._should_probe_opponent({"profile_id": 2002, "steam_id": "76561198000002002", "country": "br"}, ctx)
+        )
 
 
 if __name__ == "__main__":
