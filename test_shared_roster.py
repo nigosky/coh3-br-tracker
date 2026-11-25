@@ -672,6 +672,63 @@ class TestTrackerSharedRoster(unittest.TestCase):
             self.assertEqual(patched_again, 0)
             db.close()
 
+    def test_veteranos_radar_client_default_max_age_tolerates_six_hour_quiet_checkpoint(self) -> None:
+        import io
+        from unittest.mock import patch
+
+        now_ts = 1_800_000_000
+
+        class _FakeResp:
+            def __init__(self, body: bytes) -> None:
+                self._buf = io.BytesIO(body)
+                self.headers: dict[str, str] = {}
+
+            def read(self, n: int = -1) -> bytes:
+                return self._buf.read(n)
+
+            def __enter__(self) -> "_FakeResp":
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+        class _FakeOpener:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self._raw = json.dumps(payload).encode("utf-8")
+
+            def open(self, req: object, timeout: float = 10.0) -> _FakeResp:
+                return _FakeResp(self._raw)
+
+        client = relic_api.VeteransRadarClient()
+
+        # 1) Snapshot silencioso de 6h (21600s) continua fresco dentro da janela padrao de 7h (25200s)
+        fresh_payload = {
+            "last_sync_ts": now_ts - 21600,
+            "last_alert_coh3_pids": [79327],
+            "last_steam_fast_sig": "(['76561197963172584'], [], [])",
+        }
+        with (
+            patch.object(relic_api.time, "time", return_value=now_ts),
+            patch.object(relic_api, "_get_thread_opener", return_value=_FakeOpener(fresh_payload)),
+        ):
+            res_fresh = client.fetch_active_veteranos()
+        self.assertTrue(res_fresh["ok"])
+        self.assertFalse(res_fresh["stale"])
+        self.assertEqual(res_fresh["active_pids"], {79327})
+        self.assertEqual(res_fresh["active_steam_ids"], {"76561197963172584"})
+
+        # 2) Snapshot acima de 7h (25500s) e marcado como stale e nao injeta veteranos obsoletos
+        stale_payload = dict(fresh_payload, last_sync_ts=now_ts - 25500)
+        with (
+            patch.object(relic_api.time, "time", return_value=now_ts),
+            patch.object(relic_api, "_get_thread_opener", return_value=_FakeOpener(stale_payload)),
+        ):
+            res_stale = client.fetch_active_veteranos()
+        self.assertTrue(res_stale["ok"])
+        self.assertTrue(res_stale["stale"])
+        self.assertEqual(res_stale["active_pids"], set())
+        self.assertEqual(res_stale["active_steam_ids"], set())
+
 
 if __name__ == "__main__":
     unittest.main()

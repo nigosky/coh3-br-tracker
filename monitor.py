@@ -982,7 +982,7 @@ def run_fourth_radar_check(
     if radar is None or not synced_players:
         return stats
 
-    radar_res = radar.fetch_active_veteranos(max_age_sec=7200)
+    radar_res = radar.fetch_active_veteranos(max_age_sec=25200)
     if not radar_res.get("ok"):
         logger.warning(
             "[4ª CHECAGEM RADAR VETERANOS] Radar temporariamente indisponível (não-bloqueante): %s",
