@@ -97,16 +97,40 @@ _NON_LATIN_SCRIPT_RE = re.compile(
 )
 
 # Janelas de cache e orçamento de rede para não impactar a latência do ciclo de 5 min
-SMURF_PROBE_CACHE_KEY = "smurf_probe_cache_v2"
+SMURF_PROBE_CACHE_KEY = "smurf_probe_cache_v3"
 SMURF_PROBE_TTL_SEC = 6 * 3600       # 6h para contas normais/suspeitas
 VETERAN_CACHE_TTL_SEC = 7 * 86400    # 7 dias para contas veteranas consolidadas (>900 jogos)
 MAX_LIVE_OPPONENT_PROBES_PER_CYCLE = 4
 MAX_EXTRA_MAIN_PROBES_PER_OPPONENT = 3
 CONSOLIDATED_VETERAN_MIN_MATCHES = 900
 
-# Limiares calibrados pelos modelos reais BR confirmados
-ATTRIBUTED_ALERT_MIN_PROB_PCT = 58
-UNATTRIBUTED_BR_ALERT_MIN_SCORE_PCT = 68
+# Limiares estritos: exibe apenas smurfs de probabilidade MUITO ALTA (>=75%, acima de 70%)
+# e estritamente da mesma nacionalidade brasileira (`country == "br"`).
+ATTRIBUTED_ALERT_MIN_PROB_PCT = 75
+UNATTRIBUTED_BR_ALERT_MIN_SCORE_PCT = 75
+VERY_HIGH_CONFIDENCE_MIN_PCT = 75
+
+
+def is_displayable_smurf_alert(
+    alert: dict[str, Any] | None,
+    *,
+    require_explicit_br: bool = False,
+) -> bool:
+    """
+    Retorna True somente para alertas de smurf elegíveis para exibição no Discord/card:
+    probabilidade Muito Alta (>=75%) e nacionalidade estritamente brasileira (`br`).
+    """
+    if not isinstance(alert, dict):
+        return False
+    prob = int(alert.get("probability_pct", 0) or 0)
+    if prob < ATTRIBUTED_ALERT_MIN_PROB_PCT:
+        return False
+    ctry = str(alert.get("opponent_country") or "").strip().lower()
+    if require_explicit_br:
+        return ctry == "br"
+    if ctry and ctry != "br":
+        return False
+    return True
 
 _LEET_TABLE = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"})
 _CLAN_TAG_RE = re.compile(r"(?:\[([^\[\]]{2,10})\]|『([^『』]{1,8})』|\{([^{}]{2,10})\}|<([^<>]{2,10})>)")
@@ -2468,6 +2492,12 @@ def score_live_smurf_pair(
         empty["disqualified_reason"] = "sobreposicao_simultanea"
         return empty
 
+    # Regra estrita de nacionalidade: exibe/pontua apenas smurfs na MESMA nacionalidade brasileira (`country == "br"`).
+    main_ctry = str(main.get("country") or (main_tel.country if main_tel else "") or "br").strip().lower()
+    if cand_ctry != "br" or (main_ctry and main_ctry != "br"):
+        empty["disqualified_reason"] = "nacionalidade_diferente_br"
+        return empty
+
     cand_total = max(0, int(cand.get("total_matches", 0) or 0))
     main_total = max(0, int(main.get("total_matches", 0) or 0))
     if cand_total > CONSOLIDATED_VETERAN_MIN_MATCHES:
@@ -3016,14 +3046,40 @@ def score_live_smurf_pair(
         if (cand_tel.games - cand_tel.mode_counts.get("1v1", 0)) >= 10 and (main_tel.games - main_tel.mode_counts.get("1v1", 0)) >= 10:
             score -= 12.0
 
-    # Guarda Anti-Ruído Meta
+    # Guarda Anti-Ruído Meta + Anti-Inflação de Atribuição Genérica:
+    # Sem pelo menos 1 âncora ESPECÍFICA do par (squad em comum, >=2 handoffs <25m, nick/legado,
+    # avatar/realname Steam idênticos, >=2 parceiros CoH2 jovens, >=2 nêmesis/fregueses em comum,
+    # ou mesma faixa de ELO alto >=1350 com gêmeo biométrico APM<=4 + DNA/BG/alternância),
+    # uma conta burner genérica (Family Sharing + horário BRT + APM parecido) NUNCA pode ser
+    # atribuída com confiança Muito Alta (>=75%) a um jogador específico!
+    has_specific_pair_anchor = bool(
+        shared_allies
+        or handoff_cnt >= 2
+        or alias_pts > 0
+        or legacy_alias_hit
+        or same_custom_avatar
+        or same_steam_realname
+        or strong_shared_coh2_teammates
+        or int(rk_info["shared_rivalry_count"]) >= 2
+        or (
+            same_bracket >= 1
+            and apm_very_close
+            and (dna_strong or bg_pts >= 6.0 or dormancy_swap or float(rk_info["pts"]) >= 8.0)
+        )
+    )
     if behavioral_signals < 2:
         score = min(score, 34.0)
     elif identity_anchor_signals < 1:
         score = min(score, 38.0)
+    elif not has_specific_pair_anchor:
+        score = min(score, 68.0)
 
     prob = max(0, min(99, int(round(score))))
-    tier = "Muito Alta" if prob >= 80 else ("Alta" if prob >= 68 else ("Moderada" if prob >= 55 else "Baixa"))
+    tier = (
+        "Muito Alta"
+        if prob >= VERY_HIGH_CONFIDENCE_MIN_PCT
+        else ("Alta" if prob >= 65 else ("Moderada" if prob >= 55 else "Baixa"))
+    )
 
     seen_r: set[str] = set()
     top_reasons: list[str] = []
@@ -3085,7 +3141,7 @@ def score_unattributed_br_burner(
     """
     cand_pid = int(cand.get("profile_id", 0) or 0)
     cand_alias = str(cand.get("alias") or cand_pid)
-    cand_ctry = str(cand.get("country") or "").strip().lower()
+    cand_ctry = str(cand.get("country") or (cand_tel.country if cand_tel else "") or "").strip().lower()
     cand_elo = int(cand.get("max_elo", 0) or 0)
     cand_total = max(0, int(cand.get("total_matches", 0) or 0))
     cand_wins = max(0, int(cand.get("total_wins", 0) or 0))
@@ -3094,6 +3150,8 @@ def score_unattributed_br_burner(
     br_pids = known_br_pids or frozenset()
 
     empty = {"triggered": False, "probability_pct": 0, "confidence_tier": "Baixa", "top_reasons": []}
+    if cand_ctry != "br":
+        return empty
     if confirmed_foreign_pids and cand_pid in confirmed_foreign_pids:
         return empty
     if cand_total <= 0 or cand_total > 220 or cand_elo < 1350:
@@ -3254,7 +3312,7 @@ def score_unattributed_br_burner(
 
     prob = max(0, min(95, int(round(score))))
     triggered = bool(anomalies >= 2 and prob >= UNATTRIBUTED_BR_ALERT_MIN_SCORE_PCT)
-    tier = "Muito Alta" if prob >= 82 else ("Alta" if prob >= 72 else "Moderada")
+    tier = "Muito Alta" if prob >= VERY_HIGH_CONFIDENCE_MIN_PCT else ("Alta" if prob >= 65 else "Moderada")
     seen_r: set[str] = set()
     top_reasons: list[str] = []
     for _w, label in sorted(weighted_reasons, key=lambda x: -x[0]):
@@ -3788,7 +3846,11 @@ def build_smurf_alert_context(
 
 
 def _should_probe_opponent(opp: dict[str, Any], ctx: SmurfAlertContext) -> bool:
-    """Triagem rápida (0 chamadas HTTP) para decidir se o oponente merece investigação forense."""
+    """
+    Triagem rápida (0 chamadas HTTP) para decidir se o oponente merece investigação forense.
+    Regra estrita: sonda SOMENTE oponentes na mesma nacionalidade brasileira (`country == "br"`),
+    ou sem país preenchido no payload (que é validado imediatamente via `getPersonalStat` na Relic).
+    """
     opp_pid = int(opp.get("profile_id", 0) or 0)
     if opp_pid <= 0:
         return False
@@ -3803,23 +3865,9 @@ def _should_probe_opponent(opp: dict[str, Any], ctx: SmurfAlertContext) -> bool:
         return False
 
     ctry = str(opp.get("country") or "").strip().lower()
-    alias = strip_unsafe_chars(opp.get("alias") or "")[:40]
-    opp_elo = max(int(opp.get("old_elo") or 0), int(opp.get("new_elo") or 0))
-
-    if ctry in ("br", "", "??", "unknown"):
+    if ctry == "br":
         return True
-    if opp_pid in ctx.known_br_pids:
-        return True
-    pt_hit, _ = _detect_ptbr_linguistic_signal(alias)
-    if pt_hit or _is_throwaway_or_barcode_nick(alias):
-        return True
-    for main in ctx.reference_mains.values():
-        pts, _ = _alias_similarity_bonus(alias, str(main.get("alias") or ""), {alias}, set(main.get("known_aliases") or ()))
-        if pts >= 10:
-            return True
-    # Conta nova + ELO alto mesmo sob bandeira estrangeira (smurf disfarçada)
-    s32 = _steam_account32(opp_sid)
-    if opp_elo >= 1250 and (opp_pid >= 850_000 or s32 >= 900_000_000):
+    if not ctry:
         return True
     return False
 
@@ -3841,6 +3889,8 @@ def _evaluate_opponent_against_br_pool(
 
     if opp_pid in ctx.confirmed_foreign_pids or (opp_sid and opp_sid in ctx.confirmed_foreign_sids):
         return None
+    if opp_ctry and opp_ctry != "br":
+        return None
 
     # Regra absoluta ("Um Smurf nunca enfrenta a conta original"): consulta confrontos históricos desde 2023 em `nemesis_matches`
     historical_faced_pids: set[int] = set()
@@ -3857,6 +3907,8 @@ def _evaluate_opponent_against_br_pool(
             return None
         if cached.get("status") == "alert" and isinstance(cached.get("alert"), dict):
             alert_copy = dict(cached["alert"])
+            if not is_displayable_smurf_alert(alert_copy, require_explicit_br=True):
+                return None
             sus_mpid = int(alert_copy.get("suspected_main_profile_id", 0) or 0)
             if sus_mpid > 0:
                 sus_fam = ctx.main_families.get(sus_mpid, {sus_mpid})
@@ -3879,7 +3931,7 @@ def _evaluate_opponent_against_br_pool(
     eff_sid = str(stat.get("steam_id") or opp_sid).replace("/steam/", "").strip()
     eff_alias = strip_unsafe_chars(stat.get("alias") or opp_alias)[:40]
 
-    if eff_sid and eff_sid in ctx.confirmed_foreign_sids:
+    if eff_ctry != "br" or (eff_sid and eff_sid in ctx.confirmed_foreign_sids):
         ctx.probe_cache[opp_pid] = {"ts": ctx.now_ts, "status": "clean"}
         ctx.cache_dirty = True
         return None
@@ -4072,21 +4124,26 @@ def enrich_group_with_smurf_alerts(
 ) -> list[dict[str, Any]]:
     """
     Analisa todos os oponentes desconhecidos enfrentados por Veteranos na partida `grp`.
-    Se detectar possível smurf de outro brasileiro (atribuída ou burner BR), anexa `grp['smurf_alerts']`
-    e persiste em `recorded_matches.smurf_alerts_json` para sobreviver a PATCHes retroativos de Battlegroups.
+    Se detectar possível smurf de outro brasileiro (atribuída ou burner BR, >=75% e country=='br'),
+    anexa `grp['smurf_alerts']` e persiste em `recorded_matches.smurf_alerts_json` para sobreviver a PATCHes retroativos.
     """
     recs = grp.get("records") or ([grp["primary"]] if isinstance(grp.get("primary"), dict) else [])
     if not recs:
         return []
     primary = grp.get("primary") or recs[0]
 
-    # Reutiliza alertas já persistidos no SQLite caso a partida já tenha sido analisada
+    # Reutiliza alertas já persistidos no SQLite caso atendam ao critério atual (>=75% e nacionalidade BR)
     existing = grp.get("smurf_alerts") or primary.get("smurf_alerts") or []
     if isinstance(existing, list) and existing:
-        valid_existing = [a for a in existing if isinstance(a, dict) and int(a.get("probability_pct", 0) or 0) > 0]
+        valid_existing = [a for a in existing if is_displayable_smurf_alert(a)]
+        grp["smurf_alerts"] = valid_existing
+        if isinstance(grp.get("primary"), dict):
+            grp["primary"]["smurf_alerts"] = valid_existing
+        for r in recs:
+            r["smurf_alerts"] = valid_existing
         if valid_existing:
-            grp["smurf_alerts"] = valid_existing
             return valid_existing
+        return []
 
     mode_str = str(primary.get("mode") or "")
     if mode_str not in AUTOMATCH_MODES and mode_str != "Custom":

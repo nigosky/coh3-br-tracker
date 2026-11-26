@@ -130,10 +130,10 @@ class _FakeRelicClient:
 
 class TestRealTimeSmurfAlerts(unittest.TestCase):
     def test_disguised_foreign_flag_smurf_detected_persisted_and_hydrated_for_patch(self) -> None:
-        # Veterano Margheriti (#900358) enfrenta oponente "HansFakeDE" (#1_950_111, bandeira "de"),
-        # que na verdade é smurf disfarçada do Veterano brasileiro #79327 (Chacineiro):
-        # - Steam XML revela "Curitiba, Brazil" + mesmo avatar customizado SHA-1
-        # - APM quase idêntico + 6 eixos Combat DNA idênticos + dias alternados (dormancy swap) + +180 ELO rápido
+        # Veterano Margheriti (#900358) enfrenta smurf brasileira cross-faction (#1_950_111, bandeira "br")
+        # do Veterano brasileiro #79327 (Chacineiro):
+        # - Mesmo avatar customizado SHA-1 + APM quase idêntico + 6 eixos Combat DNA + dias alternados + +180 ELO rápido
+        # Também valida que uma conta com bandeira estrangeira ("de") é rejeitada pela política estrita BR.
         base_t = 1_799_000_000  # ~20h BRT
         dna_c = {"gt": 1200, "totalcmds": 1700, "abil": 54, "ekills": 90, "edeaths": 62, "dmgdone": 4800, "pcap": 24, "inactperiod": 48, "sqkill": 5, "sqlost": 2}
         dna_m = {"gt": 1200, "totalcmds": 1710, "abil": 55, "ekills": 88, "edeaths": 61, "dmgdone": 4900, "pcap": 25, "inactperiod": 47, "sqkill": 5, "sqlost": 2}
@@ -175,7 +175,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
 
         raw_histories = {
             opp_pid: {
-                "profiles": [{"profile_id": opp_pid, "name": f"/steam/{opp_sid}", "alias": "HansFakeDE", "country": "de"}],
+                "profiles": [{"profile_id": opp_pid, "name": f"/steam/{opp_sid}", "alias": "CrossFacSmurfBR", "country": "br"}],
                 "matchHistoryStats": opp_matches,
             },
             main_pid: {
@@ -187,8 +187,8 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             opp_pid: {
                 "profile_id": opp_pid,
                 "steam_id": opp_sid,
-                "alias": "HansFakeDE",
-                "country": "de",
+                "alias": "CrossFacSmurfBR",
+                "country": "br",
                 "max_elo": 1650,
                 "total_matches": 82,
                 "total_wins": 60,
@@ -234,9 +234,9 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
                 [
                     {
                         "profile_id": opp_pid,
-                        "alias": "HansFakeDE",
+                        "alias": "CrossFacSmurfBR",
                         "steam_id": opp_sid,
-                        "country": "de",
+                        "country": "br",
                         "faction": "Wehrmacht",
                         "faction_short": "Wehr",
                         "old_elo": 1625,
@@ -258,14 +258,20 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
                 allow_network=False,
                 now_ts=base_t + 20 * 86400,
             )
+            # Regra estrita de nacionalidade: oponente com bandeira 'de' não é sequer sondado
+            self.assertFalse(
+                sa._should_probe_opponent({"profile_id": opp_pid, "alias": "HansFakeDE", "steam_id": opp_sid, "country": "de", "old_elo": 1650}, ctx)
+            )
             alerts = sa.enrich_group_with_smurf_alerts(db, relic, grp, ctx=ctx)
             self.assertEqual(len(alerts), 1)
             al = alerts[0]
             self.assertEqual(al["kind"], "attributed")
             self.assertEqual(al["opponent_profile_id"], opp_pid)
+            self.assertEqual(al["opponent_country"], "br")
             self.assertEqual(al["suspected_main_profile_id"], main_pid)
             self.assertEqual(al["suspected_main_alias"], "Chacineiro")
             self.assertGreaterEqual(al["probability_pct"], 75)
+            self.assertEqual(al["confidence_tier"], "Muito Alta")
             self.assertIn("Avatar Steam idêntico", al["top_reasons"])
 
             # Verifica persistência no SQLite e hidratação automática para PATCH retroativo de Battlegroups!
@@ -460,7 +466,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             t_br,
         )
         self.assertEqual(res_de["probability_pct"], 0)
-        self.assertEqual(res_de["disqualified_reason"], "estrangeiro_sem_vinculo_br")
+        self.assertEqual(res_de["disqualified_reason"], "nacionalidade_diferente_br")
 
     def test_discord_payload_sanitization_and_card_png_heights_with_nemesis(self) -> None:
         base_m = _make_recorded_match(
@@ -654,14 +660,22 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         self.assertGreaterEqual(vel["elo_gain_per_game"], 12.0)
         self.assertTrue(vel["strong_velocity"])
 
-        # Fura guarda estrangeira em unattributed_br_burner via MM BR/SA + ELO/jogo!
-        unattr = sa.score_unattributed_br_burner(
+        # Regra estrita BR: conta com bandeira 'de' não dispara burner BR; com bandeira 'br' + MM BR/SA + ELO/jogo dispara >=75%!
+        unattr_de = sa.score_unattributed_br_burner(
             {"profile_id": opp_pid, "steam_id": opp_sid, "alias": "StealthDE", "country": "de", "max_elo": 1448, "total_matches": 32, "total_wins": 25},
             opp_tel,
             cand_osint={"ok": True, "is_limited_account": True},
         )
+        self.assertFalse(unattr_de["triggered"])
+
+        unattr = sa.score_unattributed_br_burner(
+            {"profile_id": opp_pid, "steam_id": opp_sid, "alias": "StealthBR", "country": "br", "max_elo": 1455, "total_matches": 32, "total_wins": 25},
+            opp_tel,
+            cand_osint={"ok": True, "is_limited_account": True},
+        )
         self.assertTrue(unattr["triggered"])
-        self.assertTrue(any("MM BR/SA" in r for r in unattr["top_reasons"]))
+        self.assertGreaterEqual(unattr["probability_pct"], 75)
+        self.assertEqual(unattr["confidence_tier"], "Muito Alta")
 
         # 2. Anti-bandeira 'br' falsa: 0% encontros BR/SA e fora do BRT não dispara burner BR!
         fake_tel = sa.PlayerTelemetry(
@@ -1152,7 +1166,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             # Janelas de calendário disjuntas (ago vs nov = ~110 dias) não contam como dormancy_swap
             self.assertGreater(sa._calendar_span_gap_days(mumu_tel.active_brt_days, main_tel.active_brt_days), 21)
 
-            # Com bandeira 'cn' -> desqualificado por pegada regional nativa estrangeira
+            # Com bandeira 'cn' -> desqualificado imediatamente pela regra estrita de nacionalidade BR!
             res_cn = sa.score_live_smurf_pair(
                 {"profile_id": mumu_pid, "steam_id": "76561198106150273", "alias": "木木", "country": "cn", "max_elo": 1159, "total_matches": 73, "total_wins": 35},
                 {"profile_id": main_pid, "steam_id": main_sid, "alias": "Conflict.BR", "country": "br", "max_elo": 1140, "total_matches": 870},
@@ -1160,7 +1174,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
                 main_tel,
             )
             self.assertEqual(res_cn["probability_pct"], 0)
-            self.assertEqual(res_cn["disqualified_reason"], "estrangeiro_perfil_regional_nativo")
+            self.assertEqual(res_cn["disqualified_reason"], "nacionalidade_diferente_br")
 
             # Mesmo se fingisse bandeira 'br' (VPN) -> desqualificado pela pré-checagem de horários da main!
             res_vpn = sa.score_live_smurf_pair(
@@ -1281,7 +1295,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             "profile_id": cand_pid,
             "steam_id": cand_sid,
             "alias": "TotallyDifferentNick",
-            "country": "de",
+            "country": "br",
             "max_elo": 1510,
             "total_matches": 90,
             "total_wins": 60,
@@ -1317,7 +1331,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         )
         self.assertEqual(r_coplay["disqualified_reason"], "jogaram_mesmo_time_coh2")
 
-        # 2. Nick legado CoH2 idêntico (`Pooya22` pattern) fura bandeira estrangeira e pontua alto
+        # 2. Nick legado CoH2 idêntico (`Pooya22` pattern) na mesma nacionalidade BR pontua Muito Alta!
         r_leg = sa.score_live_smurf_pair(
             cand_meta,
             main_meta,
@@ -1328,8 +1342,9 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         )
         self.assertEqual(r_leg["disqualified_reason"], "")
         self.assertGreaterEqual(r_leg["probability_pct"], 80)
+        self.assertEqual(r_leg["confidence_tier"], "Muito Alta")
 
-        # 3. Mesmo <realname> no Steam XML fura bandeira estrangeira
+        # 3. Mesmo <realname> no Steam XML na mesma nacionalidade BR pontua Muito Alta!
         r_rn = sa.score_live_smurf_pair(
             cand_meta,
             main_meta,
@@ -1340,6 +1355,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         )
         self.assertEqual(r_rn["disqualified_reason"], "")
         self.assertGreaterEqual(r_rn["probability_pct"], 80)
+        self.assertEqual(r_rn["confidence_tier"], "Muito Alta")
 
         # 4. Parceiros CoH2 compartilhados impulsionam alt jovem, mas veteranos (>=3000m CoH2) são barrados!
         mates = {"76561198000000501", "76561198000000502"}
@@ -1353,6 +1369,7 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         )
         self.assertEqual(r_mates["disqualified_reason"], "")
         self.assertGreaterEqual(r_mates["probability_pct"], 75)
+        self.assertEqual(r_mates["confidence_tier"], "Muito Alta")
 
         r_vet = sa.score_live_smurf_pair(
             dict(cand_meta, profile_id=23250, country="br"),
@@ -1445,11 +1462,16 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
         br_tel.br_match_count = 9
         br_osint = {"ok": True, "is_limited_account": True, "is_default_avatar": True, "member_since_current_year": True}
 
-        # Burner BR legítima dispara normalmente
+        # Burner BR legítima dispara normalmente (>=75%, Muito Alta)
         ok_res = sa.score_unattributed_br_burner(burner_cand, br_tel, cand_osint=br_osint)
         self.assertTrue(ok_res["triggered"])
+        self.assertGreaterEqual(ok_res["probability_pct"], 75)
+        self.assertEqual(ok_res["confidence_tier"], "Muito Alta")
 
-        # Bloqueia estrangeiro confirmado, veterano CoH2 (>=1500m), times CoH2 0 BR, origem CoH1/CoH2 e furtivo `br`
+        # Bloqueia bandeira não-BR, estrangeiro confirmado, veterano CoH2 (>=1500m), times CoH2 0 BR, origem CoH1/CoH2 e furtivo `br`
+        self.assertFalse(
+            sa.score_unattributed_br_burner(dict(burner_cand, country="us"), br_tel, cand_osint=br_osint)["triggered"]
+        )
         self.assertFalse(
             sa.score_unattributed_br_burner(burner_cand, br_tel, cand_osint=br_osint, confirmed_foreign_pids={1499001})["triggered"]
         )
@@ -1506,6 +1528,74 @@ class TestRealTimeSmurfAlerts(unittest.TestCase):
             sa._should_probe_opponent({"profile_id": 2002, "steam_id": "76561198000002002", "country": "br"}, ctx)
         )
 
+    def test_strict_br_nationality_75pct_threshold_and_aliasonline_regression(self):
+        # 1. Limiares oficiais do Tracker exigem Muito Alta (>=75%) e nacionalidade brasileira (`br`)
+        self.assertEqual(sa.ATTRIBUTED_ALERT_MIN_PROB_PCT, 75)
+        self.assertEqual(sa.UNATTRIBUTED_BR_ALERT_MIN_SCORE_PCT, 75)
+
+        ctx = sa.build_smurf_alert_context(
+            None,
+            None,
+            [{"profile_id": 32922, "steam_id": "76561198000032922", "alias": "Showtaro", "group": "veteranos"}],
+            br_community_data={},
+            suspected_foreign_data={},
+            allow_network=False,
+        )
+        # Caso real `aliasonline` (#1401813, country="us", 25nov Benghazi 3v3) NÃO é sequer sondado!
+        self.assertFalse(
+            sa._should_probe_opponent(
+                {"profile_id": 1401813, "steam_id": "76561198639653404", "alias": "aliasonline", "country": "us", "old_elo": 1326},
+                ctx,
+            )
+        )
+        self.assertTrue(
+            sa._should_probe_opponent(
+                {"profile_id": 1401813, "steam_id": "76561198639653404", "alias": "NovaSmurfBR", "country": "br", "old_elo": 1326},
+                ctx,
+            )
+        )
+
+        # Mesmo se pontuado diretamente: `us` é rejeitado por `nacionalidade_diferente_br`
+        main_meta = {"profile_id": 32922, "steam_id": "76561198000032922", "alias": "Showtaro", "country": "br", "max_elo": 1340, "total_matches": 1100}
+        cand_us = {"profile_id": 1401813, "steam_id": "76561198639653404", "alias": "aliasonline", "country": "us", "max_elo": 1339, "total_matches": 123, "total_wins": 68}
+        main_tel = sa.PlayerTelemetry(profile_id=32922, games=20, wins=10)
+        cand_tel = sa.PlayerTelemetry(profile_id=1401813, games=23, wins=13)
+        for h in (19, 20, 21, 22, 23):
+            main_tel.all_brt_hour_counts[h] += 4
+            main_tel.brt_hour_counts[h] += 4
+            main_tel.hour_counts[(h + 3) % 24] += 4
+            cand_tel.all_brt_hour_counts[h] += 4
+            cand_tel.brt_hour_counts[h] += 4
+            cand_tel.hour_counts[(h + 3) % 24] += 4
+        main_tel.mode_faction_counts["3v3:usf"] = 20
+        cand_tel.mode_faction_counts["3v3:usf"] = 23
+        main_tel.apm_values.extend([41.0] * 10)
+        cand_tel.apm_values.extend([35.0] * 10)
+        burner_osint = {"ok": True, "is_limited_account": True, "is_default_avatar": True, "member_since_current_year": True, "steam_level": 0}
+
+        res_us = sa.score_live_smurf_pair(cand_us, main_meta, cand_tel, main_tel, cand_osint=burner_osint)
+        self.assertEqual(res_us["probability_pct"], 0)
+        self.assertEqual(res_us["disqualified_reason"], "nacionalidade_diferente_br")
+
+        # Mesmo se fosse `br`, sem âncora específica do par (0 squad/nick/avatar/handoff/rival),
+        # fica travado em <=68% (nunca atinge 75% Muito Alta para acusar Showtaro!)
+        res_br_generic = sa.score_live_smurf_pair(
+            dict(cand_us, country="br"), main_meta, cand_tel, main_tel, cand_osint=burner_osint
+        )
+        self.assertLessEqual(res_br_generic["probability_pct"], 68)
+        self.assertLess(res_br_generic["probability_pct"], sa.ATTRIBUTED_ALERT_MIN_PROB_PCT)
+
+        # Filtro de exibição no Discord / Card PNG bloqueia alertas <75% e alertas com opponent_country != 'br'
+        bad_us = {"opponent_profile_id": 1401813, "opponent_alias": "aliasonline", "opponent_country": "us", "tracked_alias": "gaules", "suspected_main_alias": "Showtaro", "probability_pct": 96, "confidence_tier": "Muito Alta"}
+        bad_low = {"opponent_profile_id": 1401814, "opponent_alias": "DuvidosoBR", "opponent_country": "br", "tracked_alias": "gaules", "suspected_main_alias": "Showtaro", "probability_pct": 70, "confidence_tier": "Alta"}
+        good_br = {"opponent_profile_id": 1401815, "opponent_alias": "SmurfCertaBR", "opponent_country": "br", "tracked_alias": "gaules", "suspected_main_alias": "Showtaro", "probability_pct": 82, "confidence_tier": "Muito Alta"}
+        self.assertFalse(sa.is_displayable_smurf_alert(bad_us))
+        self.assertFalse(sa.is_displayable_smurf_alert(bad_low))
+        self.assertTrue(sa.is_displayable_smurf_alert(good_br))
+        self.assertEqual(discord_notifier._format_smurf_alerts_discord_content([bad_us, bad_low]), "")
+        self.assertIn("SmurfCertaBR", discord_notifier._format_smurf_alerts_discord_content([bad_us, bad_low, good_br]))
+
 
 if __name__ == "__main__":
     unittest.main()
+
