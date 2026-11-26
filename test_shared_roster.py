@@ -164,9 +164,9 @@ class TestTrackerSharedRoster(unittest.TestCase):
         import card_renderer
         from database import MatchDatabase
 
-        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 179 perfis de exibição passiva (164 Monitorados + 15 Emigrados em Outros BR)
+        # 1. Roster padrão tem 48 Veteranos independentes (0 mescladas) + 187 perfis de exibição passiva (172 Monitorados + 15 Emigrados em Outros BR)
         self.assertEqual(len(relic_api.CORE_BR_ROSTER), 48)
-        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 179)
+        self.assertEqual(len(relic_api.MANUAL_OTHER_BR_DISPLAY), 187)
         self.assertEqual(relic_api.TRACKER_SMURF_DISPLAY_PIDS, frozenset())
         self.assertEqual(relic_api.LOCAL_MERGED_ACCOUNT_FALLBACKS, ())
         by_pid = {int(r["profile_id"]): r for r in relic_api.CORE_BR_ROSTER}
@@ -253,6 +253,14 @@ class TestTrackerSharedRoster(unittest.TestCase):
             (802771, "Odin"),
             (8838, "Saint"),
             (1467829, "XAMPUZINHO (Smurf: Xampoo)"),
+            (1297870, "AVESTRUZ TE SEDUZ"),
+            (653986, "brkr1p7on"),
+            (19840, "[DOOM INTENSIFIES]"),
+            (145390, "Dr. House"),
+            (32423, "Mucura"),
+            (4138, "pdf1234300"),
+            (428227, "COSMONAUTA"),
+            (1304125, "LordBaconBR"),
         ):
             self.assertIn(mon_pid, other_by_pid)
             self.assertEqual(other_by_pid[mon_pid]["original_alias"], mon_alias)
