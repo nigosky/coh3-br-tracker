@@ -2546,7 +2546,9 @@ def render_single_match_card_png(
     raw_smurf_alerts = grp.get("smurf_alerts") or primary.get("smurf_alerts") or []
     smurf_entries: list[dict[str, Any]] = [
         a for a in (raw_smurf_alerts if isinstance(raw_smurf_alerts, list) else [])
-        if isinstance(a, dict) and int(a.get("probability_pct", 0) or 0) > 0
+        if isinstance(a, dict)
+        and int(a.get("probability_pct", 0) or 0) >= 75
+        and (not str(a.get("opponent_country") or "").strip() or str(a.get("opponent_country") or "").strip().lower() == "br")
     ]
     smurf_opp_pids = {
         int(a.get("opponent_profile_id", 0) or 0)

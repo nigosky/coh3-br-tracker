@@ -179,7 +179,10 @@ def _format_smurf_alerts_discord_content(smurf_alerts: list[dict[str, Any]]) -> 
         if not isinstance(alert, dict):
             continue
         prob = int(alert.get("probability_pct", 0) or 0)
-        if prob <= 0:
+        if prob < 75:
+            continue
+        opp_ctry = str(alert.get("opponent_country") or "").strip().lower()
+        if opp_ctry and opp_ctry != "br":
             continue
         opp_pid = int(alert.get("opponent_profile_id", 0) or 0)
         if opp_pid > 0 and opp_pid in seen_opps:
